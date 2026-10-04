@@ -13,11 +13,15 @@ services:
       DATA_DIR: /app/data
       ALLOW_PRIVATE_NETWORK: 'false'
       DNS_OVER_HTTPS_URL: '${DNS_OVER_HTTPS_URL:-}'
+      DYNAMIC_RESOLVER: '${DYNAMIC_RESOLVER:-true}'
+      DYNAMIC_RESOLVER_TIMEOUT_MS: '${DYNAMIC_RESOLVER_TIMEOUT_MS:-20000}'
+      DYNAMIC_RESOLVER_CONCURRENCY: '${DYNAMIC_RESOLVER_CONCURRENCY:-2}'
     volumes:
       - kazumi-data:/app/data
     read_only: true
     tmpfs:
-      - /tmp:size=32m,mode=1777
+      - /tmp:size=256m,mode=1777
+    shm_size: 256m
     cap_drop:
       - ALL
     security_opt:

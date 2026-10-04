@@ -6,6 +6,7 @@ import { createHttpClient, HttpError } from './http.js';
 import { RuleStore } from './store.js';
 import { RuleEngine } from './rules.js';
 import { MediaService } from './media.js';
+import { BrowserResolver } from './browser-resolver.js';
 import { MetadataService } from './metadata.js';
 
 const directory = dirname(fileURLToPath(import.meta.url));
@@ -37,7 +38,15 @@ export async function createApp(options = {}) {
     initialRules,
   ).init();
   const engine = new RuleEngine(http);
-  const media = new MediaService(http);
+  const browserResolver =
+    options.browserResolver === false || process.env.DYNAMIC_RESOLVER === 'false'
+      ? null
+      : options.browserResolver ||
+        new BrowserResolver(http, {
+          timeout: Number(process.env.DYNAMIC_RESOLVER_TIMEOUT_MS || 20000),
+          maxConcurrency: Number(process.env.DYNAMIC_RESOLVER_CONCURRENCY || 2),
+        });
+  const media = new MediaService(http, undefined, { browserResolver });
   const repository = (
     process.env.RULES_REPOSITORY || 'https://raw.githubusercontent.com/Predidit/KazumiRules/main/'
   ).replace(/\/?$/, '/');
@@ -162,14 +171,28 @@ export async function createApp(options = {}) {
     if (!roads.length) throw new HttpError('来源未返回可播放剧集，请更新规则或更换来源', 422);
     res.json({ roads });
   });
-  app.post('/api/resolve', async (req, res) =>
-    res.json(
-      await media.resolve(
+  app.post('/api/resolve', async (req, res) => {
+    const controller = new AbortController();
+    const cancel = () => {
+      if (!res.writableEnded) controller.abort();
+    };
+    const deadline = setTimeout(
+      () => controller.abort(new HttpError('片源解析超时，请重试或切换线路', 504)),
+      45000,
+    );
+    res.once('close', cancel);
+    try {
+      const result = await media.resolve(
         store.get(inputText(req.body?.ruleName, '规则名称', 100)),
         inputText(req.body?.url, '播放地址', 8000),
-      ),
-    ),
-  );
+        { signal: controller.signal },
+      );
+      if (!res.destroyed) res.json(result);
+    } finally {
+      clearTimeout(deadline);
+      res.off('close', cancel);
+    }
+  });
   app.get('/api/media', async (req, res) => media.proxy(req, res));
   app.use('/api', (req, res) => res.status(404).json({ error: 'API 不存在' }));
   const dist = options.distDir || resolve(directory, '../dist');
@@ -184,21 +207,28 @@ export async function createApp(options = {}) {
     });
   });
   app.use((error, req, res, next) => {
+    if (res.destroyed) return;
     if (res.headersSent) return next(error);
     const status = error.status >= 400 && error.status <= 599 ? error.status : 500;
     if (status === 500) console.error('[kazumi-web]', error);
-    res
-      .status(status)
-      .json({
-        error:
-          error.type === 'entity.parse.failed'
-            ? '请求 JSON 格式无效'
-            : status === 500
-              ? '服务器处理请求失败'
-              : error.message,
-      });
+    res.status(status).json({
+      error:
+        error.type === 'entity.parse.failed'
+          ? '请求 JSON 格式无效'
+          : status === 500
+            ? '服务器处理请求失败'
+            : error.message,
+    });
   });
-  return { app, store, close: () => http.close() };
+  return {
+    app,
+    store,
+    async close() {
+      await browserResolver?.close();
+      media.close?.();
+      await http.close();
+    },
+  };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

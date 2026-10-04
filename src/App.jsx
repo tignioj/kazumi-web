@@ -1764,6 +1764,7 @@ function Player({ context, settings, onClose, onProgress, notify }) {
   const [episodeIndex, setEpisodeIndex] = useState(context.episodeIndex || 0);
   const [resolved, setResolved] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [slowResolve, setSlowResolve] = useState(false);
   const [error, setError] = useState('');
   const [playError, setPlayError] = useState('');
   const [attempt, setAttempt] = useState(0);
@@ -1778,6 +1779,12 @@ function Player({ context, settings, onClose, onProgress, notify }) {
   const episodes = roads[roadIndex]?.episodes || [];
   const episode = episodes[episodeIndex];
   const hasNext = episodeIndex < episodes.length - 1;
+  useEffect(() => {
+    setSlowResolve(false);
+    if (!loading) return;
+    const timer = setTimeout(() => setSlowResolve(true), 5000);
+    return () => clearTimeout(timer);
+  }, [loading, episode?.url, attempt]);
   useEffect(() => {
     if (roads.length) return;
     let alive = true;
@@ -1993,7 +2000,7 @@ function Player({ context, settings, onClose, onProgress, notify }) {
       </div>
       <div className="video-stage">
         {loading ? (
-          <Spinner text="正在解析片源…" />
+          <Spinner text={slowResolve ? '片源响应较慢，正在继续解析并验证视频…' : '正在解析片源…'} />
         ) : error ? (
           <div className="player-error">
             <CircleAlert size={32} />

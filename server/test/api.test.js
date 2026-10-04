@@ -71,6 +71,32 @@ test('real HTTP API, rule execution, metadata and media proxy integration', asyn
       res.end('<script>var player_aaaa = {"encrypt":0,"url":"/master.m3u8"};</script>');
       return;
     }
+    if (url.pathname === '/dynamic-play') {
+      res.setHeader('content-type', 'text/html');
+      res.end('<iframe src="https://hhjx.hhplayer.com/?url=fixture-token"></iframe>');
+      return;
+    }
+    if (url.pathname === '/hhjx') {
+      res.setHeader('content-type', 'text/html');
+      res.end(
+        '<script>window.__HHJX_BOOTSTRAP__={"url":"fixture-token","t":123456,"key":"fixture-key"};</script>',
+      );
+      return;
+    }
+    if (url.pathname === '/api/parse') {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      assert.equal(req.method, 'POST');
+      assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()), {
+        url: 'fixture-token',
+        t: 123456,
+        key: 'fixture-key',
+        client_fallback: false,
+      });
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ code: 200, url: 'https://cdn.example.com/no-referer.mp4' }));
+      return;
+    }
     if (url.pathname === '/master.m3u8' || url.pathname === '/extensionless') {
       res.setHeader('content-type', 'application/octet-stream');
       res.end('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=5000\nvariant');
@@ -83,7 +109,11 @@ test('real HTTP API, rule execution, metadata and media proxy integration', asyn
       );
       return;
     }
-    if (url.pathname === '/movie.mp4') {
+    if (url.pathname === '/movie.mp4' || url.pathname === '/no-referer.mp4') {
+      if (url.pathname === '/no-referer.mp4' && req.headers.referer) {
+        res.writeHead(404).end();
+        return;
+      }
       res.setHeader('content-type', 'video/mp4');
       res.setHeader('accept-ranges', 'bytes');
       if (req.headers.range) {
@@ -108,9 +138,33 @@ test('real HTTP API, rule execution, metadata and media proxy integration', asyn
   await once(upstream, 'listening');
   const upstreamUrl = `http://127.0.0.1:${upstream.address().port}`;
   const http = createHttpClient({ allowPrivate: true, dnsOverHttpsUrl: '' });
+  // Exercise the real parser/proxy over HTTP while keeping the known player
+  // origin (the adapter's trust boundary) independent of public services.
+  const fixtureHttp = {
+    ...http,
+    async request(input, options) {
+      const target = new URL(input);
+      const fixturePath =
+        target.hostname === 'hhjx.hhplayer.com'
+          ? '/hhjx'
+          : target.hostname === 'cdn.example.com'
+            ? '/no-referer.mp4'
+            : null;
+      if (!fixturePath) return http.request(input, options);
+      const result = await http.request(`${upstreamUrl}${fixturePath}`, options);
+      return { ...result, url: input };
+    },
+    json(input, options) {
+      return http.json(
+        new URL(input).hostname === 'hhjx.hhplayer.com' ? `${upstreamUrl}/api/parse` : input,
+        options,
+      );
+    },
+  };
   const application = await createApp({
+    browserResolver: false,
     dataDir: directory,
-    httpClient: http,
+    httpClient: fixtureHttp,
     metadata: new MetadataService(http, { apiUrl: upstreamUrl, nextUrl: upstreamUrl }),
     seedRules: [],
   });
@@ -201,6 +255,28 @@ test('real HTTP API, rule execution, metadata and media proxy integration', asyn
       assert.match(response.headers.get('content-type'), /mpegurl/);
       assert.match(await response.text(), /\/api\/media\?/);
     });
+    await t.test(
+      'dynamic playback stays on the media proxy without the source Referer',
+      async () => {
+        const resolved = await json('/api/resolve', {
+          ruleName: rule.name,
+          url: `${upstreamUrl}/dynamic-play`,
+        });
+        assert.equal(resolved.status, 200);
+        assert.equal(resolved.data.type, 'video');
+        assert.match(resolved.data.url, /^\/api\/media\?/);
+        const response = await fetch(`${base}${resolved.data.url}`, {
+          headers: { range: 'bytes=2-5' },
+        });
+        assert.equal(response.status, 206);
+        assert.equal(response.headers.get('content-range'), 'bytes 2-5/10');
+        assert.equal(await response.text(), '2345');
+        assert.equal(
+          received.find((request) => request.path === '/no-referer.mp4').referer,
+          undefined,
+        );
+      },
+    );
     await t.test('media proxy preserves Range semantics and rejects HTML', async () => {
       const resolved = await json('/api/resolve', {
         ruleName: rule.name,

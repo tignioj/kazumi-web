@@ -107,6 +107,19 @@ function dnsOverHttps(endpoint, dispatcher) {
   };
 }
 
+// Own the DNS dispatcher alongside its lookup so socket clients share the same
+// validation and DNS-over-HTTPS behavior without performing a second lookup.
+export function createSafeLookup({ allowPrivate = false, dnsOverHttpsUrl, resolver } = {}) {
+  const dispatcher = dnsOverHttpsUrl
+    ? new Agent({ connect: { lookup: safeLookup(false), timeout: 8000 } })
+    : null;
+  const resolve = resolver || (dnsOverHttpsUrl ? dnsOverHttps(dnsOverHttpsUrl, dispatcher) : null);
+  return {
+    lookup: safeLookup(allowPrivate, resolve),
+    close: () => dispatcher?.close() || Promise.resolve(),
+  };
+}
+
 export function cleanHeaders(input = {}) {
   const result = { 'user-agent': USER_AGENT };
   for (const [name, value] of Object.entries(input)) {
@@ -127,12 +140,9 @@ export function createHttpClient({
   timeout = 20000,
   dnsOverHttpsUrl = process.env.DNS_OVER_HTTPS_URL,
 } = {}) {
-  const dnsDispatcher = dnsOverHttpsUrl
-    ? new Agent({ connect: { lookup: safeLookup(false), timeout: 8000 } })
-    : null;
-  const resolver = dnsOverHttpsUrl ? dnsOverHttps(dnsOverHttpsUrl, dnsDispatcher) : null;
+  const dnsLookup = createSafeLookup({ allowPrivate, dnsOverHttpsUrl });
   const dispatcher = new Agent({
-    connect: { lookup: safeLookup(allowPrivate, resolver), timeout: 15000 },
+    connect: { lookup: dnsLookup.lookup, timeout: 15000 },
     headersTimeout: timeout,
     bodyTimeout: 60000,
   });
@@ -141,7 +151,13 @@ export function createHttpClient({
     let method = options.method || 'GET';
     let body = options.body;
     let headers = cleanHeaders(options.headers);
+    let dropContentType = false;
     for (let redirects = 0; redirects <= 5; redirects++) {
+      // Session-aware callers select cookies for every URL, including a
+      // redirect to another path on the same origin. The callback returns the
+      // complete header set, preserving Range and other caller headers itself.
+      if (options.headersForUrl) headers = cleanHeaders(await options.headersForUrl(url.href));
+      if (dropContentType) delete headers['content-type'];
       let response;
       try {
         response = await fetch(url, {
@@ -177,6 +193,7 @@ export function createHttpClient({
         ) {
           method = 'GET';
           body = undefined;
+          dropContentType = true;
           delete headers['content-type'];
         }
         url = next;
@@ -210,7 +227,7 @@ export function createHttpClient({
     request,
     text,
     json,
-    close: () => Promise.all([dispatcher.close(), dnsDispatcher?.close()]),
+    close: () => Promise.all([dispatcher.close(), dnsLookup.close()]),
     allowPrivate,
   };
 }
