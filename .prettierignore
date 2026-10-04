@@ -1,0 +1,9 @@
+node_modules
+dist
+data
+package-lock.json
+test-results
+playwright-report
+LICENSE
+# MPEG-TS video fixtures (not TypeScript source)
+test/fixtures/segment*.ts

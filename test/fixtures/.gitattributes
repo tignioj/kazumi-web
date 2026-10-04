@@ -1,0 +1,3 @@
+# MPEG transport streams are binary media, despite the .ts extension.
+segment*.ts binary
+*.mp4 binary
