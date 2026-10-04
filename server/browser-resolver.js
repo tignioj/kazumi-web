@@ -2,6 +2,7 @@ import { chromium } from 'playwright';
 import { HttpError, checkedUrl, readLimited } from './http.js';
 import { createBrowserEgress } from './browser-egress.js';
 import { headersForSession } from './media-session.js';
+import { inspectBrowserChallenge, verificationRequired } from './challenge.js';
 
 const MAX_PLAYLIST_BYTES = 1024 * 1024;
 const HEADER_NAMES = new Set([
@@ -102,6 +103,36 @@ function delay(ms, signal) {
     signal.addEventListener('abort', abort, { once: true });
     if (signal.aborted) abort();
   });
+}
+
+async function waitForVerification(page, onVerification, details, signal) {
+  const context = page.context();
+  const pending = new Set();
+  const started = (request) => {
+    if (['document', 'xhr', 'fetch'].includes(request.resourceType())) pending.add(request);
+  };
+  const finished = (request) => pending.delete(request);
+  context.on('request', started);
+  context.on('requestfinished', finished);
+  context.on('requestfailed', finished);
+  try {
+    await abortable(
+      Promise.resolve().then(() => onVerification({ page, ...details })),
+      signal,
+    );
+    signal.throwIfAborted();
+    // Image captcha forms often submit with AJAX. Wait for work started during
+    // the user's action before classifying an unchanged screen as a bad answer.
+    const settleUntil = Date.now() + 4000;
+    await delay(400, signal);
+    while (pending.size && Date.now() < settleUntil) await delay(100, signal);
+    await page.waitForLoadState('domcontentloaded', { timeout: 1500 }).catch(() => {});
+    signal.throwIfAborted();
+  } finally {
+    context.off('request', started);
+    context.off('requestfinished', finished);
+    context.off('requestfailed', finished);
+  }
 }
 
 // Runs in every frame before source scripts. It observes calls the player already
@@ -248,6 +279,205 @@ export class BrowserResolver {
     return this.starting;
   }
 
+  async createContext(browser, rule, interactive = false) {
+    const context = await browser.newContext({
+      serviceWorkers: 'block',
+      acceptDownloads: false,
+      viewport: { width: 1000, height: 700 },
+      ...(rule.userAgent ? { userAgent: rule.userAgent } : {}),
+    });
+    try {
+      await context.routeWebSocket(/.*/, (socket) => {
+        try {
+          socket.close();
+        } catch {
+          /* closing context */
+        }
+      });
+      // DNS and socket pinning are additionally enforced by the shared egress
+      // proxy, including every redirect and frame/subresource request.
+      await context.route('**/*', async (route) => {
+        try {
+          checkedUrl(route.request().url(), { allowPrivate: this.http.allowPrivate });
+          if (!interactive && ['image', 'font'].includes(route.request().resourceType()))
+            return await route.abort();
+          await route.continue();
+        } catch {
+          await route.abort().catch(() => {});
+        }
+      });
+      return context;
+    } catch (error) {
+      await context.close().catch(() => {});
+      throw error;
+    }
+  }
+
+  async navigateRequest(page, request, rule) {
+    let pending = true;
+    const requestUrl = new URL(request.url);
+    requestUrl.hash = '';
+    const override = async (route) => {
+      const current = route.request();
+      if (
+        pending &&
+        current.isNavigationRequest() &&
+        current.frame() === page.mainFrame() &&
+        current.url() === requestUrl.href
+      ) {
+        pending = false;
+        return route.fallback({
+          method: request.method || 'GET',
+          headers: { ...current.headers(), ...request.headers },
+          ...(request.body !== undefined ? { postData: request.body } : {}),
+        });
+      }
+      await route.fallback();
+    };
+    await page.route('**/*', override);
+    try {
+      return await page.goto(request.url, {
+        waitUntil: 'domcontentloaded',
+        timeout: this.options.timeout,
+        ...(rule.referer ? { referer: rule.referer } : {}),
+      });
+    } finally {
+      await page.unroute('**/*', override).catch(() => {});
+    }
+  }
+
+  // Recovery for searches and chapters retains the page, cookies, localStorage,
+  // origin and egress IP throughout manual verification and result parsing.
+  async read(
+    rule,
+    request,
+    { signal: callerSignal, onVerification, parse, responseType = 'html' } = {},
+  ) {
+    checkedUrl(request.url, { allowPrivate: this.http.allowPrivate });
+    // Playwright navigation header overrides also apply to redirects. Unlike
+    // the HTTP client's per-hop policy, they cannot safely carry caller-supplied
+    // credentials across origins. Browser-managed cookies remain supported.
+    if (
+      Object.keys(request.headers || {}).some((name) =>
+        ['authorization', 'cookie', 'proxy-authorization'].includes(name.toLowerCase()),
+      )
+    )
+      throw new HttpError('该来源请求含认证信息，暂不支持在 Web 内验证，请打开原站或更换来源', 422);
+    if (this.closed) throw new HttpError('动态解析服务已关闭', 503);
+    if (this.active.size >= this.options.maxConcurrency)
+      throw new HttpError('动态解析繁忙，请稍后重试', 503);
+    const controller = new AbortController();
+    const { signal } = controller;
+    const cancel = () =>
+      controller.abort(
+        callerSignal.reason instanceof HttpError
+          ? callerSignal.reason
+          : new HttpError('来源请求已取消', 499),
+      );
+    callerSignal?.addEventListener('abort', cancel, { once: true });
+    if (callerSignal?.aborted) cancel();
+    this.active.add(controller);
+    let deadline;
+    const arm = () => {
+      clearTimeout(deadline);
+      deadline = setTimeout(
+        () => controller.abort(new HttpError('来源页面加载超时，请重试或更换来源', 504)),
+        this.options.timeout,
+      );
+    };
+    let context;
+    let closing;
+    const close = () => {
+      if (context && !closing) closing = context.close().catch(() => {});
+      return closing;
+    };
+    signal.addEventListener('abort', close, { once: true });
+    arm();
+    try {
+      signal.throwIfAborted();
+      const browser = await abortable(this.getBrowser(), signal);
+      context = await this.createContext(browser, rule, true);
+      signal.throwIfAborted();
+      const page = await context.newPage();
+      context.on('page', (popup) => {
+        if (popup !== page) void popup.close().catch(() => {});
+      });
+      let pageStatus;
+      page.on('response', (response) => {
+        if (response.request().isNavigationRequest() && response.frame() === page.mainFrame())
+          pageStatus = response.status();
+      });
+      await this.navigateRequest(page, request, rule);
+      let attempts = 0;
+      let replayed = false;
+      while (!signal.aborted) {
+        const challenge = await inspectBrowserChallenge(page, rule);
+        let parseError;
+        if (!challenge.detected) {
+          try {
+            if (pageStatus >= 400 && !attempts)
+              throw new HttpError(`上游返回 HTTP ${pageStatus}`, 502);
+            const raw =
+              responseType === 'json'
+                ? await page.locator('body').innerText()
+                : await page.content();
+            const result = parse ? await parse(raw) : raw;
+            if (attempts && !replayed && Array.isArray(result) && !result.length) {
+              replayed = true;
+              await this.navigateRequest(page, request, rule);
+              continue;
+            }
+            return result;
+          } catch (error) {
+            if (error.code !== 'VERIFICATION_REQUIRED') {
+              // API endpoints sometimes navigate to a landing page after the
+              // challenge. Replay the original GET/POST with the same cookies.
+              if (
+                responseType === 'json' &&
+                attempts &&
+                !replayed &&
+                error instanceof SyntaxError
+              ) {
+                replayed = true;
+                await this.navigateRequest(page, request, rule);
+                continue;
+              }
+              throw error;
+            }
+            parseError = error;
+          }
+        }
+        if (!onVerification || attempts >= 5) throw parseError || verificationRequired();
+        attempts++;
+        clearTimeout(deadline);
+        await waitForVerification(
+          page,
+          onVerification,
+          {
+            ruleName: rule.name,
+            originalUrl: request.url,
+            reason: 'challenge',
+            ...(challenge.captcha ? { captcha: challenge.captcha } : {}),
+          },
+          signal,
+        );
+        signal.throwIfAborted();
+        arm();
+      }
+      throw signal.reason;
+    } catch (error) {
+      if (signal.aborted) throw signal.reason;
+      if (error instanceof HttpError || error instanceof SyntaxError) throw error;
+      throw new HttpError('来源验证页面无法加载，请重试或更换来源', 502);
+    } finally {
+      clearTimeout(deadline);
+      callerSignal?.removeEventListener('abort', cancel);
+      signal.removeEventListener('abort', close);
+      await close();
+      this.active.delete(controller);
+    }
+  }
+
   async validate(candidate, session, signal) {
     let url = candidate.url;
     let kind = candidate.type;
@@ -346,7 +576,7 @@ export class BrowserResolver {
     throw new HttpError('HLS 播放列表嵌套过深', 422);
   }
 
-  async resolve(rule, originalUrl, { signal: callerSignal } = {}) {
+  async resolve(rule, originalUrl, { signal: callerSignal, onVerification } = {}) {
     checkedUrl(originalUrl, { allowPrivate: this.http.allowPrivate });
     if (this.closed) throw new HttpError('动态解析服务已关闭', 503);
     if (this.active.size >= this.options.maxConcurrency)
@@ -362,13 +592,23 @@ export class BrowserResolver {
     callerSignal?.addEventListener('abort', cancel, { once: true });
     if (callerSignal?.aborted) cancel();
     this.active.add(controller);
-    const deadline = setTimeout(
-      () =>
-        controller.abort(
-          new HttpError('动态解析超时：未找到可播放视频，来源可能需要验证码或不支持当前线路', 504),
-        ),
-      this.options.timeout,
-    );
+    let deadline;
+    let manualOffered = false;
+    let manualPending = false;
+    const armDeadline = () => {
+      clearTimeout(deadline);
+      deadline = setTimeout(() => {
+        if (onVerification && !manualOffered) manualPending = true;
+        else
+          controller.abort(
+            new HttpError(
+              '动态解析超时：未找到可播放视频，来源可能需要验证码或不支持当前线路',
+              504,
+            ),
+          );
+      }, this.options.timeout);
+    };
+    armDeadline();
     let context;
     let closingContext;
     const closeContext = () => {
@@ -379,31 +619,8 @@ export class BrowserResolver {
     try {
       signal.throwIfAborted();
       const browser = await abortable(this.getBrowser(), signal);
-      context = await browser.newContext({
-        serviceWorkers: 'block',
-        acceptDownloads: false,
-        ...(rule.userAgent ? { userAgent: rule.userAgent } : {}),
-      });
+      context = await this.createContext(browser, rule, !!onVerification);
       signal.throwIfAborted();
-      await context.routeWebSocket(/.*/, (socket) => {
-        try {
-          socket.close();
-        } catch {
-          /* closing context */
-        }
-      });
-      // Disallow navigations to unsupported schemes; the egress proxy independently
-      // validates DNS and pins the socket for every HTTP(S) subresource/redirect.
-      await context.route('**/*', async (route) => {
-        const request = route.request();
-        try {
-          checkedUrl(request.url(), { allowPrivate: this.http.allowPrivate });
-          if (['image', 'font'].includes(request.resourceType())) return await route.abort();
-          await route.continue();
-        } catch {
-          await route.abort().catch(() => {});
-        }
-      });
       const candidates = new Map();
       const observed = new Map();
       const mediaRequests = new Set();
@@ -527,7 +744,38 @@ export class BrowserResolver {
         });
       let lastTrigger = 0;
       let validationError;
+      let lastChallengeCheck = 0;
+      let verificationAttempts = 0;
       while (!signal.aborted) {
+        if (onVerification && (manualPending || Date.now() - lastChallengeCheck > 700)) {
+          lastChallengeCheck = Date.now();
+          const challenge = await inspectBrowserChallenge(page, rule);
+          if (challenge.detected || manualPending) {
+            if (verificationAttempts >= 5) throw verificationRequired();
+            verificationAttempts++;
+            const reason = challenge.detected ? 'challenge' : 'manual';
+            manualOffered = true;
+            manualPending = false;
+            clearTimeout(deadline);
+            await waitForVerification(
+              page,
+              onVerification,
+              {
+                ruleName: rule.name,
+                originalUrl,
+                reason,
+                ...(challenge.captcha ? { captcha: challenge.captcha } : {}),
+              },
+              signal,
+            );
+            signal.throwIfAborted();
+            rejected.clear();
+            validationError = undefined;
+            navigationError = undefined;
+            armDeadline();
+            continue;
+          }
+        }
         if (Date.now() - lastTrigger > 1200) {
           lastTrigger = Date.now();
           for (const frame of page.frames()) {

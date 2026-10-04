@@ -1,6 +1,7 @@
 import { JSDOM } from 'jsdom';
 import { JSONPath } from 'jsonpath-plus';
-import { HttpError, checkedUrl } from './http.js';
+import { HttpError, checkedUrl, readLimited } from './http.js';
+import { hasChallenge, inspectChallengeDocument, verificationRequired } from './challenge.js';
 
 const scalar = (value) => (value == null ? '' : String(value).trim());
 export function absoluteUrl(value, base) {
@@ -97,22 +98,9 @@ const nodeText = (node) => scalar(typeof node === 'string' ? node : node?.textCo
 const nodeUrl = (node) =>
   scalar(node?.getAttribute?.('href') ?? (node?.nodeType === 2 ? node.nodeValue : ''));
 
-function detectChallenge(document, rule, raw) {
-  const config = rule.antiCrawlerConfig;
-  if (!config?.enabled) return;
-  let detected = false;
-  if ([2, 'text'].includes(config.captchaDetectType) && config.captchaDetectValue)
-    detected = raw.includes(config.captchaDetectValue);
-  else if (![3, 'regex'].includes(config.captchaDetectType)) {
-    const selectors = config.captchaDetectValue
-      ? [config.captchaDetectValue]
-      : [config.captchaImage, config.captchaButton];
-    detected = selectors
-      .filter(Boolean)
-      .some((selector) => xpath(document, document, selector).length);
-  }
-  // Untrusted regular expressions are intentionally not executed in the server.
-  if (detected) throw new HttpError('来源要求人机验证，请在来源站点查看或更换来源', 422);
+function detectChallenge(document, rule) {
+  if (inspectChallengeDocument({ config: rule.antiCrawlerConfig }, document).detected)
+    throw verificationRequired();
 }
 
 export function parseXPathSearch(raw, rule) {
@@ -246,20 +234,64 @@ export function ruleHeaders(rule) {
 }
 
 export class RuleEngine {
-  constructor(http) {
+  constructor(http, { browserResolver } = {}) {
     this.http = http;
+    this.browserResolver = browserResolver;
   }
-  async execute(request, rule) {
-    const response = await this.http.text(request.url, {
+  async execute(request, rule, { signal, onVerification } = {}) {
+    signal?.throwIfAborted();
+    const options = {
       ...request,
       headers: { ...ruleHeaders(rule), ...request.headers },
-    });
+      signal,
+    };
+    // Challenge pages commonly use 403 or 429. Read their bounded body before
+    // deciding whether an interactive retry is warranted.
+    if (onVerification && this.http.request) {
+      const { response } = await this.http.request(request.url, options);
+      const raw = await readLimited(response);
+      signal?.throwIfAborted();
+      if (!response.ok && !hasChallenge(raw, rule))
+        throw new HttpError(`上游返回 HTTP ${response.status}`, 502);
+      return raw;
+    }
+    const response = await this.http.text(request.url, options);
+    signal?.throwIfAborted();
     return response.text;
   }
-  async search(rule, keyword) {
+  async parseRequest(request, rule, parse, options, responseType = 'html') {
+    try {
+      const raw = await this.execute(request, rule, options);
+      if (responseType === 'json' && hasChallenge(raw, rule)) throw verificationRequired();
+      return parse(raw);
+    } catch (error) {
+      options?.signal?.throwIfAborted();
+      if (
+        error.code !== 'VERIFICATION_REQUIRED' ||
+        !options?.onVerification ||
+        !this.browserResolver
+      )
+        throw error;
+      return this.browserResolver.read(
+        rule,
+        {
+          ...request,
+          headers: { ...ruleHeaders(rule), ...request.headers },
+        },
+        { ...options, responseType, parse },
+      );
+    }
+  }
+  async search(rule, keyword, options = {}) {
     if (rule.searchMode === 'api') {
       const request = prepareApiRequest(rule.searchApiConfig?.request, { keyword });
-      return parseApiSearch(JSON.parse(await this.execute(request, rule)), rule.searchApiConfig);
+      return this.parseRequest(
+        request,
+        rule,
+        (raw) => parseApiSearch(JSON.parse(raw), rule.searchApiConfig),
+        options,
+        'json',
+      );
     }
     const url = new URL(
       String(rule.searchURL || '').replaceAll('@keyword', encodeURIComponent(keyword)),
@@ -272,20 +304,21 @@ export class RuleEngine {
       url.search = '';
       request.url = url.href;
     }
-    return parseXPathSearch(await this.execute(request, rule), rule);
+    return this.parseRequest(request, rule, (raw) => parseXPathSearch(raw, rule), options);
   }
-  async chapters(rule, source) {
+  async chapters(rule, source, options = {}) {
     if (rule.chapterMode === 'api') {
       const request = prepareApiRequest(rule.chapterApiConfig?.request, { source });
-      return parseApiChapters(
-        JSON.parse(await this.execute(request, rule)),
-        rule.chapterApiConfig,
-        source,
-        rule.baseURL,
+      return this.parseRequest(
+        request,
+        rule,
+        (raw) => parseApiChapters(JSON.parse(raw), rule.chapterApiConfig, source, rule.baseURL),
+        options,
+        'json',
       );
     }
     const url = absoluteUrl(source, rule.baseURL);
     if (!url) throw new HttpError('章节地址无效');
-    return parseXPathChapters(await this.execute({ url }, rule), rule);
+    return this.parseRequest({ url }, rule, (raw) => parseXPathChapters(raw, rule), options);
   }
 }

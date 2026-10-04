@@ -136,7 +136,7 @@ export class MediaService {
       throw new HttpError('播放链接已过期，请重新打开剧集', 403);
     return data;
   }
-  async resolve(rule, source, { signal } = {}) {
+  async resolve(rule, source, { signal, onVerification } = {}) {
     const originalUrl = absoluteUrl(source, rule.baseURL);
     if (!originalUrl) throw new HttpError('播放地址无效');
     checkedUrl(originalUrl, { allowPrivate: this.http.allowPrivate });
@@ -182,7 +182,10 @@ export class MediaService {
       if (!this.browserResolver || ![422, 502, 504].includes(error.status)) throw error;
     }
     signal?.throwIfAborted();
-    const result = await this.browserResolver.resolve(rule, originalUrl, { signal });
+    const result = await this.browserResolver.resolve(rule, originalUrl, {
+      signal,
+      ...(onVerification ? { onVerification } : {}),
+    });
     signal?.throwIfAborted();
     if (!result || !['hls', 'video'].includes(result.type))
       throw new HttpError('动态解析未找到可播放的视频', 422);

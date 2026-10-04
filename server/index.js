@@ -2,12 +2,14 @@ import express from 'express';
 import { readFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { randomBytes } from 'node:crypto';
 import { createHttpClient, HttpError } from './http.js';
 import { RuleStore } from './store.js';
 import { RuleEngine } from './rules.js';
 import { MediaService } from './media.js';
 import { BrowserResolver } from './browser-resolver.js';
 import { MetadataService } from './metadata.js';
+import { VerificationTasks } from './verification.js';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 
@@ -37,7 +39,6 @@ export async function createApp(options = {}) {
     options.dataDir || process.env.DATA_DIR || resolve(directory, '../data'),
     initialRules,
   ).init();
-  const engine = new RuleEngine(http);
   const browserResolver =
     options.browserResolver === false || process.env.DYNAMIC_RESOLVER === 'false'
       ? null
@@ -46,7 +47,9 @@ export async function createApp(options = {}) {
           timeout: Number(process.env.DYNAMIC_RESOLVER_TIMEOUT_MS || 20000),
           maxConcurrency: Number(process.env.DYNAMIC_RESOLVER_CONCURRENCY || 2),
         });
+  const engine = new RuleEngine(http, { browserResolver });
   const media = new MediaService(http, undefined, { browserResolver });
+  const verification = new VerificationTasks(options.verificationOptions);
   const repository = (
     process.env.RULES_REPOSITORY || 'https://raw.githubusercontent.com/Predidit/KazumiRules/main/'
   ).replace(/\/?$/, '/');
@@ -88,6 +91,39 @@ export async function createApp(options = {}) {
     next();
   });
   app.use(express.json({ limit: '2mb' }));
+  const ownerCookie = 'kazumi-verification-owner';
+  function verificationOwner(req, res, create = false) {
+    const value = String(req.headers.cookie || '')
+      .split(';')
+      .map((part) => part.trim())
+      .find((part) => part.startsWith(`${ownerCookie}=`))
+      ?.slice(ownerCookie.length + 1);
+    if (value && /^[A-Za-z0-9_-]{32}$/.test(value)) return value;
+    if (!create) return '';
+    const owner = randomBytes(24).toString('base64url');
+    res.cookie(ownerCookie, owner, {
+      httpOnly: true,
+      sameSite: 'strict',
+      secure: req.secure,
+      path: '/api',
+    });
+    return owner;
+  }
+  async function interactive(req, res, run) {
+    const controller = new AbortController();
+    const cancel = () => {
+      if (!res.writableEnded) controller.abort(new HttpError('片源请求已取消', 499));
+    };
+    res.once('close', cancel);
+    try {
+      const result = await verification.start(verificationOwner(req, res, true), run, {
+        signal: controller.signal,
+      });
+      if (!res.destroyed) res.status(result?.type === 'verification' ? 202 : 200).json(result);
+    } finally {
+      res.off('close', cancel);
+    }
+  }
   const clients = new Map();
   app.use('/api', (req, res, next) => {
     if (req.path === '/health' || req.path === '/media') return next();
@@ -102,6 +138,31 @@ export async function createApp(options = {}) {
     next();
   });
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
+  app.get('/api/verification-session', (req, res) => {
+    verificationOwner(req, res, true);
+    res.set('Cache-Control', 'no-store').json({ ok: true });
+  });
+  app.use('/api/verification', (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    next();
+  });
+  app.get('/api/verification/:id', async (req, res) => {
+    res.json(await verification.snapshot(verificationOwner(req, res), req.params.id));
+  });
+  app.post('/api/verification/:id/action', async (req, res) => {
+    res.json(
+      await verification.action(
+        verificationOwner(req, res),
+        req.params.id,
+        req.body?.challengeId,
+        req.body?.action,
+      ),
+    );
+  });
+  app.delete('/api/verification/:id', (req, res) => {
+    verification.cancel(verificationOwner(req, res), req.params.id);
+    res.json({ ok: true });
+  });
   app.get('/api/catalog', async (req, res) => {
     const sort = req.query.sort || 'trending';
     if (!['rank', 'trending'].includes(sort)) throw new HttpError('排序参数无效');
@@ -148,50 +209,40 @@ export async function createApp(options = {}) {
       ? names.map((name) => store.get(name))
       : store.list().filter((rule) => rule.enabled !== false);
     if (rules.length > 30) throw new HttpError('一次最多搜索 30 个来源，请选择部分规则');
-    const results = [];
-    // Bound external concurrency to avoid overwhelming small Compose hosts.
-    for (let index = 0; index < rules.length; index += 4) {
-      results.push(
-        ...(await Promise.all(
-          rules.slice(index, index + 4).map(async (rule) => {
-            try {
-              return { ruleName: rule.name, items: await engine.search(rule, keyword) };
-            } catch (error) {
-              return { ruleName: rule.name, items: [], error: error.message };
-            }
-          }),
-        )),
-      );
-    }
-    res.json({ results });
+    await interactive(req, res, async (options) => {
+      const results = [];
+      // Bound external concurrency to avoid overwhelming small Compose hosts.
+      for (let index = 0; index < rules.length; index += 4) {
+        options.signal.throwIfAborted();
+        results.push(
+          ...(await Promise.all(
+            rules.slice(index, index + 4).map(async (rule) => {
+              try {
+                return { ruleName: rule.name, items: await engine.search(rule, keyword, options) };
+              } catch (error) {
+                options.signal.throwIfAborted();
+                return { ruleName: rule.name, items: [], error: error.message };
+              }
+            }),
+          )),
+        );
+      }
+      return { results };
+    });
   });
   app.post('/api/rules/chapters', async (req, res) => {
     const rule = store.get(inputText(req.body?.ruleName, '规则名称', 100));
-    const roads = await engine.chapters(rule, inputText(req.body?.url, '条目地址', 8000));
-    if (!roads.length) throw new HttpError('来源未返回可播放剧集，请更新规则或更换来源', 422);
-    res.json({ roads });
+    const source = inputText(req.body?.url, '条目地址', 8000);
+    await interactive(req, res, async (options) => {
+      const roads = await engine.chapters(rule, source, options);
+      if (!roads.length) throw new HttpError('来源未返回可播放剧集，请更新规则或更换来源', 422);
+      return { roads };
+    });
   });
   app.post('/api/resolve', async (req, res) => {
-    const controller = new AbortController();
-    const cancel = () => {
-      if (!res.writableEnded) controller.abort();
-    };
-    const deadline = setTimeout(
-      () => controller.abort(new HttpError('片源解析超时，请重试或切换线路', 504)),
-      45000,
-    );
-    res.once('close', cancel);
-    try {
-      const result = await media.resolve(
-        store.get(inputText(req.body?.ruleName, '规则名称', 100)),
-        inputText(req.body?.url, '播放地址', 8000),
-        { signal: controller.signal },
-      );
-      if (!res.destroyed) res.json(result);
-    } finally {
-      clearTimeout(deadline);
-      res.off('close', cancel);
-    }
+    const rule = store.get(inputText(req.body?.ruleName, '规则名称', 100));
+    const source = inputText(req.body?.url, '播放地址', 8000);
+    await interactive(req, res, (options) => media.resolve(rule, source, options));
   });
   app.get('/api/media', async (req, res) => media.proxy(req, res));
   app.use('/api', (req, res) => res.status(404).json({ error: 'API 不存在' }));
@@ -224,6 +275,7 @@ export async function createApp(options = {}) {
     app,
     store,
     async close() {
+      verification.close();
       await browserResolver?.close();
       media.close?.();
       await http.close();

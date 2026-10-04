@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
+import { awaitVerification, ensureVerificationSession, VerificationHost } from './verification.jsx';
 import {
   ArrowDownToLine,
   ArrowLeft,
@@ -50,6 +51,10 @@ const prettyDate = (d) =>
 const watchKey = (rule, url) => `${rule}:${url}`;
 
 async function api(path, options = {}) {
+  if (['/rules/search', '/rules/chapters', '/resolve'].includes(path)) {
+    await ensureVerificationSession();
+    options.signal?.throwIfAborted();
+  }
   const response = await fetch(`/api${path}`, {
     ...options,
     headers: { 'Content-Type': 'application/json', ...options.headers },
@@ -61,6 +66,8 @@ async function api(path, options = {}) {
     throw new Error('服务返回了无法识别的内容，请稍后重试。');
   }
   if (!response.ok) throw new Error(data.error || `请求失败（${response.status}）`);
+  if (response.status === 202 && data.type === 'verification')
+    return awaitVerification(data, options.signal);
   return data;
 }
 
@@ -676,6 +683,7 @@ export default function App() {
           {toast}
         </div>
       )}
+      <VerificationHost />
     </div>
   );
 }
@@ -1123,10 +1131,13 @@ function SourceSearch({ defaultQuery = '', subject, rules, onPlay, navigate }) {
   const [error, setError] = useState('');
   const [opening, setOpening] = useState('');
   const mounted = useRef(true);
+  const requestsRef = useRef(new Set());
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      for (const controller of requestsRef.current) controller.abort();
+      requestsRef.current.clear();
     };
   }, []);
   const submit = async (e) => {
@@ -1135,9 +1146,12 @@ function SourceSearch({ defaultQuery = '', subject, rules, onPlay, navigate }) {
     setLoading(true);
     setError('');
     setResults(null);
+    const controller = new AbortController();
+    requestsRef.current.add(controller);
     try {
       const data = await api('/rules/search', {
         method: 'POST',
+        signal: controller.signal,
         body: JSON.stringify({
           keyword: keyword.trim(),
           ...(selected ? { ruleNames: [selected] } : {}),
@@ -1145,8 +1159,9 @@ function SourceSearch({ defaultQuery = '', subject, rules, onPlay, navigate }) {
       });
       if (mounted.current) setResults(data.results || []);
     } catch (e) {
-      if (mounted.current) setError(e.message);
+      if (mounted.current && e.name !== 'AbortError') setError(e.message);
     } finally {
+      requestsRef.current.delete(controller);
       if (mounted.current) setLoading(false);
     }
   };
@@ -1154,9 +1169,12 @@ function SourceSearch({ defaultQuery = '', subject, rules, onPlay, navigate }) {
     const key = `${ruleName}:${item.url}`;
     setOpening(key);
     setError('');
+    const controller = new AbortController();
+    requestsRef.current.add(controller);
     try {
       const data = await api('/rules/chapters', {
         method: 'POST',
+        signal: controller.signal,
         body: JSON.stringify({ ruleName, url: item.url }),
       });
       if (!data.roads?.some((r) => r.episodes?.length))
@@ -1176,8 +1194,9 @@ function SourceSearch({ defaultQuery = '', subject, rules, onPlay, navigate }) {
           episodeIndex: 0,
         });
     } catch (e) {
-      if (mounted.current) setError(e.message);
+      if (mounted.current && e.name !== 'AbortError') setError(e.message);
     } finally {
+      requestsRef.current.delete(controller);
       if (mounted.current) setOpening('');
     }
   };
@@ -1788,10 +1807,12 @@ function Player({ context, settings, onClose, onProgress, notify }) {
   useEffect(() => {
     if (roads.length) return;
     let alive = true;
+    const controller = new AbortController();
     setLoading(true);
     setError('');
     api('/rules/chapters', {
       method: 'POST',
+      signal: controller.signal,
       body: JSON.stringify({ ruleName: context.ruleName, url: context.sourceUrl }),
     })
       .then((data) => {
@@ -1814,13 +1835,14 @@ function Player({ context, settings, onClose, onProgress, notify }) {
         }
       })
       .catch((e) => {
-        if (alive) {
+        if (alive && e.name !== 'AbortError') {
           setError(e.message);
           setLoading(false);
         }
       });
     return () => {
       alive = false;
+      controller.abort();
     };
   }, [context, attempt]);
   useEffect(() => {
