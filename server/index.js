@@ -10,6 +10,7 @@ import { MediaService } from './media.js';
 import { BrowserResolver } from './browser-resolver.js';
 import { MetadataService } from './metadata.js';
 import { VerificationTasks } from './verification.js';
+import { DownloadManager } from './downloads.js';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 
@@ -28,6 +29,7 @@ function pageNumber(value) {
 export async function createApp(options = {}) {
   const http = options.httpClient || createHttpClient();
   const metadata = options.metadata || new MetadataService(http);
+  const dataDir = options.dataDir || process.env.DATA_DIR || resolve(directory, '../data');
   const initialRules =
     options.seedRules ??
     (await Promise.all(
@@ -35,10 +37,7 @@ export async function createApp(options = {}) {
         JSON.parse(await readFile(resolve(directory, 'defaults', `${name}.json`), 'utf8')),
       ),
     ));
-  const store = await new RuleStore(
-    options.dataDir || process.env.DATA_DIR || resolve(directory, '../data'),
-    initialRules,
-  ).init();
+  const store = await new RuleStore(dataDir, initialRules).init();
   const browserResolver =
     options.browserResolver === false || process.env.DYNAMIC_RESOLVER === 'false'
       ? null
@@ -49,6 +48,13 @@ export async function createApp(options = {}) {
         });
   const engine = new RuleEngine(http, { browserResolver });
   const media = new MediaService(http, undefined, { browserResolver });
+  const downloads = await new DownloadManager({
+    directory: resolve(dataDir, 'downloads'),
+    http,
+    media,
+    maxBytes: Number(process.env.VIDEO_CACHE_MAX_BYTES || 10 * 1024 ** 3),
+    ...options.downloadOptions,
+  }).init();
   const verification = new VerificationTasks(options.verificationOptions);
   const repository = (
     process.env.RULES_REPOSITORY || 'https://raw.githubusercontent.com/Predidit/KazumiRules/main/'
@@ -126,7 +132,13 @@ export async function createApp(options = {}) {
   }
   const clients = new Map();
   app.use('/api', (req, res, next) => {
-    if (req.path === '/health' || req.path === '/media') return next();
+    if (
+      req.path === '/health' ||
+      req.path === '/media' ||
+      (['GET', 'HEAD'].includes(req.method) &&
+        /^\/downloads\/[^/]+\/(?:files\/[^/]+|download)$/.test(req.path))
+    )
+      return next();
     const key = req.ip;
     let entry = clients.get(key);
     if (!entry || entry.until < Date.now()) {
@@ -240,9 +252,46 @@ export async function createApp(options = {}) {
     });
   });
   app.post('/api/resolve', async (req, res) => {
-    const rule = store.get(inputText(req.body?.ruleName, '规则名称', 100));
+    const ruleName = inputText(req.body?.ruleName, '规则名称', 100);
     const source = inputText(req.body?.url, '播放地址', 8000);
+    const cached = downloads.findComplete(ruleName, source);
+    if (cached)
+      return res.json({
+        type: cached.type,
+        url: cached.playbackUrl,
+        originalUrl: source,
+        cached: true,
+        downloadId: cached.id,
+      });
+    const rule = store.get(ruleName);
     await interactive(req, res, (options) => media.resolve(rule, source, options));
+  });
+  app.get('/api/downloads', (req, res) => {
+    res.set('Cache-Control', 'no-store').json(downloads.list());
+  });
+  app.post('/api/downloads', async (req, res) => {
+    res
+      .status(202)
+      .set('Cache-Control', 'no-store')
+      .json(await downloads.create(req.body));
+  });
+  app.delete('/api/downloads', async (req, res) => {
+    await downloads.clear();
+    res.json({ ok: true });
+  });
+  app.delete('/api/downloads/:id', async (req, res) => {
+    await downloads.remove(req.params.id);
+    res.json({ ok: true });
+  });
+  app.get('/api/downloads/:id/files/:name', async (req, res, next) => {
+    const file = await downloads.file(req.params.id, req.params.name);
+    res.type(file.contentType).set('Cache-Control', 'no-store');
+    res.sendFile(file.path, { dotfiles: 'deny' }, (error) => {
+      if (error) next(error);
+    });
+  });
+  app.get('/api/downloads/:id/download', async (req, res) => {
+    await downloads.serveDownload(req, res, req.params.id);
   });
   app.get('/api/media', async (req, res) => media.proxy(req, res));
   app.use('/api', (req, res) => res.status(404).json({ error: 'API 不存在' }));
@@ -274,8 +323,10 @@ export async function createApp(options = {}) {
   return {
     app,
     store,
+    downloads,
     async close() {
       verification.close();
+      await downloads.close();
       await browserResolver?.close();
       media.close?.();
       await http.close();

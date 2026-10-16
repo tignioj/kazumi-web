@@ -42,6 +42,7 @@ const NAV = [
   { id: 'calendar', label: '放送日历', sub: 'ON AIR', icon: CalendarDays },
   { id: 'library', label: '我的收藏', sub: 'COLLECTION', icon: BookOpen },
   { id: 'history', label: '观看记录', sub: 'HISTORY', icon: History },
+  { id: 'downloads', label: '下载缓存', sub: 'DOWNLOADS', icon: ArrowDownToLine },
 ];
 const titleOf = (s) => s?.name_cn || s?.name || '未命名动画';
 const timeLabel = (n) =>
@@ -206,6 +207,183 @@ function downloadJSON(data, name) {
   a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+const cacheActive = (item) => ['queued', 'downloading'].includes(item.status);
+const sameCacheEpisode = (item, ruleName, episodeUrl) =>
+  item.ruleName?.trim().toLowerCase() === ruleName?.trim().toLowerCase() &&
+  item.episodeUrl === episodeUrl;
+const bytesLabel = (value) => {
+  const bytes = Math.max(0, Number(value) || 0);
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length);
+  return `${(bytes / 1024 ** exponent).toFixed(exponent > 1 ? 1 : 0)} ${units[exponent - 1]}`;
+};
+const cacheStatus = (item) =>
+  ({ queued: '等待下载', downloading: '正在缓存', complete: '已缓存', error: '缓存失败' })[
+    item.status
+  ] || '未知状态';
+
+function useDownloads(identity) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
+  const controllerRef = useRef(null);
+  const timerRef = useRef(null);
+  const stop = useCallback(() => {
+    controllerRef.current?.abort();
+    clearTimeout(timerRef.current);
+  }, []);
+  const reload = useCallback(() => {
+    stop();
+    setAttempt((value) => value + 1);
+  }, [stop]);
+  useEffect(() => {
+    if (!identity) return;
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    const load = async () => {
+      if (document.hidden) return;
+      try {
+        const next = await api('/downloads', { signal: controller.signal });
+        if (controller.signal.aborted) return;
+        setData(next);
+        setError('');
+        if (
+          next.items?.some(
+            (item) => cacheActive(item) && (identity === 'all' || item.episodeUrl === identity),
+          )
+        )
+          timerRef.current = setTimeout(load, 1500);
+      } catch (e) {
+        if (!controller.signal.aborted) setError(e.message);
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    };
+    load();
+    const refresh = () => {
+      if (!document.hidden) reload();
+      else stop();
+    };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      controller.abort();
+      clearTimeout(timerRef.current);
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [identity, attempt, reload, stop]);
+  const accept = (item) => {
+    setData((previous) => ({
+      ...previous,
+      items: [item, ...(previous?.items || []).filter((entry) => entry.id !== item.id)],
+    }));
+    reload();
+  };
+  const forget = (id) => {
+    setData((previous) => {
+      if (!previous) return previous;
+      const removed = previous.items.filter((item) => id === 'all' || item.id === id);
+      return {
+        ...previous,
+        items: previous.items.filter((item) => !removed.includes(item)),
+        usedBytes: Math.max(
+          0,
+          (previous.usedBytes || 0) - removed.reduce((sum, item) => sum + (item.bytes || 0), 0),
+        ),
+      };
+    });
+    reload();
+  };
+  return { items: data?.items || [], data, loading, error, reload, accept, forget };
+}
+
+function CacheProgress({ item }) {
+  const total = item.type === 'hls' ? item.totalFiles : item.totalBytes;
+  const done = Number(item.type === 'hls' ? item.completedFiles : item.bytes) || 0;
+  const percentage =
+    item.status === 'complete' ? 100 : total > 0 ? Math.min(100, (done / total) * 100) : null;
+  return (
+    <div className="cache-progress">
+      <div className="cache-progress-label">
+        <span className={`cache-status cache-status-${item.status}`}>
+          {cacheActive(item) && <LoaderCircle size={13} className="spin" />}
+          {item.status === 'complete' && <Check size={13} />}
+          {item.status === 'error' && <CircleAlert size={13} />}
+          {cacheStatus(item)}
+        </span>
+        <span>
+          {bytesLabel(item.bytes)}
+          {item.type !== 'hls' && item.totalBytes > 0 && item.status !== 'complete'
+            ? ` / ${bytesLabel(item.totalBytes)}`
+            : ''}
+          {item.type === 'hls' && item.totalFiles > 0 && item.status !== 'complete'
+            ? ` · ${item.completedFiles || 0}/${item.totalFiles} 个文件`
+            : ''}
+        </span>
+      </div>
+      {cacheActive(item) && (
+        <div
+          className={`progress-track ${percentage === null ? 'cache-indeterminate' : ''}`}
+          role="progressbar"
+          aria-label="视频缓存进度"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={percentage === null ? undefined : Math.round(percentage)}
+          aria-valuetext={percentage === null ? '正在下载，大小未知' : `${Math.round(percentage)}%`}
+        >
+          <span style={{ width: `${percentage === null ? 35 : percentage}%` }} />
+        </div>
+      )}
+      {item.error && <p className="cache-error">{item.error}</p>}
+    </div>
+  );
+}
+
+function CacheRemoval({ item, onClose, onRemoved }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const all = item === 'all';
+  return (
+    <Modal title={all ? '清空全部视频缓存' : '删除视频缓存'} onClose={() => !busy && onClose()}>
+      <p>
+        {all
+          ? '将停止所有下载任务，并删除服务器上的全部视频缓存。'
+          : `将删除「${item.title} · ${item.episodeName || '当前剧集'}」的缓存${cacheActive(item) ? '，并停止下载' : ''}。`}
+        此操作会影响使用此服务器的所有人；收藏与观看记录会保留。
+      </p>
+      {error && <Notice>{error}</Notice>}
+      <div className="modal-actions">
+        <button className="button quiet" disabled={busy} onClick={onClose}>
+          取消
+        </button>
+        <button
+          className="button danger"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setError('');
+            try {
+              await api(all ? '/downloads' : `/downloads/${encodeURIComponent(item.id)}`, {
+                method: 'DELETE',
+              });
+              onRemoved();
+            } catch (e) {
+              setError(e.message);
+              setBusy(false);
+            }
+          }}
+        >
+          {busy && <LoaderCircle size={15} className="spin" />}
+          {all ? '清空全部缓存' : '确认删除'}
+        </button>
+      </div>
+    </Modal>
+  );
 }
 
 function Notice({ children, onRetry }) {
@@ -447,6 +625,21 @@ export default function App() {
     [setHistory],
   );
   const resume = (record) => startPlayer({ ...record, resume: record.position });
+  const playCached = (item) => {
+    const previous = history.find((record) =>
+      sameCacheEpisode(record, item.ruleName, item.episodeUrl),
+    );
+    startPlayer({
+      ...item,
+      roads: [{ name: '已缓存', episodes: [{ name: item.episodeName, url: item.episodeUrl }] }],
+      roadIndex: 0,
+      episodeIndex: 0,
+      cacheOnly: true,
+      originalRoadIndex: previous?.roadIndex || 0,
+      originalEpisodeIndex: previous?.episodeIndex || 0,
+      resume: previous?.position || 0,
+    });
+  };
   return (
     <div className="app-shell">
       {sidebarOpen && (
@@ -587,11 +780,13 @@ export default function App() {
         <main>
           {player ? (
             <Player
+              key={`${player.ruleName}:${player.sourceUrl}:${player.cacheOnly ? player.id : 'source'}`}
               context={player}
               settings={settings}
               onClose={() => setPlayer(null)}
               onProgress={saveProgress}
               notify={notify}
+              navigate={navigate}
             />
           ) : (
             <>
@@ -620,6 +815,7 @@ export default function App() {
                   }}
                 />
               )}
+              {section === 'downloads' && <Downloads onPlay={playCached} notify={notify} />}
               {section === 'subject' && (
                 <Subject
                   key={route.split('/')[2]}
@@ -646,6 +842,7 @@ export default function App() {
                   setLibrary={setLibrary}
                   setHistory={setHistory}
                   notify={notify}
+                  navigate={navigate}
                 />
               )}
               {![
@@ -653,6 +850,7 @@ export default function App() {
                 'calendar',
                 'library',
                 'history',
+                'downloads',
                 'subject',
                 'sources',
                 'rules',
@@ -1001,6 +1199,143 @@ function HistoryPage({ history, onResume, onRemove, onClear }) {
             </button>
           </div>
         </Modal>
+      )}
+    </>
+  );
+}
+
+function Downloads({ onPlay, notify }) {
+  const downloads = useDownloads('all');
+  const [removing, setRemoving] = useState(null);
+  const active = downloads.items.filter(cacheActive).length;
+  const maxBytes = Number(downloads.data?.maxBytes) || 0;
+  const usedBytes = Number(downloads.data?.usedBytes) || 0;
+  return (
+    <>
+      <PageHeading
+        eyebrow="KEEP THE NEXT EPISODE CLOSE"
+        title="下载缓存"
+        description="先缓存，再安心观看。已缓存的视频可直接播放，也可保存到设备。"
+      >
+        <button
+          className="button quiet"
+          disabled={!downloads.items.length}
+          onClick={() => setRemoving('all')}
+        >
+          <Trash2 size={15} />
+          清空缓存
+        </button>
+      </PageHeading>
+      <section className="cache-storage">
+        <div className="cache-storage-heading">
+          <span className="cache-storage-icon">
+            <ArrowDownToLine size={22} />
+          </span>
+          <div>
+            <h2>服务器视频缓存</h2>
+            <p>
+              {downloads.data
+                ? `${bytesLabel(usedBytes)}${maxBytes ? ` / ${bytesLabel(maxBytes)}` : ''}`
+                : '正在读取容量…'}
+            </p>
+          </div>
+          <button className="text-button" onClick={downloads.reload}>
+            <RefreshCw size={14} />
+            刷新
+          </button>
+        </div>
+        {maxBytes > 0 && (
+          <div className="progress-track cache-storage-track" aria-label="缓存空间使用量">
+            <span style={{ width: `${Math.min(100, (usedBytes / maxBytes) * 100)}%` }} />
+          </div>
+        )}
+        <p className="cache-help">
+          缓存保存在部署服务器上，所有访问者共享；关闭页面后任务继续。播放仍需连接此服务器。 HLS
+          保存到设备时为包含播放列表与分片的压缩包，不会合并为 MP4。
+        </p>
+      </section>
+      <div className="catalog-toolbar">
+        <div className="section-title">
+          <span className="section-number">SAVED</span>
+          <h2>缓存任务</h2>
+        </div>
+        <span className="muted small">
+          {downloads.items.length} 个任务{active ? ` · ${active} 个正在下载` : ''}
+        </span>
+      </div>
+      {downloads.error && <Notice onRetry={downloads.reload}>{downloads.error}</Notice>}
+      {downloads.loading ? (
+        <Spinner text="正在读取视频缓存…" />
+      ) : downloads.items.length ? (
+        <div className="cache-list">
+          {downloads.items.map((item) => (
+            <article className="cache-row" key={item.id}>
+              <div className="cache-cover">
+                {item.image ? (
+                  <img referrerPolicy="no-referrer" src={item.image} alt="" loading="lazy" />
+                ) : (
+                  <Film size={24} />
+                )}
+              </div>
+              <div className="cache-description">
+                <h3>{item.title}</h3>
+                <p>
+                  {item.episodeName || '当前剧集'} · {item.ruleName} ·{' '}
+                  {item.type === 'hls' ? 'HLS' : '视频'}
+                </p>
+                <CacheProgress item={item} />
+              </div>
+              <div className="cache-actions">
+                {item.status === 'complete' && (
+                  <>
+                    <button
+                      className="button primary"
+                      onClick={() => onPlay(item)}
+                      aria-label={`播放缓存 ${item.title} ${item.episodeName}`}
+                    >
+                      <Play size={15} />
+                      播放
+                    </button>
+                    <a
+                      className="button quiet"
+                      href={item.downloadUrl}
+                      download
+                      aria-label={`保存到设备 ${item.title} ${item.episodeName}`}
+                    >
+                      <Download size={15} />
+                      {item.type === 'hls' ? '保存压缩包' : '保存视频'}
+                    </a>
+                  </>
+                )}
+                <button
+                  className="icon-button"
+                  onClick={() => setRemoving(item)}
+                  aria-label={`删除缓存 ${item.title} ${item.episodeName}`}
+                  title={cacheActive(item) ? '取消下载并删除缓存' : '删除缓存'}
+                >
+                  {cacheActive(item) ? <X size={17} /> : <Trash2 size={17} />}
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        !downloads.error && (
+          <Empty icon={ArrowDownToLine} title="把下一话，提前准备好">
+            播放视频时点击「缓存当前集」，即可在这里管理下载进度与已缓存的视频。
+          </Empty>
+        )
+      )}
+      {removing && (
+        <CacheRemoval
+          item={removing}
+          onClose={() => setRemoving(null)}
+          onRemoved={() => {
+            setRemoving(null);
+            downloads.forget(removing === 'all' ? 'all' : removing.id);
+            notify(removing === 'all' ? '全部视频缓存已清空' : '视频缓存已删除');
+          }}
+        />
       )}
     </>
   );
@@ -1609,7 +1944,16 @@ function Rules({ rules, error, reload, notify }) {
   );
 }
 
-function Settings({ settings, setSettings, library, history, setLibrary, setHistory, notify }) {
+function Settings({
+  settings,
+  setSettings,
+  library,
+  history,
+  setLibrary,
+  setHistory,
+  notify,
+  navigate,
+}) {
   const fileRef = useRef();
   const [pending, setPending] = useState(null);
   const [error, setError] = useState('');
@@ -1728,6 +2072,23 @@ function Settings({ settings, setSettings, library, history, setLibrary, setHist
           </div>
           {error && <Notice>{error}</Notice>}
         </section>
+        <section className="settings-card">
+          <div className="settings-card-heading">
+            <ArrowDownToLine size={19} />
+            <div>
+              <h2>视频下载与缓存</h2>
+              <p>缓存视频，查看下载进度，释放服务器空间</p>
+            </div>
+          </div>
+          <p className="muted small">
+            视频缓存保存在服务器，与所有访问者共享；不包含在浏览器数据备份中。
+          </p>
+          <div className="button-group">
+            <button className="button quiet" onClick={() => navigate('/downloads')}>
+              管理视频缓存 <ArrowRight size={15} />
+            </button>
+          </div>
+        </section>
         <section className="settings-card about-card">
           <div className="about-brand">
             kazumi<span>.</span>
@@ -1777,7 +2138,112 @@ function Settings({ settings, setSettings, library, history, setLibrary, setHist
   );
 }
 
-function Player({ context, settings, onClose, onProgress, notify }) {
+function PlayerCachePanel({ context, episode, resolved, onCacheRemoved, navigate, notify }) {
+  const downloads = useDownloads(episode.url);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [removing, setRemoving] = useState(null);
+  const item = downloads.items.find((entry) =>
+    sameCacheEpisode(entry, context.ruleName, episode.url),
+  );
+  const canCache = resolved && ['video', 'hls'].includes(resolved.type) && !resolved.cached;
+  const create = async () => {
+    if (!canCache || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      const created = await api('/downloads', {
+        method: 'POST',
+        body: JSON.stringify({
+          ruleName: context.ruleName,
+          episodeUrl: episode.url,
+          sourceUrl: context.sourceUrl,
+          title: context.title,
+          episodeName: episode.name,
+          image: context.image,
+          subjectId: context.subjectId,
+          mediaUrl: resolved.url,
+          type: resolved.type,
+        }),
+      });
+      downloads.accept(created);
+      notify(created.status === 'complete' ? '当前集已缓存' : '已加入缓存任务，关闭页面后仍会继续');
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="player-cache-panel" aria-label="当前剧集缓存">
+      <div className="player-cache-heading">
+        <div>
+          <h2>
+            <ArrowDownToLine size={17} />
+            当前剧集缓存
+          </h2>
+          <p>
+            {resolved?.cached ? '正在播放服务器缓存。' : '缓存到服务器，关闭页面后仍会继续下载。'}
+          </p>
+        </div>
+        <button className="text-button" onClick={() => navigate('/downloads')}>
+          管理缓存 <ArrowRight size={14} />
+        </button>
+      </div>
+      {item && <CacheProgress item={item} />}
+      {downloads.error && (
+        <Notice onRetry={downloads.reload}>无法读取缓存状态：{downloads.error}</Notice>
+      )}
+      {error && <Notice>{error}</Notice>}
+      <div className="player-cache-actions">
+        {(!item || item.status === 'error') && !resolved?.cached && (
+          <button className="button quiet" disabled={!canCache || busy} onClick={create}>
+            {busy ? <LoaderCircle size={15} className="spin" /> : <ArrowDownToLine size={15} />}
+            {item?.status === 'error' ? '重新缓存当前集' : '缓存当前集'}
+          </button>
+        )}
+        {item?.status === 'complete' && (
+          <a className="button quiet" href={item.downloadUrl} download>
+            <Download size={15} />
+            {item.type === 'hls' ? '保存压缩包到设备' : '保存视频到设备'}
+          </a>
+        )}
+        {item && (
+          <button className="text-button" onClick={() => setRemoving(item)}>
+            <Trash2 size={14} />
+            {cacheActive(item) ? '取消下载' : '清理当前缓存'}
+          </button>
+        )}
+        {!item && resolved?.cached && !downloads.loading && !downloads.error && (
+          <button className="button quiet" onClick={onCacheRemoved}>
+            <RefreshCw size={15} />
+            缓存已被移除，重新解析
+          </button>
+        )}
+        {resolved?.type === 'iframe' && (
+          <span className="cache-help">站点内嵌播放器无法缓存，请切换可直接播放的视频线路。</span>
+        )}
+        {item?.status === 'complete' && item.type === 'hls' && (
+          <span className="cache-help">HLS 压缩包包含播放列表与分片，不会合并为 MP4。</span>
+        )}
+      </div>
+      {removing && (
+        <CacheRemoval
+          item={removing}
+          onClose={() => setRemoving(null)}
+          onRemoved={() => {
+            setRemoving(null);
+            downloads.forget(removing.id);
+            if (resolved?.cached) onCacheRemoved();
+            notify('当前剧集缓存已删除');
+          }}
+        />
+      )}
+    </section>
+  );
+}
+
+function Player({ context, settings, onClose, onProgress, notify, navigate }) {
   const [roads, setRoads] = useState(context.roads || []);
   const [roadIndex, setRoadIndex] = useState(context.roadIndex || 0);
   const [episodeIndex, setEpisodeIndex] = useState(context.episodeIndex || 0);
@@ -1860,7 +2326,7 @@ function Player({ context, settings, onClose, onProgress, notify }) {
     })
       .then((data) => {
         if (controller.signal.aborted) return;
-        setResolved(data);
+        setResolved({ ...data, episodeUrl: episode.url });
         setLoading(false);
       })
       .catch((e) => {
@@ -1883,8 +2349,8 @@ function Player({ context, settings, onClose, onProgress, notify }) {
         sourceUrl: context.sourceUrl,
         episodeUrl: episode.url,
         episodeName: episode.name,
-        roadIndex,
-        episodeIndex,
+        roadIndex: context.cacheOnly ? context.originalRoadIndex : roadIndex,
+        episodeIndex: context.cacheOnly ? context.originalEpisodeIndex : episodeIndex,
         position: Number.isFinite(position) ? position : 0,
         duration: Number.isFinite(duration) ? duration : 0,
         updatedAt: Date.now(),
@@ -2101,6 +2567,17 @@ function Player({ context, settings, onClose, onProgress, notify }) {
           <ChevronRight size={16} />
         </button>
       </div>
+      {episode && (
+        <PlayerCachePanel
+          key={`${context.ruleName}:${episode.url}`}
+          context={context}
+          episode={episode}
+          resolved={resolved?.episodeUrl === episode.url ? resolved : null}
+          onCacheRemoved={() => setAttempt((value) => value + 1)}
+          navigate={navigate}
+          notify={notify}
+        />
+      )}
       <section className="episode-section">
         <div className="catalog-toolbar">
           <div className="section-title">

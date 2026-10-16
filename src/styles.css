@@ -198,6 +198,7 @@ img {
   z-index: 30;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
 }
 .brand {
   display: flex;
@@ -1757,6 +1758,229 @@ img {
 .episode-section {
   border-top: 1px solid var(--line);
   padding-top: 25px;
+}
+.cache-storage,
+.player-cache-panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 22px;
+  margin-bottom: 28px;
+}
+.cache-storage-heading,
+.player-cache-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.cache-storage-heading > .text-button,
+.player-cache-heading > .text-button {
+  margin-left: auto;
+}
+.cache-storage-heading h2,
+.player-cache-heading h2 {
+  font-size: 14px;
+  font-weight: 550;
+}
+.cache-storage-heading p {
+  font-size: 22px;
+  margin-top: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.cache-storage-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.cache-storage-track {
+  margin-top: 20px;
+}
+.cache-help {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.9;
+}
+.cache-storage > .cache-help {
+  margin-top: 16px;
+}
+.cache-list {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+.cache-row {
+  display: flex;
+  align-items: center;
+  gap: 19px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 9px;
+}
+.cache-cover {
+  width: 63px;
+  height: 88px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: var(--surface-soft);
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+}
+.cache-description {
+  flex: 1;
+  min-width: 0;
+}
+.cache-description h3 {
+  font-size: 14px;
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+.cache-description > p {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 7px 0 11px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.cache-progress-label,
+.cache-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.cache-progress-label {
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+.cache-status-complete {
+  color: var(--green);
+}
+.cache-status-error,
+.cache-error {
+  color: var(--accent);
+}
+.cache-progress > .progress-track {
+  margin-top: 9px;
+}
+.cache-progress .cache-error {
+  font-size: 11px;
+  line-height: 1.8;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+}
+.cache-indeterminate > span {
+  animation: cache-loading 1.8s ease-in-out infinite alternate;
+}
+@keyframes cache-loading {
+  to {
+    transform: translateX(185%);
+  }
+}
+.cache-actions,
+.player-cache-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.cache-actions .button,
+.player-cache-actions .button {
+  font-size: 11px;
+  min-height: 36px;
+  padding: 8px 12px;
+}
+.player-cache-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.player-cache-heading h2 svg {
+  color: var(--accent);
+}
+.player-cache-heading p {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.8;
+  margin-top: 8px;
+}
+.player-cache-panel > .cache-progress {
+  margin-top: 18px;
+}
+.player-cache-actions {
+  margin-top: 16px;
+  gap: 15px;
+}
+.player-cache-actions .cache-help {
+  flex-basis: 100%;
+}
+@media (max-width: 1100px) {
+  .cache-row {
+    flex-wrap: wrap;
+  }
+  .cache-actions {
+    flex-basis: 100%;
+    padding-left: 82px;
+  }
+  .cache-actions > .icon-button {
+    margin-left: auto;
+  }
+}
+@media (max-width: 600px) {
+  .cache-storage,
+  .player-cache-panel {
+    padding: 16px;
+  }
+  .cache-storage-heading p {
+    font-size: 18px;
+  }
+  .cache-storage-heading h2,
+  .player-cache-heading h2 {
+    font-size: 12px;
+  }
+  .cache-storage-icon {
+    width: 38px;
+    height: 43px;
+  }
+  .cache-row {
+    padding: 14px;
+    gap: 12px;
+  }
+  .cache-cover {
+    width: 48px;
+    height: 68px;
+  }
+  .cache-description h3 {
+    font-size: 12px;
+  }
+  .cache-description > p,
+  .cache-help,
+  .player-cache-heading p {
+    font-size: 10px;
+  }
+  .cache-actions {
+    padding-left: 0;
+  }
+  .cache-actions .button {
+    font-size: 10px;
+    padding: 7px 10px;
+  }
+  .player-cache-heading {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .player-cache-heading > .text-button,
+  .cache-storage-heading > .text-button {
+    font-size: 10px;
+  }
 }
 .road-tabs {
   display: flex;
