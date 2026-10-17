@@ -13,6 +13,7 @@ import {
 } from './rule-updates.js';
 import { RuleEngine } from './rules.js';
 import { MediaService } from './media.js';
+import { ImageCache } from './images.js';
 import { BrowserResolver } from './browser-resolver.js';
 import { MetadataService, categorySearchOptions } from './metadata.js';
 import { VerificationTasks } from './verification.js';
@@ -45,6 +46,11 @@ export async function createApp(options = {}) {
     ));
   const store = await new RuleStore(dataDir, initialRules).init();
   const watchStore = await new WatchStore(dataDir).init();
+  const images = await new ImageCache({
+    directory: resolve(dataDir, 'images'),
+    http,
+    maxBytes: Number(process.env.IMAGE_CACHE_MAX_BYTES ?? 256 * 1024 ** 2),
+  }).init();
   const browserResolver =
     options.browserResolver === false || process.env.DYNAMIC_RESOLVER === 'false'
       ? null
@@ -142,6 +148,7 @@ export async function createApp(options = {}) {
     if (
       req.path === '/health' ||
       req.path === '/media' ||
+      (['GET', 'HEAD'].includes(req.method) && req.path === '/image') ||
       (['GET', 'HEAD'].includes(req.method) &&
         /^\/downloads\/[^/]+\/(?:files\/[^/]+|download)$/.test(req.path))
     )
@@ -157,6 +164,7 @@ export async function createApp(options = {}) {
     next();
   });
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
+  app.get('/api/image', async (req, res) => images.serve(req, res));
   app.use('/api/watch-data', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
     next();
@@ -377,6 +385,7 @@ export async function createApp(options = {}) {
       verification.close();
       await watchStore.pending;
       await downloads.close();
+      await images.close();
       await browserResolver?.close();
       media.close?.();
       await http.close();

@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import Hls from 'hls.js';
+import { startPlayback } from './playback.js';
+import { PlaybackDiagnostics } from './playback-diagnostics.jsx';
+import { imageSource } from '../shared/images.js';
 import { useWatchData } from './watch-data.js';
 import { WATCH_STATUSES as STATUSES, normalizeWatchData, watchKey } from '../shared/watch-data.js';
 import { awaitVerification, ensureVerificationSession, VerificationHost } from './verification.jsx';
@@ -461,7 +463,7 @@ function Poster({ subject, onOpen, library }) {
         {subject.image ? (
           <img
             referrerPolicy="no-referrer"
-            src={subject.image}
+            src={imageSource(subject.image)}
             alt=""
             loading="lazy"
             onError={(e) => {
@@ -974,7 +976,9 @@ function Discover({ query, library, history, onOpen, onResume, navigate }) {
             {history.slice(0, 3).map((item) => (
               <button className="continue-card" key={item.key} onClick={() => onResume(item)}>
                 <div className="continue-image">
-                  {item.image && <img referrerPolicy="no-referrer" src={item.image} alt="" />}
+                  {item.image && (
+                    <img referrerPolicy="no-referrer" src={imageSource(item.image)} alt="" />
+                  )}
                   <Play size={19} fill="currentColor" />
                 </div>
                 <div>
@@ -1418,7 +1422,7 @@ function HistoryPage({ history, onResume, onRemove, onClear }) {
             <article className="history-row" key={item.key}>
               <button className="history-cover" onClick={() => onResume(item)}>
                 {item.image ? (
-                  <img referrerPolicy="no-referrer" src={item.image} alt="" />
+                  <img referrerPolicy="no-referrer" src={imageSource(item.image)} alt="" />
                 ) : (
                   <Film size={24} />
                 )}
@@ -1554,7 +1558,12 @@ function Downloads({ onPlay, notify }) {
             <article className="cache-row" key={item.id}>
               <div className="cache-cover">
                 {item.image ? (
-                  <img referrerPolicy="no-referrer" src={item.image} alt="" loading="lazy" />
+                  <img
+                    referrerPolicy="no-referrer"
+                    src={imageSource(item.image)}
+                    alt=""
+                    loading="lazy"
+                  />
                 ) : (
                   <Film size={24} />
                 )}
@@ -1639,7 +1648,11 @@ function Subject({ id, library, updateLibrary, rules, onPlay, navigate, onBack, 
       <section className="subject-hero">
         <div className="subject-poster">
           {subject.image ? (
-            <img referrerPolicy="no-referrer" src={subject.image} alt={titleOf(subject)} />
+            <img
+              referrerPolicy="no-referrer"
+              src={imageSource(subject.image)}
+              alt={titleOf(subject)}
+            />
           ) : (
             <Film size={50} />
           )}
@@ -2635,6 +2648,7 @@ function Player({ context, settings, onClose, onProgress, notify, navigate }) {
   const [slowResolve, setSlowResolve] = useState(false);
   const [error, setError] = useState('');
   const [playError, setPlayError] = useState('');
+  const [playInfo, setPlayInfo] = useState(null);
   const [attempt, setAttempt] = useState(0);
   const [speed, setSpeed] = useState(1);
   const videoRef = useRef();
@@ -2700,6 +2714,7 @@ function Player({ context, settings, onClose, onProgress, notify, navigate }) {
     setLoading(true);
     setError('');
     setPlayError('');
+    setPlayInfo(null);
     setResolved(null);
     resumedRef.current = false;
     api('/resolve', {
@@ -2748,7 +2763,6 @@ function Player({ context, settings, onClose, onProgress, notify, navigate }) {
     }
     const video = videoRef.current;
     if (!video) return;
-    let hls;
     const resume = () => {
       video.playbackRate = speed;
       if (!resumedRef.current && positionRef.current > 0 && Number.isFinite(video.duration)) {
@@ -2770,35 +2784,22 @@ function Player({ context, settings, onClose, onProgress, notify, navigate }) {
         lastSaveRef.current = Date.now();
       }
     };
-    const failure = () => setPlayError('浏览器无法播放此视频。可重试、切换线路，或打开来源页面。');
     video.addEventListener('loadedmetadata', resume);
     video.addEventListener('timeupdate', update);
     video.addEventListener('pause', save);
-    video.addEventListener('error', failure);
     window.addEventListener('pagehide', save);
-    if (
-      resolved.type === 'hls' &&
-      Hls.isSupported() &&
-      !video.canPlayType('application/vnd.apple.mpegurl')
-    ) {
-      hls = new Hls();
-      hls.loadSource(resolved.url);
-      hls.attachMedia(video);
-      hls.on(Hls.Events.ERROR, (_, data) => {
-        if (data.fatal) failure();
-      });
-    } else {
-      video.src = resolved.url;
-    }
+    const stopPlayback = startPlayback(video, resolved, {
+      onError: setPlayError,
+      onInfo: setPlayInfo,
+    });
     record(positionRef.current);
     return () => {
       save(false);
       video.removeEventListener('loadedmetadata', resume);
       video.removeEventListener('timeupdate', update);
       video.removeEventListener('pause', save);
-      video.removeEventListener('error', failure);
       window.removeEventListener('pagehide', save);
-      hls?.destroy();
+      stopPlayback();
       video.removeAttribute('src');
       video.load();
     };
@@ -2907,7 +2908,18 @@ function Player({ context, settings, onClose, onProgress, notify, navigate }) {
           />
         ) : null}
       </div>
-      {playError && <Notice onRetry={() => setAttempt((p) => p + 1)}>{playError}</Notice>}
+      {playError && (
+        <Notice onRetry={() => setAttempt((p) => p + 1)}>
+          <strong>{playError.title}。</strong>
+          {playError.message}
+        </Notice>
+      )}
+      {!playError && playInfo?.status === 'unsupported' && (
+        <Notice>当前浏览器报告不支持该线路的编码，若无法播放请切换线路或尝试其他浏览器。</Notice>
+      )}
+      {resolved && resolved.type !== 'iframe' && (
+        <PlaybackDiagnostics info={playInfo} error={playError} />
+      )}
       {resolved?.type === 'iframe' && (
         <div className="iframe-note">
           <CircleAlert size={16} />

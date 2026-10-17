@@ -153,6 +153,7 @@ export function createHttpClient({
     let headers = cleanHeaders(options.headers);
     let dropContentType = false;
     for (let redirects = 0; redirects <= 5; redirects++) {
+      options.validateUrl?.(url.href);
       // Session-aware callers select cookies for every URL, including a
       // redirect to another path on the same origin. The callback returns the
       // complete header set, preserving Range and other caller headers itself.
