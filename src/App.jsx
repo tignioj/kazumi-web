@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
+import { useWatchData } from './watch-data.js';
+import { WATCH_STATUSES as STATUSES, normalizeWatchData, watchKey } from '../shared/watch-data.js';
 import { awaitVerification, ensureVerificationSession, VerificationHost } from './verification.jsx';
 import {
   CATEGORY_FIRST_YEAR,
@@ -45,7 +47,6 @@ import {
   X,
 } from 'lucide-react';
 
-const STATUSES = ['想看', '在看', '看过', '搁置', '抛弃'];
 const NAV = [
   { id: 'discover', label: '发现', sub: 'DISCOVER', icon: Compass },
   { id: 'categories', label: '番剧分类', sub: 'CATEGORIES', icon: LayoutGrid },
@@ -59,7 +60,6 @@ const timeLabel = (n) =>
   `${Math.floor((n || 0) / 60)}:${String(Math.floor((n || 0) % 60)).padStart(2, '0')}`;
 const prettyDate = (d) =>
   d ? new Date(d).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }) : '时间未知';
-const watchKey = (rule, url) => `${rule}:${url}`;
 
 async function api(path, options = {}) {
   if (['/rules/search', '/rules/chapters', '/resolve'].includes(path)) {
@@ -116,68 +116,14 @@ function normalizeBackup(data) {
     !Array.isArray(data.history)
   )
     throw new Error('这不是有效的 Kazumi Web 备份文件。');
-  const string = (value) => (typeof value === 'string' ? value : '');
-  const image = (value) => (/^https?:\/\//i.test(string(value)) ? value : '');
-  const library = {};
-  for (const item of Object.values(data.library)) {
-    const s = item?.subject;
-    if (
-      !s ||
-      !Number.isSafeInteger(Number(s.id)) ||
-      Number(s.id) <= 0 ||
-      !STATUSES.includes(item.status) ||
-      typeof s.name !== 'string'
-    )
-      throw new Error('备份中的收藏格式不完整。');
-    const subject = {
-      id: Number(s.id),
-      name: s.name,
-      name_cn: string(s.name_cn),
-      image: image(s.image),
-      date: string(s.date),
-      summary: string(s.summary),
-      score: Number(s.score) || 0,
-      rank: Number(s.rank) || 0,
-      eps: Number(s.eps) || 0,
-      tags: Array.isArray(s.tags) ? s.tags.filter((t) => typeof t === 'string') : [],
-    };
-    library[subject.id] = {
-      subject,
-      status: item.status,
-      addedAt: Number(item.addedAt) || Date.now(),
-    };
+  let records;
+  try {
+    records = normalizeWatchData(data);
+  } catch (error) {
+    throw new Error(`备份中的${error.message.replace('数据格式', '格式')}`);
   }
-  const history = data.history.slice(0, 200).map((item) => {
-    if (
-      !item ||
-      typeof item.ruleName !== 'string' ||
-      !item.ruleName ||
-      typeof item.sourceUrl !== 'string' ||
-      !item.sourceUrl ||
-      typeof item.title !== 'string' ||
-      typeof item.episodeUrl !== 'string'
-    )
-      throw new Error('备份中的观看记录格式不完整。');
-    const nonnegative = (v) => (Number.isFinite(Number(v)) ? Math.max(0, Number(v)) : 0);
-    return {
-      key: watchKey(item.ruleName, item.sourceUrl),
-      subjectId: Number(item.subjectId) || undefined,
-      title: item.title,
-      image: image(item.image),
-      ruleName: item.ruleName,
-      sourceUrl: item.sourceUrl,
-      episodeUrl: item.episodeUrl,
-      episodeName: string(item.episodeName),
-      roadIndex: Math.floor(nonnegative(item.roadIndex)),
-      episodeIndex: Math.floor(nonnegative(item.episodeIndex)),
-      position: nonnegative(item.position),
-      duration: nonnegative(item.duration),
-      updatedAt: Number(item.updatedAt) || Date.now(),
-    };
-  });
   return {
-    library,
-    history,
+    ...records,
     settings: {
       theme: ['system', 'light', 'dark'].includes(data.settings?.theme)
         ? data.settings.theme
@@ -568,8 +514,8 @@ export default function App() {
     scrollY: null,
   }));
   const { route, origin } = navigation;
-  const [library, setLibrary] = useStored('kazumi.library.v1', {});
-  const [history, setHistory] = useStored('kazumi.history.v1', []);
+  const watchData = useWatchData(api);
+  const { library, history, saveProgress } = watchData;
   const [settings, setSettings] = useStored('kazumi.settings.v1', {
     theme: 'system',
     autoNext: false,
@@ -666,25 +612,18 @@ export default function App() {
   const listSection = listRoute?.split('/')[1]?.split('?')[0] || '';
   const query = new URLSearchParams(listRoute?.split('?')[1] || '').get('q') || '';
   const openSubject = (id) => navigate(`/subject/${id}`);
-  const updateLibrary = (subject, status) => {
-    setLibrary((prev) => {
-      const next = { ...prev };
-      if (status)
-        next[subject.id] = { subject, status, addedAt: prev[subject.id]?.addedAt || Date.now() };
-      else delete next[subject.id];
-      return next;
-    });
-    notify(status ? `已标记为「${status}」` : '已从收藏中移除');
+  const updateLibrary = async (subject, status) => {
+    try {
+      await watchData.saveLibrary(subject, status);
+      notify(status ? `已标记为「${status}」` : '已从收藏中移除');
+    } catch (error) {
+      notify(`收藏未保存：${error.message}`);
+    }
   };
   const startPlayer = (context) => {
     setPlayer(context);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
-  const saveProgress = useCallback(
-    (record) =>
-      setHistory((prev) => [record, ...prev.filter((i) => i.key !== record.key)].slice(0, 200)),
-    [setHistory],
-  );
   const resume = (record) => startPlayer({ ...record, resume: record.position });
   const playCached = (item) => {
     const previous = history.find((record) =>
@@ -848,7 +787,22 @@ export default function App() {
           </button>
         </header>
         <main>
-          {player ? (
+          {watchData.error && (
+            <Notice onRetry={watchData.writeError ? undefined : watchData.refresh}>
+              {watchData.error}
+            </Notice>
+          )}
+          {watchData.legacy?.data && section !== 'settings' && (
+            <Notice>
+              此浏览器有旧收藏或观看记录，可在偏好设置中迁移到服务器。
+              <button className="text-button" onClick={() => navigate('/settings')}>
+                前往迁移 <ArrowRight size={15} />
+              </button>
+            </Notice>
+          )}
+          {watchData.loading ? (
+            <Spinner text="正在读取服务器收藏与观看记录…" />
+          ) : player ? (
             <Player
               key={`${player.ruleName}:${player.sourceUrl}:${player.cacheOnly ? player.id : 'source'}`}
               context={player}
@@ -889,10 +843,14 @@ export default function App() {
                 <HistoryPage
                   history={history}
                   onResume={resume}
-                  onRemove={(key) => setHistory((p) => p.filter((x) => x.key !== key))}
-                  onClear={() => {
-                    setHistory([]);
-                    notify('观看记录已清空');
+                  onRemove={(key) => watchData.removeHistory(key).catch(() => {})}
+                  onClear={async () => {
+                    try {
+                      await watchData.removeHistory();
+                      notify('观看记录已清空');
+                    } catch {
+                      // The persistent notice includes the server failure.
+                    }
                   }}
                 />
               )}
@@ -932,8 +890,7 @@ export default function App() {
                   setSettings={setSettings}
                   library={library}
                   history={history}
-                  setLibrary={setLibrary}
-                  setHistory={setHistory}
+                  watchData={watchData}
                   notify={notify}
                   navigate={navigate}
                 />
@@ -1398,7 +1355,7 @@ function Library({ library, onOpen, navigate }) {
       <PageHeading
         eyebrow="YOUR PERSONAL COLLECTION"
         title="把喜欢，留在身边"
-        description={`这里收藏着你的 ${all.length} 个故事。进度与收藏保存在当前浏览器。`}
+        description={`这里收藏着你的 ${all.length} 个故事。收藏与进度保存在服务器，所有设备共享。`}
       />
       <div className="collection-toolbar">
         <div className="filter-tabs">
@@ -1508,7 +1465,7 @@ function HistoryPage({ history, onResume, onRemove, onClear }) {
       )}
       {confirm && (
         <Modal title="清空观看记录" onClose={() => setConfirm(false)}>
-          <p>将移除当前浏览器中的全部观看记录，收藏会保留。</p>
+          <p>将移除服务器中的全部观看记录，所有设备都会受影响，收藏会保留。</p>
           <div className="modal-actions">
             <button className="button quiet" onClick={() => setConfirm(false)}>
               取消
@@ -2341,19 +2298,11 @@ function Rules({ rules, error, reload, notify, availableUpdates }) {
   );
 }
 
-function Settings({
-  settings,
-  setSettings,
-  library,
-  history,
-  setLibrary,
-  setHistory,
-  notify,
-  navigate,
-}) {
+function Settings({ settings, setSettings, library, history, watchData, notify, navigate }) {
   const fileRef = useRef();
   const [pending, setPending] = useState(null);
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
   const health = useRequest('/health');
   const importData = async (e) => {
     const file = e.target.files?.[0];
@@ -2432,7 +2381,8 @@ function Settings({
             </div>
           </div>
           <p className="muted small">
-            导出备份可在其他浏览器恢复。站点规则单独存储在服务器，请在规则管理页导出。
+            收藏与观看记录保存在服务器，连接同一服务器的所有设备共享。偏好设置按浏览器保存。
+            备份包含收藏、观看进度与本机偏好；站点规则请在规则管理页导出。
           </p>
           <div className="button-group">
             <button
@@ -2455,7 +2405,11 @@ function Settings({
               <Download size={15} />
               导出备份
             </button>
-            <button className="button quiet" onClick={() => fileRef.current.click()}>
+            <button
+              className="button quiet"
+              disabled={busy}
+              onClick={() => fileRef.current.click()}
+            >
               <Upload size={15} />
               恢复备份
             </button>
@@ -2467,6 +2421,35 @@ function Settings({
               onChange={importData}
             />
           </div>
+          {watchData.legacy && (
+            <>
+              <p className="muted small">
+                {watchData.legacy.error ||
+                  '检测到此浏览器的旧收藏或观看记录。迁移会合并到服务器，保留服务器已有收藏和较新的进度。'}
+              </p>
+              {!watchData.legacy.error && (
+                <button
+                  className="button quiet"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    setError('');
+                    try {
+                      await watchData.migrate();
+                      notify('浏览器旧数据已迁移到服务器');
+                    } catch (error) {
+                      setError(`迁移失败，浏览器旧数据已保留：${error.message}`);
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  <Upload size={15} />
+                  {busy ? '正在保存…' : '迁移浏览器旧数据'}
+                </button>
+              )}
+            </>
+          )}
           {error && <Notice>{error}</Notice>}
         </section>
         <section className="settings-card">
@@ -2497,38 +2480,41 @@ function Settings({
             {health.loading ? '正在连接服务…' : health.error ? '服务暂时不可用' : '服务运行正常'}
             <span>Docker Compose ready</span>
           </div>
-          <div className="muted small">元数据由 Bangumi 提供 · 收藏保存在当前浏览器</div>
+          <div className="muted small">元数据由 Bangumi 提供 · 收藏与观看记录保存在服务器</div>
         </section>
       </div>
       {pending && (
-        <Modal title="恢复本地备份" onClose={() => setPending(null)}>
+        <Modal title="恢复数据备份" onClose={() => !busy && setPending(null)}>
           <p>
             将恢复 {Object.keys(pending.library).length} 部收藏与 {pending.history.length}{' '}
-            条观看记录，并覆盖当前浏览器的数据。
+            条观看记录，并覆盖服务器的共享记录及当前浏览器的偏好设置。所有设备都会受影响。
           </p>
           <div className="modal-actions">
-            <button className="button quiet" onClick={() => setPending(null)}>
+            <button className="button quiet" disabled={busy} onClick={() => setPending(null)}>
               取消
             </button>
             <button
               className="button primary"
-              onClick={() => {
-                setLibrary(pending.library);
-                setHistory(pending.history.slice(0, 200));
-                if (pending.settings)
-                  setSettings({
-                    theme: ['system', 'light', 'dark'].includes(pending.settings.theme)
-                      ? pending.settings.theme
-                      : 'system',
-                    autoNext: !!pending.settings.autoNext,
-                  });
-                setPending(null);
-                notify('备份已恢复');
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                setError('');
+                try {
+                  await watchData.restore({ library: pending.library, history: pending.history });
+                  setSettings(pending.settings);
+                  setPending(null);
+                  notify('备份已恢复到服务器');
+                } catch (error) {
+                  setError(`恢复失败：${error.message}`);
+                } finally {
+                  setBusy(false);
+                }
               }}
             >
-              恢复备份
+              {busy ? '正在恢复…' : '恢复备份'}
             </button>
           </div>
+          {error && <Notice>{error}</Notice>}
         </Modal>
       )}
     </>

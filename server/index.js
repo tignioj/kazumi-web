@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { createHttpClient, HttpError } from './http.js';
 import { RuleStore } from './store.js';
+import { WatchStore } from './watch-store.js';
 import {
   availableRuleUpdates,
   downloadOfficialRule,
@@ -43,6 +44,7 @@ export async function createApp(options = {}) {
       ),
     ));
   const store = await new RuleStore(dataDir, initialRules).init();
+  const watchStore = await new WatchStore(dataDir).init();
   const browserResolver =
     options.browserResolver === false || process.env.DYNAMIC_RESOLVER === 'false'
       ? null
@@ -155,6 +157,29 @@ export async function createApp(options = {}) {
     next();
   });
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
+  app.use('/api/watch-data', (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    next();
+  });
+  app.get('/api/watch-data', (req, res) => res.json(watchStore.list()));
+  app.put('/api/watch-data/library/:id', async (req, res) =>
+    res.json(await watchStore.saveLibrary(req.params.id, req.body)),
+  );
+  app.delete('/api/watch-data/library/:id', async (req, res) =>
+    res.json(await watchStore.removeLibrary(req.params.id)),
+  );
+  app.put('/api/watch-data/history', async (req, res) =>
+    res.json(await watchStore.saveHistory(req.body)),
+  );
+  app.delete('/api/watch-data/history', async (req, res) => {
+    if (req.query.key !== undefined && typeof req.query.key !== 'string')
+      throw new HttpError('观看记录 key 必须是文本。');
+    res.json(await watchStore.removeHistory(req.query.key));
+  });
+  app.put('/api/watch-data', async (req, res) => res.json(await watchStore.restore(req.body)));
+  app.post('/api/watch-data/migrate', async (req, res) =>
+    res.json(await watchStore.migrate(req.body)),
+  );
   app.get('/api/verification-session', (req, res) => {
     verificationOwner(req, res, true);
     res.set('Cache-Control', 'no-store').json({ ok: true });
@@ -346,9 +371,11 @@ export async function createApp(options = {}) {
   return {
     app,
     store,
+    watchStore,
     downloads,
     async close() {
       verification.close();
+      await watchStore.pending;
       await downloads.close();
       await browserResolver?.close();
       media.close?.();
