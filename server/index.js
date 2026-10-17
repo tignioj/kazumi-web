@@ -76,7 +76,7 @@ export async function createApp(options = {}) {
     directory: resolve(dataDir, 'downloads'),
     http,
     media,
-    maxBytes: Number(process.env.VIDEO_CACHE_MAX_BYTES || 10 * 1024 ** 3),
+    maxBytes: Math.floor(Number(process.env.VIDEO_CACHE_MAX_GB || 10) * 1024 ** 3),
     ...options.downloadOptions,
   }).init();
   const verification = new VerificationTasks(options.verificationOptions);
