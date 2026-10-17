@@ -1025,6 +1025,11 @@ function Discover({ query, library, history, onOpen, onResume, navigate }) {
             </div>
           )}
         </div>
+        {!query && sort === 'trending' && request.data?.basis === 'recent-favorites' && (
+          <p className="muted small catalog-note">
+            近一年开播的动画，按归档中的累计收藏人数排序。榜单随资料更新。
+          </p>
+        )}
         {request.error ? (
           <Notice onRetry={request.retry}>{request.error}</Notice>
         ) : !request.loading && !items.length ? (
@@ -1298,18 +1303,35 @@ function Categories({ route, library, onOpen, navigate }) {
 
 function Calendar({ library, onOpen }) {
   const request = useRequest('/calendar');
-  const today = new Date().getDay() || 7;
-  const [day, setDay] = useState(today);
-  const weekdays = ['一', '二', '三', '四', '五', '六', '日'];
   const groups = Array.isArray(request.data) ? request.data : request.data?.items || [];
-  const items = groups.find((g) => Number(g.weekday?.id) === day)?.items || [];
+  const local = request.data?.source === 'archive';
+  const today =
+    (local && groups.find((group) => group.date === request.data.today)?.weekday.id) ||
+    new Date().getDay() ||
+    7;
+  const [day, setDay] = useState(today);
+  useEffect(() => setDay(today), [today]);
+  const weekdays = ['一', '二', '三', '四', '五', '六', '日'];
+  const selected = groups.find((g) => Number(g.weekday?.id) === day);
+  const items = selected?.items || [];
   return (
     <>
       <PageHeading
         eyebrow="A LITTLE SOMETHING TO LOOK FORWARD TO"
         title="每天，都有期待"
-        description="一周新番放送，在喜欢的日子准时相遇。"
+        description={
+          local
+            ? '按本地资料记录的章节日期，查看本周放送。'
+            : '一周新番放送，在喜欢的日子准时相遇。'
+        }
       />
+      {local && (
+        <p className="muted small catalog-note">
+          {request.data.weekStart} — {request.data.weekEnd} · 北京时间
+          <br />
+          日期随官方归档更新，临时调整或尚未收录的安排可能缺失。
+        </p>
+      )}
       <div className="week-tabs">
         {weekdays.map((name, i) => (
           <button
@@ -1325,18 +1347,24 @@ function Calendar({ library, onOpen }) {
           </button>
         ))}
       </div>
-      <div className="catalog-toolbar">
+      <div className="catalog-toolbar calendar-toolbar">
         <div className="section-title">
           <span className="section-number">ON AIR</span>
           <h2>星期{weekdays[day - 1]}放送</h2>
         </div>
-        <span className="muted small">{items.length} 部动画 · 日期以资料源为准</span>
+        <span className="muted small">
+          {selected?.date ? `${selected.date} · ` : ''}
+          {items.length} 部动画{!local && ' · 日期以资料源为准'}
+        </span>
       </div>
       {request.error ? (
         <Notice onRetry={request.retry}>{request.error}</Notice>
       ) : !request.loading && !items.length ? (
-        <Empty icon={CalendarDays} title="今天暂时没有放送安排">
-          留一点时间，重温收藏里的好故事。
+        <Empty
+          icon={CalendarDays}
+          title={local ? '资料中暂未收录这一天的放送' : '今天暂时没有放送安排'}
+        >
+          {local ? '可在偏好设置中检查资料更新。' : '留一点时间，重温收藏里的好故事。'}
         </Empty>
       ) : (
         <PosterGrid items={items} loading={request.loading} library={library} onOpen={onOpen} />
@@ -2350,7 +2378,7 @@ function MetadataSettings({ notify }) {
         <BookOpen size={19} />
         <div>
           <h2>本地番剧资料</h2>
-          <p>分类、搜索与详情，打开即有答案</p>
+          <p>番剧浏览、热门榜单与放送日历使用本地资料</p>
         </div>
       </div>
       {request.error ? (
@@ -2398,7 +2426,7 @@ function MetadataSettings({ notify }) {
             {status.autoUpdate
               ? `每 ${status.intervalHours} 小时自动检查更新。`
               : '自动更新已关闭，可手动检查。'}
-            官方归档每周更新，更新期间仍可浏览已有资料。封面按需加载并缓存；趋势与放送日历仍需联网。
+            官方归档每周更新，更新期间仍可浏览已有资料。热门按近一年开播作品的累计收藏人数排序，日历依据已记录的章节日期；封面按需加载并缓存。
           </p>
           {(error || status.lastError) && (
             <Notice>

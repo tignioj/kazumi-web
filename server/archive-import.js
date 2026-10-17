@@ -139,6 +139,7 @@ export async function importArchive({ archive, output, progress = () => {} }) {
     progress({ phase: 'indexing', subjects, episodes });
     db.exec(`COMMIT;
       CREATE INDEX episodes_subject ON episodes(subject_id,type,sort,id);
+      CREATE INDEX episodes_airdate ON episodes(airdate,subject_id) WHERE type=0;
       UPDATE subjects SET eps=max(eps,(SELECT count(*) FROM episodes WHERE subject_id=subjects.id AND type=0));
       CREATE INDEX subjects_heat ON subjects(favorite DESC,id);
       CREATE INDEX subjects_rank ON subjects(rank,id);

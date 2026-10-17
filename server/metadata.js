@@ -140,6 +140,7 @@ export class MetadataService {
   }
   async catalog(sort, page) {
     if (sort !== 'trending') return this.search('', { sort: 'rank', page });
+    if (this.local) return this.local.trending(page);
     return this.cached(`trending:${page}`, async () => {
       const data = await this.get(
         `${this.nextUrl}/p1/trending/subjects?type=2&limit=24&offset=${(page - 1) * 24}`,
@@ -148,12 +149,10 @@ export class MetadataService {
         items: (data.data || []).map(normalizeSubject),
         total: Number(data.total || (data.data || []).length),
       };
-    }).catch((error) => {
-      if (this.local) return this.local.search('', { sort: 'heat', page });
-      throw error;
     });
   }
   async calendar() {
+    if (this.local) return this.local.calendar();
     return this.cached('calendar', async () => {
       let data;
       try {

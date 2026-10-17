@@ -25,7 +25,7 @@ if (process.env.SMOKE_LIVE === 'true') {
   const catalog = await json('/api/catalog?sort=trending');
   assert.ok(catalog.items.length > 0, 'Live catalog is empty');
   const calendar = await json('/api/calendar');
-  assert.equal(calendar.length, 7);
+  assert.equal((Array.isArray(calendar) ? calendar : calendar.items).length, 7);
   const subject = await json(`/api/subjects/${catalog.items[0].id}`);
   assert.ok(subject.name);
   const search = await json('/api/search?q=CLANNAD');

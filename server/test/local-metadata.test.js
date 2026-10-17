@@ -13,9 +13,9 @@ import { createApp } from '../index.js';
 import { createCoverResolver } from '../cover-resolver.js';
 import { archiveZip, zipFiles, subjects, episodes } from './fixtures/archive.js';
 
-async function fixture(t) {
+async function fixture(t, { now } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'kazumi-local-'));
-  const store = await new LocalMetadataStore(join(directory, 'metadata')).init();
+  const store = await new LocalMetadataStore(join(directory, 'metadata'), { now }).init();
   const http = {
     close: async () => {},
     json: async () => {
@@ -83,6 +83,120 @@ test('official archive import powers local Chinese/alias search, AND filters, so
   assert.equal(detail.image, 'https://api.bgm.tv/v0/subjects/1/image?type=large');
   await assert.rejects(metadata.subject(3), { status: 404 });
   await assert.rejects(metadata.subject('1 OR 1=1'), { status: 400 });
+});
+
+test('local recent popularity filters the last 365 days and paginates archive favorites without upstream requests', async (t) => {
+  const { store, manager, http, archive } = await fixture(t, {
+    now: () => Date.parse('2026-01-04T12:00:00Z'),
+  });
+  const item = (id, date, done) => ({ ...subjects[0], id, date, favorite: { done } });
+  await writeFile(
+    archive,
+    archiveZip([
+      subjects[0],
+      item(101, '2024-12-31', 100000),
+      item(102, '2026-01-05', 200000),
+      item(103, '2025-01-05', 500),
+      item(104, '2025-01-04', 600),
+      item(105, '2026-01-04', 700),
+      item(106, '', 800),
+      item(107, '2025-02-30', 900),
+      item(108, '2025', 1000),
+      ...Array.from({ length: 28 }, (_, i) => item(200 + i, '2025-06-01', i)),
+    ]),
+  );
+  await manager.update({ file: archive });
+  const metadata = new MetadataService(http, { local: store });
+  const result = await metadata.catalog('trending', 1);
+  assert.equal(result.source, 'archive');
+  assert.equal(result.basis, 'recent-favorites');
+  assert.equal(result.startDate, '2025-01-05');
+  assert.equal(result.endDate, '2026-01-04');
+  assert.equal(result.total, 31);
+  assert.equal(result.items.length, 24);
+  assert.deepEqual(
+    result.items.slice(0, 3).map((item) => item.id),
+    [105, 103, 1],
+  );
+  const next = await metadata.catalog('trending', 2);
+  assert.equal(next.items.length, 7);
+  assert.ok(next.items.every((item) => !result.items.some((first) => first.id === item.id)));
+  await assert.rejects(metadata.catalog('trending', 0), { status: 400 });
+});
+
+test('local calendar uses dated main episodes, deduplicates each day, and rolls weeks in Shanghai time', async (t) => {
+  let clock = Date.parse('2026-01-04T15:59:00Z');
+  const { store, manager, http, archive } = await fixture(t, { now: () => clock });
+  const item = (id, date) => ({ ...subjects[0], id, date });
+  const episode = (id, subject_id, airdate, type = 0) => ({
+    id,
+    subject_id,
+    airdate,
+    type,
+    sort: id,
+  });
+  await writeFile(
+    archive,
+    archiveZip(
+      [
+        item(1, '2026-01-01'),
+        item(2, '2026-01-02'),
+        item(10, '2025-12-29'),
+        item(11, '2025-12-29'),
+        item(12, '2026-01-04'),
+        item(13, '2020-01-01'),
+        item(14, '2024-02-29'),
+        item(15, '2026-02-30'),
+      ],
+      [
+        episode(1, 1, '2026-01-01'),
+        episode(2, 1, '2026-01-01'),
+        episode(3, 1, '2026-01-08'),
+        episode(4, 10, '2026-01-03'),
+        episode(5, 10, '2026-01-04'),
+        episode(6, 11, '2026-01-05'),
+        episode(7, 12, '2026'),
+        episode(8, 13, '2026-01-01', 2),
+        episode(9, 13, '2026-02-30'),
+      ],
+    ),
+  );
+  await manager.update({ file: archive });
+  const metadata = new MetadataService(http, { local: store });
+  const result = await metadata.calendar();
+  assert.equal(result.source, 'archive');
+  assert.equal(result.timezone, 'Asia/Shanghai');
+  assert.equal(result.today, '2026-01-04');
+  assert.equal(result.weekStart, '2025-12-29');
+  assert.equal(result.weekEnd, '2026-01-04');
+  assert.deepEqual(
+    result.items.map((day) => day.weekday.id),
+    [1, 2, 3, 4, 5, 6, 7],
+  );
+  assert.deepEqual(
+    result.items.map((day) => day.items.map((item) => item.id)),
+    [[], [], [], [1], [2], [10], [10, 12]],
+  );
+  clock = Date.parse('2026-01-04T16:00:00Z');
+  const next = await metadata.calendar();
+  assert.equal(next.today, '2026-01-05');
+  assert.equal(next.weekStart, '2026-01-05');
+  assert.deepEqual(
+    next.items[0].items.map((item) => item.id),
+    [11],
+  );
+  assert.deepEqual(
+    next.items[3].items.map((item) => item.id),
+    [1],
+  );
+  assert.ok(next.items.every((day) => day.items.every((item) => item.id !== 2)));
+  clock = Date.parse('2024-02-29T00:00:00Z');
+  assert.deepEqual(
+    (await metadata.calendar()).items[3].items.map((item) => item.id),
+    [14],
+  );
+  clock = Date.parse('2026-02-28T00:00:00Z');
+  assert.ok((await metadata.calendar()).items.every((day) => day.items.length === 0));
 });
 
 test('failed, incomplete and malformed imports preserve the published database across restart', async (t) => {
@@ -206,7 +320,7 @@ test('periodic checks run on startup and use the configured interval', async (t)
   assert.ok(manager.state.nextCheckAt);
 });
 
-test('local REST categories/search/detail work with the upstream offline, and cover lookup is separate', async (t) => {
+test('all local REST metadata routes work with the upstream offline, and cover lookup is separate', async (t) => {
   const { directory, manager, archive, http, cleanup } = await fixture(t);
   await manager.update({ file: archive });
   const application = await createApp({
@@ -227,6 +341,8 @@ test('local REST categories/search/detail work with the upstream offline, and co
     '/api/categories?tag=日常&format=TV',
     '/api/search?q=Hidden%20Alias',
     '/api/subjects/1',
+    '/api/catalog?sort=trending',
+    '/api/calendar',
   ]) {
     const response = await fetch(base + path);
     assert.equal(response.status, 200, path);

@@ -460,6 +460,17 @@ img {
   gap: 16px;
   margin-bottom: 23px;
 }
+.catalog-note {
+  margin: 0 0 18px;
+  line-height: 1.8;
+}
+.calendar-toolbar {
+  flex-wrap: wrap;
+}
+.calendar-toolbar .section-title {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
 .section-title {
   display: flex;
   align-items: center;
