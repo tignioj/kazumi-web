@@ -2023,14 +2023,69 @@ img {
   flex-direction: column;
   gap: 13px;
 }
-.cache-row {
+.cache-group {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 9px;
+}
+.cache-group-heading {
   display: flex;
   align-items: center;
   gap: 19px;
   padding: 18px;
-  border: 1px solid var(--line);
-  background: var(--surface);
-  border-radius: 9px;
+  cursor: pointer;
+  list-style: none;
+  border-radius: inherit;
+}
+.cache-group-heading::-webkit-details-marker {
+  display: none;
+}
+.cache-group-heading:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+.cache-group-description {
+  flex: 1;
+  min-width: 0;
+}
+.cache-group-description h3 {
+  font-size: 14px;
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+.cache-group-description > p {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 7px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.cache-group-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 9px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.cache-group-toggle {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.cache-group[open] .cache-group-toggle {
+  transform: rotate(180deg);
+}
+.cache-episodes {
+  list-style: none;
+  padding: 0;
+  margin: 0 18px;
+}
+.cache-row {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 17px 0;
+  border-top: 1px solid var(--line);
 }
 .cache-cover {
   width: 63px;
@@ -2047,17 +2102,22 @@ img {
   flex: 1;
   min-width: 0;
 }
-.cache-description h3 {
-  font-size: 14px;
+.cache-episode-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.cache-episode-heading h4 {
+  margin: 0;
+  font-size: 12px;
   font-weight: 550;
   overflow-wrap: anywhere;
 }
-.cache-description > p {
-  font-size: 11px;
+.cache-episode-heading > span {
+  flex-shrink: 0;
+  font-size: 10px;
   color: var(--muted);
-  margin: 7px 0 11px;
-  line-height: 1.8;
-  overflow-wrap: anywhere;
 }
 .cache-progress-label,
 .cache-status {
@@ -2197,7 +2257,6 @@ img {
   }
   .cache-actions {
     flex-basis: 100%;
-    padding-left: 82px;
   }
   .cache-actions > .icon-button {
     margin-left: auto;
@@ -2219,24 +2278,28 @@ img {
     width: 38px;
     height: 43px;
   }
-  .cache-row {
+  .cache-group-heading {
     padding: 14px;
+    gap: 12px;
+  }
+  .cache-episodes {
+    margin: 0 14px;
+  }
+  .cache-row {
+    padding: 14px 0;
     gap: 12px;
   }
   .cache-cover {
     width: 48px;
     height: 68px;
   }
-  .cache-description h3 {
+  .cache-group-description h3 {
     font-size: 12px;
   }
-  .cache-description > p,
+  .cache-group-description > p,
   .cache-help,
   .player-cache-heading p {
     font-size: 10px;
-  }
-  .cache-actions {
-    padding-left: 0;
   }
   .cache-actions .button {
     font-size: 10px;

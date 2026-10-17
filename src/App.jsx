@@ -1529,9 +1529,113 @@ function HistoryPage({ history, onResume, onRemove, onClear }) {
   );
 }
 
+function groupDownloads(items) {
+  const groups = new Map();
+  for (const item of items) {
+    const identity = item.sourceUrl?.trim()
+      ? ['source', item.sourceUrl.trim()]
+      : item.subjectId
+        ? ['subject', String(item.subjectId)]
+        : ['title', item.title.trim()];
+    const key = JSON.stringify([item.ruleName.trim().toLowerCase(), ...identity]);
+    if (!groups.has(key)) groups.set(key, { key, items: [] });
+    groups.get(key).items.push(item);
+  }
+  const order = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
+  return [...groups.values()].map((group) => ({
+    ...group,
+    items: group.items.sort((a, b) => order.compare(a.episodeName, b.episodeName)),
+  }));
+}
+
+function DownloadGroup({ items, onPlay, onRemove }) {
+  const item = items[0];
+  const image = items.find((entry) => entry.image)?.image;
+  const complete = items.filter((entry) => entry.status === 'complete').length;
+  const active = items.filter(cacheActive).length;
+  const failed = items.filter((entry) => entry.status === 'error').length;
+  const bytes = items.reduce((sum, entry) => sum + (Number(entry.bytes) || 0), 0);
+  return (
+    <details className="cache-group" open>
+      <summary className="cache-group-heading">
+        <div className="cache-cover">
+          {image ? (
+            <CachedImage
+              referrerPolicy="no-referrer"
+              src={imageSource(image)}
+              alt=""
+              loading="lazy"
+            />
+          ) : (
+            <Film size={24} />
+          )}
+        </div>
+        <div className="cache-group-description">
+          <h3>{item.title}</h3>
+          <p>
+            {item.ruleName} · {items.length} 集
+          </p>
+          <div className="cache-group-stats">
+            {complete > 0 && <span className="cache-status-complete">已缓存 {complete} 集</span>}
+            {active > 0 && <span>下载中 {active} 集</span>}
+            {failed > 0 && <span className="cache-status-error">失败 {failed} 集</span>}
+            <span>{bytesLabel(bytes)}</span>
+          </div>
+        </div>
+        <ChevronDown size={18} className="cache-group-toggle" aria-hidden="true" />
+      </summary>
+      <ul className="cache-episodes" aria-label={`${item.title} · ${item.ruleName}的缓存剧集`}>
+        {items.map((episode) => (
+          <li className="cache-row" key={episode.id}>
+            <div className="cache-description">
+              <div className="cache-episode-heading">
+                <h4>{episode.episodeName || '当前剧集'}</h4>
+                <span>{episode.type === 'hls' ? 'HLS' : '视频'}</span>
+              </div>
+              <CacheProgress item={episode} />
+            </div>
+            <div className="cache-actions">
+              {episode.status === 'complete' && (
+                <>
+                  <button
+                    className="button primary"
+                    onClick={() => onPlay(episode)}
+                    aria-label={`播放缓存 ${episode.title} ${episode.episodeName}`}
+                  >
+                    <Play size={15} />
+                    播放
+                  </button>
+                  <a
+                    className="button quiet"
+                    href={episode.downloadUrl}
+                    download
+                    aria-label={`保存到设备 ${episode.title} ${episode.episodeName}`}
+                  >
+                    <Download size={15} />
+                    {episode.type === 'hls' ? '保存压缩包' : '保存视频'}
+                  </a>
+                </>
+              )}
+              <button
+                className="icon-button"
+                onClick={() => onRemove(episode)}
+                aria-label={`删除缓存 ${episode.title} ${episode.episodeName}`}
+                title={cacheActive(episode) ? '取消下载并删除缓存' : '删除缓存'}
+              >
+                {cacheActive(episode) ? <X size={17} /> : <Trash2 size={17} />}
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 function Downloads({ onPlay, notify }) {
   const downloads = useDownloads('all');
   const [removing, setRemoving] = useState(null);
+  const groups = groupDownloads(downloads.items);
   const active = downloads.items.filter(cacheActive).length;
   const maxBytes = Number(downloads.data?.maxBytes) || 0;
   const usedBytes = Number(downloads.data?.usedBytes) || 0;
@@ -1585,7 +1689,8 @@ function Downloads({ onPlay, notify }) {
           <h2>缓存任务</h2>
         </div>
         <span className="muted small">
-          {downloads.items.length} 个任务{active ? ` · ${active} 个正在下载` : ''}
+          {groups.length} 个片源列表 · {downloads.items.length} 个任务
+          {active ? ` · ${active} 个正在下载` : ''}
         </span>
       </div>
       {downloads.error && <Notice onRetry={downloads.reload}>{downloads.error}</Notice>}
@@ -1593,60 +1698,13 @@ function Downloads({ onPlay, notify }) {
         <Spinner text="正在读取视频缓存…" />
       ) : downloads.items.length ? (
         <div className="cache-list">
-          {downloads.items.map((item) => (
-            <article className="cache-row" key={item.id}>
-              <div className="cache-cover">
-                {item.image ? (
-                  <CachedImage
-                    referrerPolicy="no-referrer"
-                    src={imageSource(item.image)}
-                    alt=""
-                    loading="lazy"
-                  />
-                ) : (
-                  <Film size={24} />
-                )}
-              </div>
-              <div className="cache-description">
-                <h3>{item.title}</h3>
-                <p>
-                  {item.episodeName || '当前剧集'} · {item.ruleName} ·{' '}
-                  {item.type === 'hls' ? 'HLS' : '视频'}
-                </p>
-                <CacheProgress item={item} />
-              </div>
-              <div className="cache-actions">
-                {item.status === 'complete' && (
-                  <>
-                    <button
-                      className="button primary"
-                      onClick={() => onPlay(item)}
-                      aria-label={`播放缓存 ${item.title} ${item.episodeName}`}
-                    >
-                      <Play size={15} />
-                      播放
-                    </button>
-                    <a
-                      className="button quiet"
-                      href={item.downloadUrl}
-                      download
-                      aria-label={`保存到设备 ${item.title} ${item.episodeName}`}
-                    >
-                      <Download size={15} />
-                      {item.type === 'hls' ? '保存压缩包' : '保存视频'}
-                    </a>
-                  </>
-                )}
-                <button
-                  className="icon-button"
-                  onClick={() => setRemoving(item)}
-                  aria-label={`删除缓存 ${item.title} ${item.episodeName}`}
-                  title={cacheActive(item) ? '取消下载并删除缓存' : '删除缓存'}
-                >
-                  {cacheActive(item) ? <X size={17} /> : <Trash2 size={17} />}
-                </button>
-              </div>
-            </article>
+          {groups.map((group) => (
+            <DownloadGroup
+              key={group.key}
+              items={group.items}
+              onPlay={onPlay}
+              onRemove={setRemoving}
+            />
           ))}
         </div>
       ) : (
