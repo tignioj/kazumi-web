@@ -751,6 +751,103 @@ test('deleting active jobs and clearing the cache cancels upstream requests and 
   assert.deepEqual(leftovers, []);
 });
 
+test('batch deletion validates every ID, removes selected caches and preserves other sources across restart', async (t) => {
+  const f = await fixture(t);
+  const { job: first } = await f.submit('/movie.mp4');
+  const { job: second } = await f.submit('/master.m3u8', { episodeName: '第 2 集' });
+  const { job: otherSource } = await f.submit('/movie.mp4', {
+    ruleName: 'Other source',
+    episodeUrl: `${f.upstreamUrl}/other-source`,
+  });
+  const { job: otherShow } = await f.submit('/movie.mp4', {
+    title: '另一部番剧',
+    sourceUrl: `${f.upstreamUrl}/other-subject`,
+    episodeUrl: `${f.upstreamUrl}/other-show`,
+  });
+  const completed = await Promise.all(
+    [first, second, otherSource, otherShow].map((job) => f.finished(job.id)),
+  );
+  assert.ok(completed.every((job) => job.status === 'complete'));
+  const before = await f.list();
+  for (const ids of [
+    undefined,
+    null,
+    'all',
+    [],
+    [first.id, '../index.json'],
+    [first.id, null],
+    Array(201).fill(first.id),
+  ]) {
+    const invalid = await f.json('/api/downloads/batch', { ids }, 'DELETE');
+    assert.equal(invalid.status, 400, JSON.stringify(ids));
+    assert.deepEqual(await f.list(), before, 'invalid requests do not delete any cached videos');
+  }
+  const ids = [first.id, second.id, first.id, '00000000-0000-0000-0000-000000000000'];
+  const removed = await f.json('/api/downloads/batch', { ids }, 'DELETE');
+  assert.equal(removed.status, 200);
+  assert.deepEqual(removed.data, { ok: true });
+  const remaining = await f.list();
+  assert.deepEqual(
+    new Set(remaining.items.map((job) => job.id)),
+    new Set([otherSource.id, otherShow.id]),
+  );
+  assert.equal(remaining.usedBytes, completed[2].bytes + completed[3].bytes);
+  for (const job of completed.slice(0, 2)) {
+    assert.equal((await f.fetch(job.playbackUrl)).status, 404);
+    await assert.rejects(stat(join(f.directory, 'downloads', job.id)), { code: 'ENOENT' });
+  }
+  for (const job of completed.slice(2)) assert.equal((await f.fetch(job.playbackUrl)).status, 200);
+  assert.equal(
+    (await f.json('/api/downloads/batch', { ids }, 'DELETE')).status,
+    200,
+    'retries tolerate already removed jobs',
+  );
+  await f.restart();
+  assert.deepEqual(await f.list(), remaining);
+});
+
+test('batch deletion cancels active and queued group tasks before the next group episode starts', async (t) => {
+  const f = await fixture(t, { downloadOptions: { concurrency: 1 } });
+  const { job: active } = await f.submit('/slow.mp4');
+  await eventually(
+    () => f.list(),
+    (snapshot) => snapshot.usedBytes > 0,
+    'active download did not start',
+  );
+  const { job: queued } = await f.submit('/master.m3u8', { episodeName: '第 2 集' });
+  assert.equal(queued.status, 'queued');
+  const { job: other } = await f.submit('/movie.mp4', {
+    title: '另一部番剧',
+    sourceUrl: `${f.upstreamUrl}/other-subject`,
+  });
+  assert.equal(other.status, 'queued');
+  const playlistReads = f.received.filter((request) => request.path === '/master.m3u8').length;
+  const removed = await f.json('/api/downloads/batch', { ids: [active.id, queued.id] }, 'DELETE');
+  assert.equal(removed.status, 200);
+  await eventually(
+    async () => f.state.slowConnections,
+    (count) => count === 0,
+    'deleted stream remained connected',
+  );
+  const completed = await f.finished(other.id);
+  assert.equal(completed.status, 'complete', completed.error);
+  assert.equal(
+    f.received.filter((request) => request.path === '/master.m3u8').length,
+    playlistReads,
+    'queued group episode never starts downloading',
+  );
+  const remaining = await f.list();
+  assert.deepEqual(
+    remaining.items.map((job) => job.id),
+    [other.id],
+  );
+  assert.equal(remaining.usedBytes, completed.bytes);
+  for (const job of [active, queued])
+    await assert.rejects(stat(join(f.directory, 'downloads', job.id)), { code: 'ENOENT' });
+  await f.restart();
+  assert.deepEqual(await f.list(), remaining);
+});
+
 test('concurrent chunked downloads enforce the shared quota and clean failed partial files', async (t) => {
   const f = await fixture(t, { downloadOptions: { maxBytes: 1024, concurrency: 2 } });
   const submissions = await Promise.all([f.submit('/quota-a.mp4'), f.submit('/quota-b.mp4')]);

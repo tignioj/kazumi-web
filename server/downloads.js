@@ -710,6 +710,42 @@ export class DownloadManager {
     });
   }
 
+  removeBatch(ids) {
+    return this.lock(async () => {
+      if (
+        !Array.isArray(ids) ||
+        !ids.length ||
+        ids.length > MAX_JOBS ||
+        ids.some((id) => typeof id !== 'string' || !ID.test(id))
+      )
+        throw new HttpError('请选择 1 至 200 个有效缓存任务');
+      const jobs = [...new Set(ids)].map((id) => this.jobs.get(id)).filter(Boolean);
+      for (const job of jobs) {
+        job.removed = true;
+        job.controller?.abort();
+      }
+      try {
+        await Promise.all(jobs.map((job) => job.promise?.catch(() => {})));
+        for (const job of jobs) {
+          await rm(join(this.directory, job.id), { recursive: true, force: true });
+          this.usedBytes -= job.bytes;
+          this.jobs.delete(job.id);
+        }
+      } finally {
+        for (const job of jobs) {
+          if (!this.jobs.has(job.id)) continue;
+          job.removed = false;
+          job.status = 'error';
+          job.error = '缓存未能删除，请重试';
+          delete job.source;
+          delete job.rule;
+        }
+        await this.persist();
+      }
+      return this.list();
+    });
+  }
+
   clear() {
     return this.lock(async () => {
       this.paused = true;

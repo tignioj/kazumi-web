@@ -361,6 +361,10 @@ export async function createApp(options = {}) {
     await downloads.clear();
     res.json({ ok: true });
   });
+  app.delete('/api/downloads/batch', async (req, res) => {
+    await downloads.removeBatch(req.body?.ids);
+    res.json({ ok: true });
+  });
   app.delete('/api/downloads/:id', async (req, res) => {
     await downloads.remove(req.params.id);
     res.json({ ok: true });

@@ -2072,6 +2072,10 @@ img {
   flex-shrink: 0;
   color: var(--muted);
 }
+.cache-group-remove {
+  flex-shrink: 0;
+  font-size: 11px;
+}
 .cache-group[open] .cache-group-toggle {
   transform: rotate(180deg);
 }
@@ -2297,6 +2301,7 @@ img {
     font-size: 12px;
   }
   .cache-group-description > p,
+  .cache-group-remove,
   .cache-help,
   .player-cache-heading p {
     font-size: 10px;
