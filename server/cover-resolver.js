@@ -2,7 +2,7 @@ import { bangumiImageUrl } from '../shared/images.js';
 import { HttpError } from './http.js';
 
 // Official wiki archives omit cover filenames. Resolve only these stable
-// subject-image placeholders, on a cache miss, separately from local queries.
+// subject-image placeholders, on a cache miss or background refresh, separately from local queries.
 export function createCoverResolver(
   http,
   nextUrl = process.env.BANGUMI_NEXT_URL || 'https://next.bgm.tv',

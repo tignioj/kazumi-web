@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ImageCache } from '../images.js';
@@ -17,6 +17,7 @@ const png = Buffer.from(
 const image = 'https://lain.bgm.tv/pic/cover/l/fixture.jpg';
 
 async function fixture(t, options = {}) {
+  const { responseHeaders = {}, ...cacheOptions } = options;
   const directory = await mkdtemp(join(tmpdir(), 'kazumi-images-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const calls = [];
@@ -24,13 +25,41 @@ async function fixture(t, options = {}) {
     async request(url, options) {
       options.validateUrl?.(url);
       calls.push({ url, options });
-      return { url, response: new Response(png, { headers: { 'content-type': 'image/png' } }) };
+      return {
+        url,
+        response: new Response(png, {
+          headers: { 'content-type': 'image/png', ...responseHeaders },
+        }),
+      };
     },
     async close() {},
   };
-  const cache = await new ImageCache({ directory, http, ...options }).init();
+  const cache = await new ImageCache({ directory, http, ...cacheOptions }).init();
   t.after(() => cache.close());
   return { cache, calls, http, directory };
+}
+
+async function imageFiles(directory) {
+  return (await readdir(directory)).filter((name) => name.endsWith('.img'));
+}
+
+async function settled(cache) {
+  await Promise.allSettled(cache.pending.values());
+  await cache.writes;
+}
+
+async function promptly(promise) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('cached cover waited for the upstream')), 1000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 test('all Bangumi image URL forms use the same-origin endpoint, with no open proxy', () => {
@@ -65,9 +94,10 @@ test('concurrent image misses share one request and persist across restarts', as
   assert.ok(loaded.every((result) => result.bytes.equals(png)));
   assert.equal(calls[0].options.headers.cookie, undefined);
   const reopened = await new ImageCache({ directory, http }).init();
+  t.after(() => reopened.close());
   assert.deepEqual((await reopened.get(image)).bytes, png);
   assert.equal(calls.length, 1);
-  assert.equal((await readdir(directory)).length, 1);
+  assert.equal((await imageFiles(directory)).length, 1);
 });
 
 test('archive cover URLs are resolved only on cache misses, including after restart', async (t) => {
@@ -111,11 +141,10 @@ test('a full poster grid queues image misses while bounding upstream concurrency
   assert.equal(cache.active, 0);
 });
 
-test('expired images refetch and disk cache evicts the least recently used image', async (t) => {
+test('disk cache evicts the least recently used image when its byte budget is exceeded', async (t) => {
   let clock = Date.now();
   const { cache, calls, directory } = await fixture(t, {
     maxBytes: png.length * 2,
-    ttl: 1000,
     now: () => clock,
   });
   const a = `${image}?a`,
@@ -127,15 +156,208 @@ test('expired images refetch and disk cache evicts the least recently used image
   await cache.get(c);
   assert.equal(calls.length, 3);
   assert.equal(cache.bytes, png.length * 2);
-  assert.equal((await readdir(directory)).length, 2);
+  assert.equal((await imageFiles(directory)).length, 2);
   await cache.get(a);
   assert.equal(calls.length, 3);
   await cache.get(b);
   assert.equal(calls.length, 4);
+  assert.equal(cache.bytes, png.length * 2);
+});
+
+test('upstream cache headers control freshness, with a seven-day fallback', async (t) => {
+  const day = 24 * 3600 * 1000;
+  for (const [headers, lifetime, cacheable] of [
+    [{}, 7 * day, true],
+    [{ 'cache-control': 'public, max-age=120', age: '20' }, 100000, true],
+    [{ 'cache-control': 'max-age="60"' }, 60000, true],
+    [{ 'cache-control': 'max-age=0' }, 0, true],
+    [{ 'cache-control': 'max-age=3600, no-cache' }, 0, true],
+    [{ 'cache-control': 'no-store' }, 7 * day, false],
+  ]) {
+    await t.test(JSON.stringify(headers), async (t) => {
+      const clock = Date.now();
+      const { cache, directory } = await fixture(t, { responseHeaders: headers, now: () => clock });
+      const result = await cache.get(image);
+      assert.equal(result.expires, clock + lifetime);
+      assert.equal(result.cacheable, cacheable);
+      assert.equal((await imageFiles(directory)).length, cacheable ? 1 : 0);
+    });
+  }
+});
+
+test('expired covers return immediately, deduplicate refreshes and replace bytes in the background', async (t) => {
+  let clock = Date.now();
+  const { cache, http, calls } = await fixture(t, {
+    now: () => clock,
+    responseHeaders: { 'cache-control': 'max-age=1', etag: '"old"' },
+  });
+  await cache.get(image);
   clock += 1001;
-  await cache.get(b);
-  assert.equal(calls.length, 5);
-  assert.equal(cache.bytes, png.length);
+  const gate = Promise.withResolvers();
+  let waiting;
+  const replacement = Buffer.concat([png, Buffer.from('updated')]);
+  http.request = async (url, options) => {
+    calls.push({ url, options });
+    await gate.promise;
+    return {
+      url,
+      response: new Response(replacement, {
+        headers: { 'content-type': 'image/png', 'cache-control': 'max-age=120', etag: '"new"' },
+      }),
+    };
+  };
+  try {
+    const stale = await promptly(Promise.all(Array.from({ length: 12 }, () => cache.get(image))));
+    assert.ok(stale.every((result) => result.bytes.equals(png)));
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].options.headers['if-none-match'], '"old"');
+    assert.equal(cache.pending.size, 1);
+    waiting = cache.get(image, { waitForRefresh: true });
+  } finally {
+    gate.resolve();
+  }
+  assert.deepEqual((await waiting).bytes, replacement);
+  await settled(cache);
+  assert.deepEqual((await cache.get(image)).bytes, replacement);
+  assert.equal(calls.length, 2);
+  assert.equal(cache.bytes, replacement.length);
+});
+
+test('304 refreshes reuse bytes and preserve upstream validators and freshness across restarts', async (t) => {
+  let clock = Date.now();
+  const lastModified = 'Mon, 12 Oct 2026 00:00:00 GMT';
+  const { cache, http, directory } = await fixture(t, {
+    now: () => clock,
+    responseHeaders: {
+      'cache-control': 'max-age=60',
+      etag: '"upstream"',
+      'last-modified': lastModified,
+    },
+  });
+  await cache.get(image);
+  await cache.close();
+  clock += 61000;
+  const reopened = await new ImageCache({ directory, http, now: () => clock }).init();
+  t.after(() => reopened.close());
+  let checks = 0;
+  http.request = async (url, options) => {
+    checks++;
+    assert.equal(options.headers['if-none-match'], '"upstream"');
+    assert.equal(options.headers['if-modified-since'], lastModified);
+    assert.equal(
+      options.headersForUrl('https://lain.bgm.tv/pic/another.jpg')['if-none-match'],
+      undefined,
+    );
+    return { url, response: new Response(null, { status: 304 }) };
+  };
+  assert.deepEqual((await reopened.get(image)).bytes, png);
+  await settled(reopened);
+  assert.equal((await reopened.get(image)).expires, clock + 60000);
+  assert.equal(checks, 1);
+  assert.equal(reopened.bytes, png.length);
+  await reopened.close();
+  const again = await new ImageCache({ directory, http, now: () => clock }).init();
+  t.after(() => again.close());
+  await again.get(image);
+  assert.equal(checks, 1);
+});
+
+test('failed background refreshes keep stale covers available, including after restart', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  let clock = Date.now();
+  const { cache, http, directory } = await fixture(t, {
+    now: () => clock,
+    responseHeaders: { 'cache-control': 'max-age=0' },
+  });
+  await cache.get(image);
+  http.request = async () => {
+    throw new Error('offline');
+  };
+  assert.deepEqual((await cache.get(image, { waitForRefresh: true })).bytes, png);
+  await settled(cache);
+  assert.deepEqual((await cache.get(image)).bytes, png);
+  assert.equal(cache.pending.size, 0);
+  await cache.close();
+  const reopened = await new ImageCache({ directory, http, now: () => clock }).init();
+  t.after(() => reopened.close());
+  assert.deepEqual((await reopened.get(image)).bytes, png);
+  await settled(reopened);
+  assert.equal(reopened.entries.size, 1);
+});
+
+test('thirty days of inactivity and the 200-image default bound retained files', async (t) => {
+  let clock = Date.now();
+  const day = 24 * 3600 * 1000;
+  const { cache, http, directory } = await fixture(t, { now: () => clock });
+  assert.equal(cache.maxEntries, 200);
+  await cache.get(`${image}?used`);
+  await cache.get(`${image}?unused`);
+  clock += 29 * day;
+  await cache.get(`${image}?used`);
+  await settled(cache);
+  clock += 2 * day;
+  const reopened = await new ImageCache({ directory, http, now: () => clock }).init();
+  t.after(() => reopened.close());
+  assert.equal(reopened.entries.size, 1);
+  assert.equal((await imageFiles(directory)).length, 1);
+  assert.equal(reopened.bytes, png.length);
+  const bounded = await fixture(t, { maxEntries: 2 });
+  await bounded.cache.get(`${image}?a`);
+  await bounded.cache.get(`${image}?b`);
+  await bounded.cache.get(`${image}?a`);
+  await bounded.cache.get(`${image}?c`);
+  assert.equal(bounded.cache.entries.size, 2);
+  await bounded.cache.get(`${image}?a`);
+  assert.equal(bounded.calls.length, 3);
+  await bounded.cache.get(`${image}?b`);
+  assert.equal(bounded.calls.length, 4);
+});
+
+test('legacy files without metadata remain visible while their headers are fetched', async (t) => {
+  const { cache, http, directory } = await fixture(t);
+  await cache.get(image);
+  await cache.close();
+  const [name] = await imageFiles(directory);
+  await unlink(join(directory, `${name}.json`));
+  const reopened = await new ImageCache({ directory, http }).init();
+  t.after(() => reopened.close());
+  const gate = Promise.withResolvers();
+  http.request = async (url, options) => {
+    assert.equal(options.headers['if-none-match'], undefined);
+    await gate.promise;
+    return { url, response: new Response(png, { headers: { 'content-type': 'image/png' } }) };
+  };
+  try {
+    assert.deepEqual((await promptly(reopened.get(image))).bytes, png);
+  } finally {
+    gate.resolve();
+  }
+  await settled(reopened);
+  assert.equal(reopened.entries.values().next().value.expires > Date.now(), true);
+});
+
+test('changed resolved cover URLs do not reuse validators from the previous image', async (t) => {
+  let target = image;
+  const { cache, http } = await fixture(t, {
+    resolveUrl: async () => target,
+    responseHeaders: { 'cache-control': 'max-age=0', etag: '"old"' },
+  });
+  const placeholder = 'https://api.bgm.tv/v0/subjects/10440/image?type=large';
+  await cache.get(placeholder);
+  target = `${image}?new`;
+  http.request = async (url, options) => {
+    assert.equal(url, target);
+    assert.equal(options.headers['if-none-match'], undefined);
+    return {
+      url,
+      response: new Response(png, {
+        headers: { 'content-type': 'image/png', 'cache-control': 'max-age=60' },
+      }),
+    };
+  };
+  await cache.get(placeholder);
+  await settled(cache);
+  assert.equal(cache.entries.values().next().value.target, target);
 });
 
 test('disabled disk caching still proxies images; corrupt cache entries are replaced', async (t) => {
@@ -146,7 +368,7 @@ test('disabled disk caching still proxies images; corrupt cache entries are repl
   assert.deepEqual(await readdir(disabled.directory), []);
   const { cache, calls, directory } = await fixture(t);
   await cache.get(image);
-  const [file] = await readdir(directory);
+  const [file] = await imageFiles(directory);
   await writeFile(join(directory, file), '<html>corrupt</html>');
   assert.deepEqual((await cache.get(image)).bytes, png);
   assert.equal(calls.length, 2);
@@ -235,6 +457,8 @@ test('real image route returns cache headers, ETag/304, HEAD and no-store errors
   assert.equal(first.headers.get('content-type'), 'image/png');
   assert.equal(first.headers.get('cross-origin-resource-policy'), 'same-origin');
   assert.match(first.headers.get('cache-control'), /public, max-age=\d+/);
+  assert.match(first.headers.get('cache-control'), /stale-while-revalidate=2592000/);
+  assert.ok(Number(first.headers.get('x-image-expires')) > Date.now());
   assert.deepEqual(Buffer.from(await first.arrayBuffer()), png);
   const cached = await fetch(url, { headers: { 'if-none-match': first.headers.get('etag') } });
   assert.equal(cached.status, 304);

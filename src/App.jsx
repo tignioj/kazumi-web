@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { startPlayback } from './playback.js';
 import { PlaybackDiagnostics } from './playback-diagnostics.jsx';
 import { imageSource } from '../shared/images.js';
+import { CachedImage } from './cached-image.jsx';
 import { useWatchData } from './watch-data.js';
 import { WATCH_STATUSES as STATUSES, normalizeWatchData, watchKey } from '../shared/watch-data.js';
 import { awaitVerification, ensureVerificationSession, VerificationHost } from './verification.jsx';
@@ -461,7 +462,7 @@ function Poster({ subject, onOpen, library }) {
     >
       <div className="poster-image">
         {subject.image ? (
-          <img
+          <CachedImage
             referrerPolicy="no-referrer"
             src={imageSource(subject.image)}
             alt=""
@@ -977,7 +978,11 @@ function Discover({ query, library, history, onOpen, onResume, navigate }) {
               <button className="continue-card" key={item.key} onClick={() => onResume(item)}>
                 <div className="continue-image">
                   {item.image && (
-                    <img referrerPolicy="no-referrer" src={imageSource(item.image)} alt="" />
+                    <CachedImage
+                      referrerPolicy="no-referrer"
+                      src={imageSource(item.image)}
+                      alt=""
+                    />
                   )}
                   <Play size={19} fill="currentColor" />
                 </div>
@@ -1450,7 +1455,7 @@ function HistoryPage({ history, onResume, onRemove, onClear }) {
             <article className="history-row" key={item.key}>
               <button className="history-cover" onClick={() => onResume(item)}>
                 {item.image ? (
-                  <img referrerPolicy="no-referrer" src={imageSource(item.image)} alt="" />
+                  <CachedImage referrerPolicy="no-referrer" src={imageSource(item.image)} alt="" />
                 ) : (
                   <Film size={24} />
                 )}
@@ -1586,7 +1591,7 @@ function Downloads({ onPlay, notify }) {
             <article className="cache-row" key={item.id}>
               <div className="cache-cover">
                 {item.image ? (
-                  <img
+                  <CachedImage
                     referrerPolicy="no-referrer"
                     src={imageSource(item.image)}
                     alt=""
@@ -1676,7 +1681,7 @@ function Subject({ id, library, updateLibrary, rules, onPlay, navigate, onBack, 
       <section className="subject-hero">
         <div className="subject-poster">
           {subject.image ? (
-            <img
+            <CachedImage
               referrerPolicy="no-referrer"
               src={imageSource(subject.image)}
               alt={titleOf(subject)}
