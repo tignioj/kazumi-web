@@ -7,9 +7,9 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { gunzipSync } from 'node:zlib';
-import { createApp } from '../index.js';
-import { createHttpClient } from '../lib/http.js';
-import { tarHeader } from '../modules/downloads/archive.js';
+import { createApp } from '../../server/index.js';
+import { createHttpClient } from '../../server/lib/http.js';
+import { tarHeader } from '../../server/modules/downloads/archive.js';
 
 const movie = Buffer.from('0123456789abcdefghijklmnopqrstuvwxyz');
 const hlsAsset = Buffer.from('INITseg1seg2');

@@ -24,7 +24,7 @@ jobs:
       - run: docker compose config --quiet
       - run: docker build -t kazumi-web:test .
       - run: docker run --rm --read-only kazumi-web:test test -s /etc/ssl/certs/ca-certificates.crt
-      - run: docker run --rm --read-only --network none --tmpfs /tmp:mode=1777 kazumi-web:test node --test server/test/local-metadata.test.js
+      - run: docker run --rm --read-only --network none --tmpfs /tmp:mode=1777 --mount type=bind,source="$PWD/test",target=/app/test,readonly kazumi-web:test node --test test/server/local-metadata.test.js
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

@@ -5,10 +5,10 @@ import { createServer } from 'node:http';
 import { mkdtemp, readdir, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ImageCache } from '../modules/images/cache.js';
-import { createApp } from '../index.js';
-import { createHttpClient, HttpError } from '../lib/http.js';
-import { bangumiImageUrl, imageSource } from '../../shared/images.js';
+import { ImageCache } from '../../server/modules/images/cache.js';
+import { createApp } from '../../server/index.js';
+import { createHttpClient, HttpError } from '../../server/lib/http.js';
+import { imageSource } from '../../shared/images.js';
 
 const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=',
@@ -61,31 +61,6 @@ async function promptly(promise) {
     clearTimeout(timer);
   }
 }
-
-test('all Bangumi image URL forms use the same-origin endpoint, with no open proxy', () => {
-  assert.equal(
-    bangumiImageUrl('http://lain.bgm.tv/pic/a.jpg#fragment'),
-    'https://lain.bgm.tv/pic/a.jpg',
-  );
-  assert.match(imageSource('//lain.bgm.tv/pic/a.jpg'), /^\/api\/image\?url=https%3A/);
-  assert.match(
-    imageSource('https://api.bgm.tv/v0/characters/7/image?type=large'),
-    /^\/api\/image\?/,
-  );
-  for (const url of [
-    'https://example.com/a.png',
-    'http://localhost/a',
-    'https://lain.bgm.tv.evil/a',
-    'https://api.bgm.tv/v0/subjects/7',
-    'https://user:pass@lain.bgm.tv/a',
-    'https://lain.bgm.tv:8080/a',
-    'data:image/png;base64,abc',
-    '/api/image?url=already',
-  ]) {
-    assert.equal(bangumiImageUrl(url), null);
-    assert.equal(imageSource(url), url);
-  }
-});
 
 test('concurrent image misses share one request and persist across restarts', async (t) => {
   const { cache, calls, directory, http } = await fixture(t);

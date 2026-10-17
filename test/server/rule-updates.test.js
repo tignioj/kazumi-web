@@ -4,8 +4,8 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
-import { createApp } from '../index.js';
-import { availableRuleUpdates, newerRuleVersion } from '../modules/rules/updates.js';
+import { createApp } from '../../server/index.js';
+import { availableRuleUpdates, newerRuleVersion } from '../../server/modules/rules/updates.js';
 
 test('rule versions compare numeric components without downgrading', () => {
   assert.equal(newerRuleVersion('1.10', '1.9'), true);

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveSevenSefun } from '../modules/playback/adapters/sevensefun.js';
-import { MediaService } from '../modules/playback/media.js';
+import { resolveSevenSefun } from '../../server/modules/playback/adapters/sevensefun.js';
+import { MediaService } from '../../server/modules/playback/media.js';
 
 const origin = 'https://www.7sefun.top';
 const pageUrl = `${origin}/vodplay/38247-2-2.html`;

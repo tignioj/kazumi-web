@@ -10,11 +10,15 @@ import {
   parseApiChapters,
   prepareApiRequest,
   readPath,
-} from '../modules/rules/engine.js';
-import { normalizeRule, parseImport, RuleStore } from '../modules/rules/store.js';
-import { checkedUrl, isPublicAddress } from '../lib/http.js';
-import { extractMedia, rewritePlaylist, MediaService } from '../modules/playback/media.js';
-import { normalizeSubject } from '../modules/metadata/service.js';
+} from '../../server/modules/rules/engine.js';
+import { normalizeRule, parseImport, RuleStore } from '../../server/modules/rules/store.js';
+import { checkedUrl, isPublicAddress } from '../../server/lib/http.js';
+import {
+  extractMedia,
+  rewritePlaylist,
+  MediaService,
+} from '../../server/modules/playback/media.js';
+import { normalizeSubject } from '../../server/modules/metadata/service.js';
 
 const rule = {
   name: 'Fixture',

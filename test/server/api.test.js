@@ -5,9 +5,9 @@ import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createApp } from '../index.js';
-import { createHttpClient } from '../lib/http.js';
-import { MetadataService } from '../modules/metadata/service.js';
+import { createApp } from '../../server/index.js';
+import { createHttpClient } from '../../server/lib/http.js';
+import { MetadataService } from '../../server/modules/metadata/service.js';
 
 test('real HTTP API, rule execution, metadata and media proxy integration', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'kazumi-api-'));

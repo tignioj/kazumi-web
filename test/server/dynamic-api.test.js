@@ -5,9 +5,9 @@ import { once } from 'node:events';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createApp } from '../index.js';
-import { createHttpClient } from '../lib/http.js';
-import { BrowserResolver } from '../modules/playback/browser-resolver.js';
+import { createApp } from '../../server/index.js';
+import { createHttpClient } from '../../server/lib/http.js';
+import { BrowserResolver } from '../../server/modules/playback/browser-resolver.js';
 
 async function listen(server) {
   server.listen(0, '127.0.0.1');
@@ -23,7 +23,7 @@ test(
   'dynamic playback works through real browser, API and session proxy with seek support',
   { timeout: 30000 },
   async (t) => {
-    const movie = await readFile(new URL('../../test/fixtures/sample.mp4', import.meta.url));
+    const movie = await readFile(new URL('../fixtures/media/sample.mp4', import.meta.url));
     const requests = [];
     const upstream = createServer((req, res) => {
       if (req.url === '/watch') {

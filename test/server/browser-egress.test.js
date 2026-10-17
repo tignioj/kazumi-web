@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
 import { once } from 'node:events';
-import { createBrowserEgress } from '../lib/browser-egress.js';
-import { createHttpClient, readLimited } from '../lib/http.js';
+import { createBrowserEgress } from '../../server/lib/browser-egress.js';
+import { createHttpClient, readLimited } from '../../server/lib/http.js';
 
 async function listen(server, host = '127.0.0.1') {
   server.listen(0, host);

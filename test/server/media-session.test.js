@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import express from 'express';
-import { createHttpClient, HttpError } from '../lib/http.js';
-import { MediaService } from '../modules/playback/media.js';
+import { createHttpClient, HttpError } from '../../server/lib/http.js';
+import { MediaService } from '../../server/modules/playback/media.js';
 import {
   cookiesForUrl,
   headersForSession,
   MediaSessionStore,
-} from '../modules/playback/session-store.js';
+} from '../../server/modules/playback/session-store.js';
 
 const rule = { baseURL: 'https://source.example/', referer: 'https://source.example/' };
 const cookie = (name, domain, extra = {}) => ({

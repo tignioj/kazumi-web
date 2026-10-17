@@ -4,7 +4,7 @@ import { once } from 'node:events';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createApp } from '../index.js';
+import { createApp } from '../../server/index.js';
 
 async function fixture(t, httpClient = { async close() {} }) {
   const directory = await mkdtemp(join(tmpdir(), 'kazumi-app-'));

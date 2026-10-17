@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import express from 'express';
-import { resolveHhjx } from '../modules/playback/adapters/hhjx.js';
-import { MediaService } from '../modules/playback/media.js';
+import { resolveHhjx } from '../../server/modules/playback/adapters/hhjx.js';
+import { MediaService } from '../../server/modules/playback/media.js';
 
 const pageUrl = 'https://hhjx.hhplayer.com/?url=episode-2';
 const bootstrap = {

@@ -49,12 +49,12 @@ export const subject = {
 const secondSubject = { ...subject, id: 102, name: 'Night Train', name_cn: '夜空列车' };
 
 export async function createUpstream() {
-  const video = await readFile(new URL('./sample.mp4', import.meta.url));
+  const video = await readFile(new URL('../../fixtures/media/sample.mp4', import.meta.url));
   const hlsFiles = Object.fromEntries(
     await Promise.all(
       ['sample.m3u8', 'segment00.ts', 'segment01.ts'].map(async (name) => [
         name,
-        await readFile(new URL(`./${name}`, import.meta.url)),
+        await readFile(new URL(`../../fixtures/media/${name}`, import.meta.url)),
       ]),
     ),
   );

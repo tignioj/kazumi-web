@@ -6,11 +6,11 @@ import { tmpdir } from 'node:os';
 import { once } from 'node:events';
 import { createHash } from 'node:crypto';
 import { setImmediate as nextTurn } from 'node:timers/promises';
-import { LocalMetadataStore } from '../modules/metadata/local-store.js';
-import { ArchiveManager } from '../modules/metadata/archive-manager.js';
-import { MetadataService, categorySearchOptions } from '../modules/metadata/service.js';
-import { createApp } from '../index.js';
-import { createCoverResolver } from '../modules/images/cover-resolver.js';
+import { LocalMetadataStore } from '../../server/modules/metadata/local-store.js';
+import { ArchiveManager } from '../../server/modules/metadata/archive-manager.js';
+import { MetadataService, categorySearchOptions } from '../../server/modules/metadata/service.js';
+import { createApp } from '../../server/index.js';
+import { createCoverResolver } from '../../server/modules/images/cover-resolver.js';
 import { archiveZip, zipFiles, subjects, episodes } from './fixtures/archive.js';
 
 async function fixture(t, { now } = {}) {

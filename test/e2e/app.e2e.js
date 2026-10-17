@@ -43,7 +43,7 @@ test('production HTTP routes search rules, parse roads, resolve video and preser
   const partial = await request.get(media.url, { headers: { Range: 'bytes=0-63' } });
   expect(partial.status()).toBe(206);
   expect(partial.headers()['content-range']).toMatch(/^bytes 0-63\/\d+$/);
-  const video = await readFile(new URL('./fixtures/sample.mp4', import.meta.url));
+  const video = await readFile(new URL('../fixtures/media/sample.mp4', import.meta.url));
   expect(await partial.body()).toEqual(video.subarray(0, 64));
 });
 

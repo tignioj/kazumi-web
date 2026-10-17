@@ -2,7 +2,7 @@ import { defineConfig, devices } from '@playwright/test';
 
 const port = Number(process.env.E2E_PORT || 4173);
 export default defineConfig({
-  testDir: './test',
+  testDir: './test/e2e',
   testMatch: '**/*.e2e.js',
   timeout: 45_000,
   expect: { timeout: 10_000 },
@@ -31,7 +31,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'npm run build && node test/run-app.mjs',
+    command: 'npm run build && node test/e2e/run-app.mjs',
     url: `http://127.0.0.1:${port}/api/health`,
     reuseExistingServer: false,
     timeout: 120_000,

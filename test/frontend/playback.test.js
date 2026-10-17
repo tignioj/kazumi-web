@@ -39,7 +39,7 @@ test('compatibility checks alternatives separately and leaves missing/partial co
 });
 
 test('bounded MP4 sample-description parsing identifies the real fixture AVC configuration', async () => {
-  const bytes = await readFile(new URL('../../test/fixtures/sample.mp4', import.meta.url));
+  const bytes = await readFile(new URL('../fixtures/media/sample.mp4', import.meta.url));
   const tracks = mp4Tracks(bytes);
   assert.ok(
     tracks.some((track) => track.codec.startsWith('avc1.') && track.width > 0 && track.height > 0),

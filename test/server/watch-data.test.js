@@ -4,8 +4,8 @@ import { once } from 'node:events';
 import { mkdtemp, mkdir, readFile, rm, writeFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { WatchStore } from '../modules/watch/store.js';
-import { createApp } from '../index.js';
+import { WatchStore } from '../../server/modules/watch/store.js';
+import { createApp } from '../../server/index.js';
 import { watchKey } from '../../shared/watch-data.js';
 
 const collection = (id, status = '在看') => ({

@@ -6,4 +6,4 @@ test-results
 playwright-report
 LICENSE
 # MPEG-TS video fixtures (not TypeScript source)
-test/fixtures/segment*.ts
+test/fixtures/media/segment*.ts

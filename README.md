@@ -156,7 +156,10 @@ npm run dev
 如果开发机的 3000 端口已被占用，设置 `API_PORT=3100` 后执行 `npm run dev`，前后端代理会一起使用新端口。开发模式不自动读取部署用的 `.env`；需要 DoH 时请将 `DNS_OVER_HTTPS_URL` 设置为进程环境变量。
 
 ```bash
-npm test             # 规则解析、媒体代理和服务端测试
+npm test             # 前端、后端和共享逻辑的全部 Node.js 测试
+npm run test:frontend # 单独运行前端逻辑测试
+npm run test:server   # 单独运行后端单元与集成测试
+npm run test:shared   # 单独运行前后端共享逻辑测试
 npm run build        # 构建 dist
 npm start            # 同一个 Node 服务提供 API 和构建后的网页
 npm run smoke        # 检查运行中的生产实例（BASE_URL 可指定地址）
@@ -169,6 +172,17 @@ npx playwright install --with-deps chromium
 npm run test:e2e
 ```
 
+### 测试目录
+
+- `test/frontend/`：直接验证 `src/` 中前端模块的逻辑，目前包含媒体探测、播放错误与播放器控制测试。
+- `test/server/`：验证 `server/` 的规则、HTTP 接口、存储、缓存、媒体代理和浏览器解析；后端专用的归档及规则夹具放在 `test/server/fixtures/`。
+- `test/shared/`：直接验证根目录 `shared/` 中前后端复用的纯逻辑，目前包含图片地址处理测试。后端测试使用共享工具构造数据时，仍按被测服务归属放在后端目录。
+- `test/e2e/`：Playwright 浏览器及生产 HTTP 流程测试，包含启动脚本和模拟上游服务，测试时使用临时数据目录。
+- `test/fixtures/media/`：前端、后端和端到端测试共用的 MP4、HLS 清单与分片；生成方法见 `test/fixtures/README.md`。
+- `native/ech/main_test.go`：保留 Go 测试与源码同目录的惯例，在 `native/ech` 下执行 `go test ./...`。
+
+`npm test` 汇总前三类 Node.js 测试，支持各目录中的嵌套 `*.test.js`；`npm run check` 运行这些测试并构建前端。端到端测试继续单独运行 `npm run test:e2e`。CI 的离线元数据容器测试只读挂载 `test/`，执行 `test/server/local-metadata.test.js`。
+
 ### 前端代码结构
 
 - `src/App.jsx`：应用布局、Hash 导航与全局状态协调。
@@ -178,7 +192,7 @@ npm run test:e2e
 - `src/lib/`：API 请求、格式化和 JSON 文件导出工具；前后端共用的数据约定仍放在根目录 `shared/`。
 - `src/styles.css`：样式唯一入口，按原有层叠顺序导入 `src/styles/` 中的功能样式。跨功能的响应式覆盖集中在 `responsive.css`，调整导入顺序前需检查桌面、移动端和深色主题。
 
-新增页面放入对应的功能目录，由 `App.jsx` 接入导航；公共组件避免依赖具体页面。整理前端后运行 `npm run check` 和 `npm run test:e2e`，播放器基础逻辑的测试位于 `server/test/playback.test.js`。
+新增页面放入对应的功能目录，由 `App.jsx` 接入导航；公共组件避免依赖具体页面。整理前端后运行 `npm run check` 和 `npm run test:e2e`，播放器基础逻辑的测试位于 `test/frontend/playback.test.js`。
 
 ### 后端代码结构
 
@@ -188,7 +202,7 @@ npm run test:e2e
 - `server/modules/`：按规则、观看记录、番剧资料、图片缓存、播放解析、人工验证和下载缓存归拢模块；各目录的 `routes.js` 处理 HTTP 输入输出，服务、存储和解析逻辑放在同目录。
 - `server/middleware/`：请求安全校验、每实例 API 限流、静态文件与页面回退、API 404 和统一错误响应。装配顺序为安全校验、JSON 解析、限流、业务路由、API 404、前端文件与回退、错误处理。
 - `server/lib/`：HTTP 客户端、网络地址校验、ECH 通道、浏览器出口代理与请求参数校验。
-- `server/defaults/`：首次启动使用的来源规则；`server/test/`：服务端与共享逻辑测试，包含中间件顺序、静态页面回退和应用实例隔离的回归测试。
+- `server/defaults/`：首次启动使用的来源规则；后端测试位于 `test/server/`，包含中间件顺序、静态页面回退和应用实例隔离的回归测试。
 
 新增接口放入对应业务目录，通过 `server/routes.js` 接入；限流计数、规则目录缓存和验证任务等状态由各应用实例持有。调整后运行 `npm run check` 和 `npm run test:e2e`。
 

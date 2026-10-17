@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { createEchTransport, isEchTarget, parseEchConfig } from '../lib/ech.js';
-import { createHttpClient } from '../lib/http.js';
+import { createEchTransport, isEchTarget, parseEchConfig } from '../../server/lib/ech.js';
+import { createHttpClient } from '../../server/lib/http.js';
 
 const config = { Status: 0, Answer: [{ type: 65, TTL: 100, data: '1 . alpn=h2 ech=AAECAw==' }] };
 const lookup = (host, options, callback) => callback(null, [{ address: '104.26.8.23', family: 4 }]);

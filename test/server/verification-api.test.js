@@ -6,8 +6,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { createApp } from '../index.js';
-import { createHttpClient } from '../lib/http.js';
+import { createApp } from '../../server/index.js';
+import { createHttpClient } from '../../server/lib/http.js';
 
 const screenshot = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
