@@ -13,7 +13,7 @@ import {
 import { RuleEngine } from './rules.js';
 import { MediaService } from './media.js';
 import { BrowserResolver } from './browser-resolver.js';
-import { MetadataService } from './metadata.js';
+import { MetadataService, categorySearchOptions } from './metadata.js';
 import { VerificationTasks } from './verification.js';
 import { DownloadManager } from './downloads.js';
 
@@ -184,6 +184,14 @@ export async function createApp(options = {}) {
     const sort = req.query.sort || 'trending';
     if (!['rank', 'trending'].includes(sort)) throw new HttpError('排序参数无效');
     res.json(await metadata.catalog(sort, pageNumber(req.query.page)));
+  });
+  app.get('/api/categories', async (req, res) => {
+    res.json(
+      await metadata.search('', {
+        ...categorySearchOptions(req.query),
+        page: pageNumber(req.query.page),
+      }),
+    );
   });
   app.get('/api/calendar', async (req, res) => res.json(await metadata.calendar()));
   app.get('/api/search', async (req, res) =>

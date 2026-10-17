@@ -7,6 +7,7 @@ RUN npm ci
 FROM dependencies AS build
 COPY index.html vite.config.js ./
 COPY src ./src
+COPY shared ./shared
 RUN npm run build
 
 FROM node:24-bookworm-slim AS production-dependencies
@@ -24,6 +25,7 @@ RUN ./node_modules/.bin/playwright install --with-deps --only-shell chromium \
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --chown=node:node package.json LICENSE ./
 COPY --chown=node:node server ./server
+COPY --chown=node:node shared ./shared
 RUN mkdir -p /app/data && chown node:node /app/data
 USER node
 EXPOSE 3000

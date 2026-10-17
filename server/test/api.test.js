@@ -30,6 +30,10 @@ test('real HTTP API, rule execution, metadata and media proxy integration', asyn
       referer: req.headers.referer,
     });
     if (url.pathname === '/v0/search/subjects') {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      received.at(-1).body = JSON.parse(Buffer.concat(chunks).toString());
+      received.at(-1).query = Object.fromEntries(url.searchParams);
       res.setHeader('content-type', 'application/json');
       res.end(JSON.stringify({ total: 1, data: [subject] }));
       return;
@@ -216,6 +220,67 @@ test('real HTTP API, rule execution, metadata and media proxy integration', asyn
       assert.equal((await json('/api/calendar')).data[0].items[0].id, 7);
       assert.equal((await json('/api/subjects/7')).data.episodes[0].name, '开始');
       assert.equal((await json('/api/catalog?page=-1')).status, 400);
+    });
+    await t.test('categories forward combined filters and pagination to Bangumi', async () => {
+      const result = await json(
+        '/api/categories?tag=日常&tag=原创&format=TV&year=2026&season=4&sort=rank&page=2',
+      );
+      assert.equal(result.status, 200);
+      assert.equal(result.data.items[0].id, 7);
+      const request = received.findLast((entry) => entry.path === '/v0/search/subjects');
+      assert.deepEqual(request.query, { limit: '24', offset: '24' });
+      assert.deepEqual(request.body, {
+        keyword: '',
+        sort: 'rank',
+        filter: {
+          type: [2],
+          rank: ['>0'],
+          tag: ['TV', '原创', '日常'],
+          air_date: ['>=2026-10-01', '<2027-01-01'],
+        },
+      });
+      const count = received.length;
+      assert.equal(
+        (
+          await json(
+            '/api/categories?tag=原创&tag=日常&format=TV&year=2026&season=4&sort=rank&page=2',
+          )
+        ).status,
+        200,
+      );
+      assert.equal(
+        received.length,
+        count,
+        'same filters share a cache entry regardless of tag order',
+      );
+      assert.equal((await json('/api/categories?tag=科幻&year=2025&sort=score')).status, 200);
+      assert.deepEqual(received.at(-1).body, {
+        keyword: '',
+        sort: 'score',
+        filter: { type: [2], tag: ['科幻'], air_date: ['>=2025-01-01', '<2026-01-01'] },
+      });
+      assert.equal((await json('/api/categories')).status, 200);
+      assert.deepEqual(received.at(-1).body, { keyword: '', sort: 'heat', filter: { type: [2] } });
+    });
+    await t.test('invalid category filters are rejected before contacting Bangumi', async () => {
+      const count = received.length;
+      for (const query of [
+        'sort=trending',
+        'sort=heat&sort=rank',
+        'format=invalid',
+        'year=1899',
+        'year=2026&year=2025',
+        'year=not-a-year',
+        'season=1',
+        'year=2026&season=5',
+        'tag=',
+        `tag=${'a'.repeat(41)}`,
+        Array(9).fill('tag=日常').join('&'),
+        'page=1001',
+      ]) {
+        assert.equal((await json(`/api/categories?${query}`)).status, 400, query);
+      }
+      assert.equal(received.length, count);
     });
     await t.test('import, source search, chapters and static playback resolution', async () => {
       assert.equal((await json('/api/rules/import', { content: rule })).status, 200);
