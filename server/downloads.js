@@ -100,7 +100,13 @@ function contentLength(response) {
 }
 
 function checkContent(contentType, prefix, kind) {
-  if (/text\/html|application\/(?:json|javascript|xhtml|xml)|image\//i.test(contentType))
+  // HLS CDNs can serve image-prefixed segments as image/png or image/jpeg.
+  // Keep their bytes intact, just as the playback proxy does, for the demuxer,
+  // encrypted segments and playlist byte ranges. SVG and error pages still fail.
+  if (
+    /text\/html|application\/(?:json|javascript|xhtml|xml)|image\/svg/i.test(contentType) ||
+    (kind !== 'segment' && /image\//i.test(contentType))
+  )
     throw new HttpError('媒体服务器返回了网页或其他非视频内容', 422);
   if (
     kind === 'video' &&

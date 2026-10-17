@@ -14,6 +14,14 @@ import { tarHeader } from '../download-archive.js';
 const movie = Buffer.from('0123456789abcdefghijklmnopqrstuvwxyz');
 const hlsAsset = Buffer.from('INITseg1seg2');
 const hlsKey = Buffer.from('0123456789abcdef');
+const imageSegment = Buffer.concat([
+  Buffer.from('89504e470d0a1a0a', 'hex'),
+  Buffer.alloc(105),
+  Buffer.from([0x47, 0x40]),
+  Buffer.alloc(186),
+  Buffer.from([0x47, 0x41]),
+  Buffer.alloc(186),
+]);
 
 async function closeServer(server) {
   server.closeAllConnections();
@@ -69,6 +77,45 @@ async function fixture(t, { downloadOptions, session = false } = {}) {
     if (path === '/fake.mp4') {
       res.setHeader('content-type', 'text/html');
       return res.end('<html>not a video</html>');
+    }
+    if (path === '/image.mp4') {
+      res.setHeader('content-type', 'image/png');
+      return res.end(imageSegment);
+    }
+    if (path === '/image-segments.m3u8') {
+      res.setHeader('content-type', 'application/vnd.apple.mpegurl');
+      return res.end(
+        '#EXTM3U\n#EXT-X-TARGETDURATION:5\n#EXTINF:5,\n/image-segment.png\n' +
+          '#EXTINF:5,\n/image-segment.jpg\n#EXT-X-ENDLIST\n',
+      );
+    }
+    if (/^\/image-segment\.(?:png|jpg)$/.test(path)) {
+      res.writeHead(200, {
+        'content-type': path.endsWith('.png') ? 'image/png' : 'image/jpeg',
+        'content-length': imageSegment.length,
+      });
+      res.write(imageSegment.subarray(0, 4));
+      return setTimeout(() => res.end(imageSegment.subarray(4)), 15);
+    }
+    if (path === '/invalid-segment.m3u8') {
+      res.setHeader('content-type', 'application/vnd.apple.mpegurl');
+      const asset = new URL(req.url, 'http://fixture').searchParams.get('asset');
+      return res.end(`#EXTM3U\n#EXT-X-TARGETDURATION:5\n#EXTINF:5,\n${asset}\n#EXT-X-ENDLIST\n`);
+    }
+    if (path.startsWith('/invalid-segment.')) {
+      const suffix = path.split('.').at(-1);
+      res.setHeader(
+        'content-type',
+        { html: 'text/html', json: 'application/json', svg: 'image/svg+xml' }[suffix] ||
+          'image/png',
+      );
+      return res.end(
+        suffix === 'json'
+          ? '{"error":"not a segment"}'
+          : suffix === 'svg'
+            ? '<svg xmlns="http://www.w3.org/2000/svg"></svg>'
+            : '<html>upstream error</html>',
+      );
     }
     if (path === '/movie.mp4') {
       res.writeHead(200, { 'content-type': 'video/mp4', 'content-length': movie.length });
@@ -541,6 +588,55 @@ test('HLS cache includes extensionless playlists, alternate audio, keys, maps an
   assert.equal(f.received.length, beforeOffline);
 });
 
+test('HLS cache preserves image-prefixed segments served with image MIME types for offline playback and export', async (t) => {
+  const f = await fixture(t);
+  const { job } = await f.submit('/image-segments.m3u8');
+  const completed = await f.finished(job.id);
+  assert.equal(completed.status, 'complete', completed.error);
+  assert.equal(completed.completedFiles, 3);
+  await f.restart();
+  const beforeOffline = f.received.length;
+  f.state.offline = true;
+  const playlist = await (await f.fetch(completed.playbackUrl)).text();
+  const segments = playlistUris(playlist);
+  assert.equal(segments.length, 2);
+  for (const segment of segments) {
+    const path = new URL(segment, `http://local${completed.playbackUrl}`).pathname;
+    const response = await f.fetch(path);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), 'application/octet-stream');
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), imageSegment);
+    const partial = await f.fetch(path, { headers: { Range: 'bytes=113-300' } });
+    assert.equal(partial.status, 206);
+    assert.deepEqual(Buffer.from(await partial.arrayBuffer()), imageSegment.subarray(113, 301));
+  }
+  const snapshot = await f.list();
+  assert.equal(snapshot.usedBytes, imageSegment.length * 2 + Buffer.byteLength(playlist));
+  const exported = await f.fetch(completed.downloadUrl);
+  const files = untar(gunzipSync(Buffer.from(await exported.arrayBuffer())));
+  assert.equal(files.size, 3);
+  assert.equal([...files.values()].filter((bytes) => bytes.equals(imageSegment)).length, 2);
+  assert.equal(f.received.length, beforeOffline);
+});
+
+test('HLS cache still rejects HTML, JSON, SVG and image-labeled error pages', async (t) => {
+  const f = await fixture(t);
+  for (const suffix of ['html', 'json', 'svg', 'png']) {
+    const { job } = await f.submit(`/invalid-segment.m3u8?asset=invalid-segment.${suffix}`);
+    const failed = await f.finished(job.id);
+    assert.equal(failed.status, 'error', suffix);
+    assert.match(failed.error, /网页或其他非视频内容/);
+    assert.equal(failed.bytes, 0);
+    assert.equal(failed.completedFiles, 0);
+    assert.equal(failed.playbackUrl, null);
+  }
+  assert.equal((await f.list()).usedBytes, 0);
+  assert.deepEqual(
+    (await diskFiles(f.directory)).filter((file) => !file.path.endsWith('.json')),
+    [],
+  );
+});
+
 test('download reuses a server-side media session without exposing or persisting its credentials', async (t) => {
   const f = await fixture(t, { session: true });
   const { job } = await f.submit('/session');
@@ -588,7 +684,7 @@ test('invalid media signatures, unsafe file names and failed or live streams can
     assert.ok(response.status >= 400 && response.status < 500, JSON.stringify(response));
   }
   assert.equal(f.received.length, 0);
-  for (const path of ['/broken.mp4', '/fake.mp4', '/live.m3u8']) {
+  for (const path of ['/broken.mp4', '/fake.mp4', '/image.mp4', '/live.m3u8']) {
     const { job } = await f.submit(path);
     const completed = await f.finished(job.id);
     assert.equal(completed.status, 'error', path);
