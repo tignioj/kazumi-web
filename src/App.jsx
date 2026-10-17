@@ -632,18 +632,29 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
   const resume = (record) => startPlayer({ ...record, resume: record.position });
-  const playCached = (item) => {
+  const playCached = (item, items) => {
     const previous = history.find((record) =>
       sameCacheEpisode(record, item.ruleName, item.episodeUrl),
     );
+    const episodes = items
+      .filter((entry) => entry.status === 'complete')
+      .map((entry, index) => {
+        const record = history.find((record) =>
+          sameCacheEpisode(record, entry.ruleName, entry.episodeUrl),
+        );
+        return {
+          name: entry.episodeName,
+          url: entry.episodeUrl,
+          originalRoadIndex: record?.roadIndex || 0,
+          originalEpisodeIndex: record?.episodeIndex ?? index,
+        };
+      });
     startPlayer({
       ...item,
-      roads: [{ name: '已缓存', episodes: [{ name: item.episodeName, url: item.episodeUrl }] }],
+      roads: [{ name: '已缓存', episodes }],
       roadIndex: 0,
-      episodeIndex: 0,
+      episodeIndex: episodes.findIndex((episode) => episode.url === item.episodeUrl),
       cacheOnly: true,
-      originalRoadIndex: previous?.roadIndex || 0,
-      originalEpisodeIndex: previous?.episodeIndex || 0,
       resume: previous?.position || 0,
     });
   };
@@ -1599,7 +1610,7 @@ function DownloadGroup({ items, onPlay, onRemove }) {
                 <>
                   <button
                     className="button primary"
-                    onClick={() => onPlay(episode)}
+                    onClick={() => onPlay(episode, items)}
                     aria-label={`播放缓存 ${episode.title} ${episode.episodeName}`}
                   >
                     <Play size={15} />
@@ -3128,14 +3139,14 @@ function Player({ context, settings, onClose, onProgress, notify, navigate }) {
         sourceUrl: context.sourceUrl,
         episodeUrl: episode.url,
         episodeName: episode.name,
-        roadIndex: context.cacheOnly ? context.originalRoadIndex : roadIndex,
-        episodeIndex: context.cacheOnly ? context.originalEpisodeIndex : episodeIndex,
+        roadIndex: context.cacheOnly ? episode.originalRoadIndex : roadIndex,
+        episodeIndex: context.cacheOnly ? episode.originalEpisodeIndex : episodeIndex,
         position: Number.isFinite(position) ? position : 0,
         duration: Number.isFinite(duration) ? duration : 0,
         updatedAt: Date.now(),
       });
     },
-    [episode?.url, episode?.name, roadIndex, episodeIndex, context],
+    [episode, roadIndex, episodeIndex, context],
   );
   useEffect(() => {
     if (!resolved || resolved.type === 'iframe') {
