@@ -803,9 +803,7 @@ export default function App() {
               </button>
             </Notice>
           )}
-          {watchData.loading ? (
-            <Spinner text="正在读取服务器收藏与观看记录…" />
-          ) : player ? (
+          {!watchData.loading && player && (
             <Player
               key={`${player.ruleName}:${player.sourceUrl}:${player.cacheOnly ? player.id : 'source'}`}
               context={player}
@@ -815,8 +813,12 @@ export default function App() {
               notify={notify}
               navigate={navigate}
             />
+          )}
+          {watchData.loading ? (
+            <Spinner text="正在读取服务器收藏与观看记录…" />
           ) : (
-            <>
+            // Keep browsing state, including source search results, while the player is open.
+            <div hidden={!!player}>
               {/* Keep the originating list mounted while its subject details are open. */}
               <div hidden={section === 'subject'}>
                 {listSection === 'discover' && (
@@ -919,7 +921,7 @@ export default function App() {
                   }
                 />
               )}
-            </>
+            </div>
           )}
         </main>
         <footer className="page-footer">
