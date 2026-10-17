@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { awaitVerification, ensureVerificationSession, VerificationHost } from './verification.jsx';
 import {
@@ -549,7 +549,12 @@ function PosterGrid({ items = [], loading, onOpen, library }) {
 }
 
 export default function App() {
-  const [route, setRoute] = useState(() => location.hash.slice(1) || '/discover');
+  const [navigation, setNavigation] = useState(() => ({
+    route: location.hash.slice(1) || '/discover',
+    origin: null,
+    scrollY: null,
+  }));
+  const { route, origin } = navigation;
   const [library, setLibrary] = useStored('kazumi.library.v1', {});
   const [history, setHistory] = useStored('kazumi.history.v1', []);
   const [settings, setSettings] = useStored('kazumi.settings.v1', {
@@ -567,7 +572,6 @@ export default function App() {
     location.hash = path;
     setSidebarOpen(false);
     setPlayer(null);
-    window.scrollTo({ top: 0, behavior: 'instant' });
   }, []);
   const reloadRules = useCallback(async () => {
     try {
@@ -580,13 +584,37 @@ export default function App() {
   }, []);
   useEffect(() => {
     const fn = () => {
-      setRoute(location.hash.slice(1) || '/discover');
+      const nextRoute = location.hash.slice(1) || '/discover';
+      const scrollY = window.scrollY;
+      setNavigation((previous) => {
+        const wasSubject = previous.route.startsWith('/subject/');
+        const isSubject = nextRoute.startsWith('/subject/');
+        return {
+          route: nextRoute,
+          origin: isSubject
+            ? wasSubject
+              ? previous.origin
+              : { route: previous.route, scrollY }
+            : null,
+          scrollY: wasSubject && previous.origin?.route === nextRoute ? previous.origin.scrollY : 0,
+        };
+      });
       setPlayer(null);
+      setSidebarOpen(false);
     };
+    const scrollRestoration = window.history.scrollRestoration;
+    window.history.scrollRestoration = 'manual';
     addEventListener('hashchange', fn);
     reloadRules();
-    return () => removeEventListener('hashchange', fn);
+    return () => {
+      removeEventListener('hashchange', fn);
+      window.history.scrollRestoration = scrollRestoration;
+    };
   }, []);
+  useLayoutEffect(() => {
+    if (navigation.scrollY !== null)
+      window.scrollTo({ top: navigation.scrollY, behavior: 'instant' });
+  }, [navigation]);
   useEffect(() => {
     const media = matchMedia('(prefers-color-scheme: dark)');
     const update = () =>
@@ -603,7 +631,9 @@ export default function App() {
     }
   }, [toast]);
   const section = route.split('/')[1]?.split('?')[0] || 'discover';
-  const query = new URLSearchParams(route.split('?')[1] || '').get('q') || '';
+  const listRoute = section === 'subject' ? origin?.route : route;
+  const listSection = listRoute?.split('/')[1]?.split('?')[0] || '';
+  const query = new URLSearchParams(listRoute?.split('?')[1] || '').get('q') || '';
   const openSubject = (id) => navigate(`/subject/${id}`);
   const updateLibrary = (subject, status) => {
     setLibrary((prev) => {
@@ -790,20 +820,23 @@ export default function App() {
             />
           ) : (
             <>
-              {section === 'discover' && (
-                <Discover
-                  query={query}
-                  library={library}
-                  history={history}
-                  onOpen={openSubject}
-                  onResume={resume}
-                  navigate={navigate}
-                />
-              )}
-              {section === 'calendar' && <Calendar library={library} onOpen={openSubject} />}
-              {section === 'library' && (
-                <Library library={library} onOpen={openSubject} navigate={navigate} />
-              )}
+              {/* Keep the originating list mounted while its subject details are open. */}
+              <div hidden={section === 'subject'}>
+                {listSection === 'discover' && (
+                  <Discover
+                    query={query}
+                    library={library}
+                    history={history}
+                    onOpen={openSubject}
+                    onResume={resume}
+                    navigate={navigate}
+                  />
+                )}
+                {listSection === 'calendar' && <Calendar library={library} onOpen={openSubject} />}
+                {listSection === 'library' && (
+                  <Library library={library} onOpen={openSubject} navigate={navigate} />
+                )}
+              </div>
               {section === 'history' && (
                 <HistoryPage
                   history={history}
@@ -825,6 +858,12 @@ export default function App() {
                   rules={rules}
                   onPlay={startPlayer}
                   navigate={navigate}
+                  onBack={() => (origin ? window.history.back() : navigate('/discover'))}
+                  backLabel={
+                    origin?.route.includes('?q=')
+                      ? '返回搜索结果'
+                      : `返回${NAV.find((item) => item.id === listSection)?.label || '发现'}`
+                  }
                 />
               )}
               {section === 'sources' && (
@@ -1341,7 +1380,7 @@ function Downloads({ onPlay, notify }) {
   );
 }
 
-function Subject({ id, library, updateLibrary, rules, onPlay, navigate }) {
+function Subject({ id, library, updateLibrary, rules, onPlay, navigate, onBack, backLabel }) {
   const request = useRequest(`/subjects/${encodeURIComponent(id)}`);
   const [expanded, setExpanded] = useState(false);
   if (request.loading) return <Spinner text="正在展开这个故事…" />;
@@ -1350,9 +1389,9 @@ function Subject({ id, library, updateLibrary, rules, onPlay, navigate }) {
   const status = library[subject.id]?.status || '';
   return (
     <>
-      <button className="back-link" onClick={() => navigate('/discover')}>
+      <button className="back-link" onClick={onBack}>
         <ArrowLeft size={17} />
-        返回发现
+        {backLabel}
       </button>
       <section className="subject-hero">
         <div className="subject-poster">

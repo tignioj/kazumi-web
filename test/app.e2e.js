@@ -182,7 +182,7 @@ test('mobile pages and rule editor fit the viewport', async ({ page, request }, 
     'history',
   ]) {
     await page.goto(`/#/${route}`);
-    await expect(page.locator('main h1')).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),
       `${route} should not scroll sideways`,
