@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { normalizeWatchData } from '../shared/watch-data.js';
+import { normalizeWatchData } from '../../shared/watch-data.js';
 
 function browserLegacy() {
   let rawLibrary;

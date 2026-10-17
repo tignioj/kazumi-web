@@ -1,0 +1,131 @@
+.source-section {
+  margin-bottom: 25px;
+}
+.source-form {
+  display: flex;
+  gap: 10px;
+  padding: 18px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  align-items: center;
+}
+.source-form > label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 80px;
+  color: var(--muted);
+}
+.source-form input {
+  min-width: 0;
+  border: none;
+  background: none;
+  outline: none;
+  flex: 1;
+  font-size: 12px;
+}
+.source-form select,
+.setting-row select {
+  font-size: 11px;
+  padding: 9px 28px 9px 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 6px;
+  max-width: 190px;
+}
+.source-form .button {
+  min-height: 36px;
+  font-size: 11px;
+  padding: 8px 15px;
+}
+.source-results {
+  margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.source-group {
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.source-group > header {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.source-initial {
+  background: var(--surface-soft);
+  color: var(--muted);
+  width: 27px;
+  height: 27px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+}
+.source-group h3 {
+  font-size: 13px;
+  font-weight: 550;
+}
+.source-group small {
+  color: var(--muted);
+  font-size: 9px;
+  margin-left: auto;
+}
+.source-items {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+.source-items > button {
+  padding: 13px 12px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+  font-size: 11px;
+  line-height: 1.7;
+}
+.source-items > button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.source-items > button > span {
+  overflow-wrap: anywhere;
+}
+.source-items > button > svg {
+  flex-shrink: 0;
+}
+.search-hint {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  justify-content: center;
+  min-height: 210px;
+  color: var(--muted);
+}
+.decorative-asterisk {
+  font-size: 40px;
+  font-weight: 400;
+  color: var(--accent);
+  opacity: 0.5;
+}
+.search-hint p {
+  font-size: 13px;
+  letter-spacing: 0.5px;
+}
+.search-hint small {
+  display: block;
+  font-size: 10px;
+  margin-top: 10px;
+  letter-spacing: 0;
+}

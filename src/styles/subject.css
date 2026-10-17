@@ -1,0 +1,135 @@
+.subject-hero {
+  display: flex;
+  gap: 37px;
+  padding-bottom: 36px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 30px;
+}
+.subject-poster {
+  width: 222px;
+  aspect-ratio: 2/2.86;
+  flex-shrink: 0;
+  border-radius: 9px;
+  overflow: hidden;
+  background: var(--surface-soft);
+  align-self: flex-start;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+.subject-content {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 0;
+}
+.subject-content h1 {
+  font-size: 28px;
+  line-height: 1.6;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+.subject-original {
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.subject-facts {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-top: 20px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--muted);
+}
+.subject-rating {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #b39658;
+}
+.subject-rating b {
+  font-family: Outfit, sans-serif;
+  font-size: 24px;
+  font-weight: 500;
+}
+.subject-rating small {
+  font-size: 9px;
+  color: var(--muted);
+}
+.tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 17px 0;
+}
+.tags > span,
+.tags > a {
+  padding: 4px 9px;
+  color: var(--muted);
+  border-radius: 4px;
+  background: var(--surface-soft);
+  font-size: 9px;
+}
+.subject-summary {
+  line-height: 2.1;
+  font-size: 12px;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-line;
+  margin-top: 19px;
+}
+.subject-summary.expanded {
+  -webkit-line-clamp: unset;
+}
+.summary-toggle {
+  margin-top: 8px;
+  font-size: 10px;
+}
+.subject-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 24px;
+  flex-wrap: wrap;
+}
+.status-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  background: var(--accent);
+  color: var(--bg);
+  border-radius: 7px;
+  position: relative;
+}
+.status-select select {
+  appearance: none;
+  padding: 12px 8px 12px 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  min-width: 106px;
+}
+.status-select option {
+  background: var(--surface);
+  color: var(--ink);
+}
+.status-select.saved {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.status-select > svg {
+  pointer-events: none;
+}
+.subject-actions .button {
+  font-size: 11px;
+  min-height: 39px;
+}

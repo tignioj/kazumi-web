@@ -1,0 +1,28 @@
+.playback-speed {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.playback-speed select {
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 7px;
+  background: var(--surface);
+  font-size: 11px;
+}
+@media (max-width: 470px) {
+  .playback-speed {
+    gap: 4px;
+    font-size: 9px;
+  }
+  .playback-speed select {
+    font-size: 10px;
+    padding: 6px;
+  }
+  .playback-speed > span {
+    display: none;
+  }
+}

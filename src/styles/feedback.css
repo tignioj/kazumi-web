@@ -1,0 +1,79 @@
+.loading {
+  display: flex;
+  min-height: 240px;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.spin {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.notice {
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  border-radius: 8px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 15px 17px;
+  color: var(--accent);
+  font-size: 12px;
+  line-height: 1.8;
+  margin: 16px 0;
+}
+.notice > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.notice > span {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.notice .text-button {
+  color: inherit;
+}
+.empty {
+  min-height: 340px;
+  padding: 55px 24px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.empty-icon {
+  width: 69px;
+  height: 69px;
+  display: grid;
+  place-items: center;
+  background: var(--surface-soft);
+  border-radius: 20px;
+  color: var(--muted);
+  margin-bottom: 25px;
+}
+.empty h3 {
+  font-size: 19px;
+  font-weight: 550;
+  letter-spacing: 0.5px;
+}
+.empty p {
+  font-size: 12px;
+  line-height: 2;
+  color: var(--muted);
+  margin-top: 12px;
+  max-width: 440px;
+}
+.empty .button,
+.empty .button-group {
+  margin-top: 24px;
+}
+.empty .button-group .button {
+  margin-top: 0;
+}

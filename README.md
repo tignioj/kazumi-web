@@ -169,6 +169,17 @@ npx playwright install --with-deps chromium
 npm run test:e2e
 ```
 
+### 前端代码结构
+
+- `src/App.jsx`：应用布局、Hash 导航与全局状态协调。
+- `src/features/`：按功能组织番剧浏览、收藏、历史、下载缓存、片源搜索、规则、设置、播放器和人工验证；功能内部的组件与逻辑放在一起。
+- `src/components/`：跨功能使用的弹窗、提示、标题和缓存图片组件。
+- `src/hooks/`：通用请求、本机偏好与观看记录同步的 React hooks。
+- `src/lib/`：API 请求、格式化和 JSON 文件导出工具；前后端共用的数据约定仍放在根目录 `shared/`。
+- `src/styles.css`：样式唯一入口，按原有层叠顺序导入 `src/styles/` 中的功能样式。跨功能的响应式覆盖集中在 `responsive.css`，调整导入顺序前需检查桌面、移动端和深色主题。
+
+新增页面放入对应的功能目录，由 `App.jsx` 接入导航；公共组件避免依赖具体页面。整理前端后运行 `npm run check` 和 `npm run test:e2e`，播放器基础逻辑的测试位于 `server/test/playback.test.js`。
+
 ### 服务端环境变量
 
 | 变量                             | 默认值                      | 用途                                                                                                                |

@@ -1,0 +1,151 @@
+.settings-layout {
+  max-width: 870px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.metadata-state {
+  margin: 0 0 12px;
+}
+.metadata-version {
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+}
+.metadata-progress {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+}
+.metadata-progress progress {
+  width: 100%;
+  accent-color: var(--accent);
+}
+.settings-card {
+  padding: 25px 28px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.settings-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 23px;
+  border-bottom: 1px solid var(--line);
+}
+.settings-card-heading > svg {
+  color: var(--accent);
+}
+.settings-card h2 {
+  font-size: 15px;
+  font-weight: 550;
+}
+.settings-card-heading p {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 6px;
+}
+.setting-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  padding: 22px 0;
+  border-bottom: 1px solid var(--line);
+}
+.setting-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.setting-row h3 {
+  font-size: 12px;
+  font-weight: 500;
+}
+.setting-row p {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 7px;
+  line-height: 1.8;
+}
+.switch {
+  padding: 3px;
+  width: 38px;
+  height: 22px;
+  background: var(--line);
+  border-radius: 13px;
+  flex-shrink: 0;
+}
+.switch > span {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface);
+  transition: transform 0.15s;
+}
+.switch.on {
+  background: var(--accent);
+}
+.switch.on > span {
+  transform: translateX(16px);
+}
+.data-counts {
+  display: flex;
+  gap: 60px;
+  margin: 24px 0 20px;
+}
+.data-counts > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.data-counts strong {
+  font-size: 27px;
+  font-weight: 500;
+}
+.data-counts span {
+  font-size: 10px;
+  color: var(--muted);
+}
+.settings-card > .button-group {
+  margin-top: 23px;
+}
+.about-card {
+  background: transparent;
+  border: 0;
+  padding: 12px 0;
+}
+.about-brand {
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -1px;
+  display: flex;
+  align-items: baseline;
+}
+.about-brand > span {
+  color: var(--accent);
+}
+.about-brand > small {
+  font-size: 8px;
+  color: var(--muted);
+  letter-spacing: 1.5px;
+  margin-left: 12px;
+  font-weight: 400;
+}
+.about-card > p {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 9px;
+}
+.about-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  margin: 22px 0 11px;
+}
+.about-status > span:last-child {
+  color: var(--muted);
+  margin-left: 15px;
+}

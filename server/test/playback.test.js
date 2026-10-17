@@ -7,8 +7,8 @@ import {
   mp4Tracks,
   compatibility,
   probeMedia,
-} from '../../src/media-probe.js';
-import { playbackError, startPlayback } from '../../src/playback.js';
+} from '../../src/features/player/media-probe.js';
+import { playbackError, startPlayback } from '../../src/features/player/playback.js';
 
 class Video extends EventTarget {
   error = null;
