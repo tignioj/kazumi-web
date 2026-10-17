@@ -137,43 +137,42 @@ export function startPlayback(
   video.addEventListener('error', nativeFailure);
   video.addEventListener('canplay', playable);
   video.addEventListener('playing', playing);
-  if (source.type === 'hls' && !video.canPlayType('application/vnd.apple.mpegurl')) {
-    if (!HlsClass.isSupported()) {
-      fail(
-        diagnostic('hls', '当前浏览器无法播放 HLS', '请更新浏览器或使用支持 HLS 的浏览器观看。'),
-      );
-    } else {
-      info.mode = 'mse';
-      publish({});
-      hls = new HlsClass();
-      hls.on(HlsClass.Events.MANIFEST_LOADED, (_, data) => {
-        inspect({
-          variants: data.levels.map((level) =>
-            codecTracks([level.videoCodec, level.audioCodec].filter(Boolean).join(',')),
-          ),
-        });
+  // A native HLS capability hint does not guarantee the stream can be demuxed.
+  // For example, DM84 serves TS with a PNG prefix that some native players reject,
+  // while hls.js finds the TS packets and transmuxes them for MediaSource.
+  if (source.type === 'hls' && HlsClass.isSupported()) {
+    info.mode = 'mse';
+    publish({});
+    hls = new HlsClass();
+    hls.on(HlsClass.Events.MANIFEST_LOADED, (_, data) => {
+      inspect({
+        variants: data.levels.map((level) =>
+          codecTracks([level.videoCodec, level.audioCodec].filter(Boolean).join(',')),
+        ),
       });
-      hls.on(HlsClass.Events.BUFFER_CODECS, (_, data) => {
-        inspect({
-          tracks: Object.values(data.tracks)
-            .filter((track) => track.codec || track.levelCodec)
-            .map((track) => ({
-              codec: track.codec || track.levelCodec,
-              mime: track.container,
-              exact: true,
-            })),
-        });
+    });
+    hls.on(HlsClass.Events.BUFFER_CODECS, (_, data) => {
+      inspect({
+        tracks: Object.values(data.tracks)
+          .filter((track) => track.codec || track.levelCodec)
+          .map((track) => ({
+            codec: track.codec || track.levelCodec,
+            mime: track.container,
+            exact: true,
+          })),
       });
-      hls.on(HlsClass.Events.ERROR, (_, data) => {
-        if (data.fatal && !disposed) {
-          hlsFatal = true;
-          fatal = true;
-          onError(playbackError({ hls: data, unsupported: info.status === 'unsupported' }));
-        }
-      });
-      hls.loadSource(source.url);
-      hls.attachMedia(video);
-    }
+    });
+    hls.on(HlsClass.Events.ERROR, (_, data) => {
+      if (data.fatal && !disposed) {
+        hlsFatal = true;
+        fatal = true;
+        onError(playbackError({ hls: data, unsupported: info.status === 'unsupported' }));
+      }
+    });
+    hls.loadSource(source.url);
+    hls.attachMedia(video);
+  } else if (source.type === 'hls' && !video.canPlayType('application/vnd.apple.mpegurl')) {
+    fail(diagnostic('hls', '当前浏览器无法播放 HLS', '请更新浏览器或使用支持 HLS 的浏览器观看。'));
   } else {
     publish({});
     // Inspect a bounded prefix in parallel; playback does not wait for this advisory check.

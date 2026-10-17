@@ -142,7 +142,7 @@ test('native errors appear immediately, then refine from HTTP preflight; dispose
   assert.equal(errors.length + infos.length, before);
 });
 
-test('hls.js events use actual codecs, ignore recoverable errors, and keep precise fatal diagnostics', () => {
+test('hls.js is preferred over native HLS hints and preserves codec/error diagnostics', () => {
   class FakeHls {
     static Events = { MANIFEST_LOADED: 'manifest', BUFFER_CODECS: 'codecs', ERROR: 'error' };
     static isSupported() {
@@ -158,16 +158,23 @@ test('hls.js events use actual codecs, ignore recoverable errors, and keep preci
     emit(event, data) {
       this.listeners.get(event)?.(event, data);
     }
-    loadSource() {}
-    attachMedia() {}
+    loadSource(url) {
+      this.url = url;
+    }
+    attachMedia(video) {
+      this.video = video;
+    }
     destroy() {
       this.destroyed = true;
     }
   }
   const infos = [],
     errors = [];
+  const video = new Video();
+  // Chromium can report "maybe" even when its native HLS path rejects DM84.
+  video.canPlayType = () => 'maybe';
   const stop = startPlayback(
-    new Video(),
+    video,
     { type: 'hls', url: '/api/media?payload=test' },
     {
       HlsClass: FakeHls,
@@ -177,6 +184,10 @@ test('hls.js events use actual codecs, ignore recoverable errors, and keep preci
     },
   );
   const hls = FakeHls.instance;
+  assert.equal(infos.at(-1).mode, 'mse');
+  assert.equal(hls.url, '/api/media?payload=test');
+  assert.equal(hls.video, video);
+  assert.equal(video.src, undefined, 'native playback must not race the MSE player');
   hls.emit('manifest', { levels: [{ videoCodec: 'avc1.64001f' }] });
   assert.equal(infos.at(-1).status, 'supported');
   hls.emit('codecs', { tracks: { video: { codec: 'hvc1.1.6.L93.B0', container: 'video/mp4' } } });
@@ -187,6 +198,41 @@ test('hls.js events use actual codecs, ignore recoverable errors, and keep preci
   assert.equal(errors.at(-1).code, 'access');
   stop();
   assert.equal(hls.destroyed, true);
+});
+
+test('native HLS remains available without MSE, and browsers without either get an HLS error', async () => {
+  for (const nativeSupport of ['probably', 'maybe', '']) {
+    const video = new Video();
+    video.canPlayType = () => nativeSupport;
+    const infos = [],
+      errors = [];
+    let probes = 0;
+    const stop = startPlayback(
+      video,
+      { type: 'hls', url: '/api/media?payload=native' },
+      {
+        HlsClass: { isSupported: () => false },
+        onInfo: (info) => infos.push(info),
+        onError: (error) => errors.push(error),
+        fetcher: async () => {
+          probes++;
+          return new Response('#EXTM3U\n#EXT-X-STREAM-INF:CODECS="avc1.64001f"\nvariant');
+        },
+      },
+    );
+    await new Promise(setImmediate);
+    if (nativeSupport) {
+      assert.equal(video.src, '/api/media?payload=native');
+      assert.equal(infos.at(-1).mode, 'native');
+      assert.equal(errors.length, 0);
+      assert.equal(probes, 1);
+    } else {
+      assert.equal(video.src, undefined);
+      assert.equal(errors.at(-1).code, 'hls');
+      assert.equal(probes, 0);
+    }
+    stop();
+  }
 });
 
 test('late preflight results cannot change the next episode, and browser capability hints never block playback', async () => {
