@@ -183,9 +183,11 @@ const bytesLabel = (value) => {
   return `${(bytes / 1024 ** exponent).toFixed(exponent > 1 ? 1 : 0)} ${units[exponent - 1]}`;
 };
 const cacheStatus = (item) =>
-  ({ queued: '等待下载', downloading: '正在缓存', complete: '已缓存', error: '缓存失败' })[
-    item.status
-  ] || '未知状态';
+  item.status === 'downloading' && item.type === 'pending'
+    ? '正在解析'
+    : { queued: '等待下载', downloading: '正在缓存', complete: '已缓存', error: '缓存失败' }[
+        item.status
+      ] || '未知状态';
 
 function useDownloads(identity) {
   const [data, setData] = useState(null);
@@ -239,10 +241,12 @@ function useDownloads(identity) {
       document.removeEventListener('visibilitychange', refresh);
     };
   }, [identity, attempt, reload, stop]);
-  const accept = (item) => {
+  const accept = (incoming) => {
+    const items = Array.isArray(incoming) ? incoming : [incoming];
+    const ids = new Set(items.map((item) => item.id));
     setData((previous) => ({
       ...previous,
-      items: [item, ...(previous?.items || []).filter((entry) => entry.id !== item.id)],
+      items: [...items, ...(previous?.items || []).filter((entry) => !ids.has(entry.id))],
     }));
     reload();
   };
@@ -2681,18 +2685,153 @@ function Settings({ settings, setSettings, library, history, watchData, notify, 
   );
 }
 
-function PlayerCachePanel({ context, episode, resolved, onCacheRemoved, navigate, notify }) {
-  const downloads = useDownloads(episode.url);
+function CacheSelection({ context, episodes, roadName, downloads, onClose, onCreated }) {
+  const [selected, setSelected] = useState(() => new Set());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const selectAllRef = useRef(null);
+  const entries = [...new Map(episodes.map((ep) => [ep.url, ep])).values()].map((ep) => ({
+    episode: ep,
+    item: downloads.items.find((entry) => sameCacheEpisode(entry, context.ruleName, ep.url)),
+  }));
+  const available = entries.filter(({ item }) => !item || item.status === 'error');
+  const chosen = available.filter(({ episode }) => selected.has(episode.url));
+  const allSelected = available.length > 0 && chosen.length === available.length;
+  useEffect(() => {
+    if (selectAllRef.current)
+      selectAllRef.current.indeterminate = chosen.length > 0 && !allSelected;
+  }, [chosen.length, allSelected]);
+  const submit = async () => {
+    if (!chosen.length || chosen.length > 200 || busy || downloads.loading || downloads.error)
+      return;
+    setBusy(true);
+    setError('');
+    try {
+      const result = await api('/downloads/batch', {
+        method: 'POST',
+        body: JSON.stringify({
+          ruleName: context.ruleName,
+          sourceUrl: context.sourceUrl,
+          title: context.title,
+          image: context.image,
+          subjectId: context.subjectId,
+          episodes: chosen.map(({ episode }) => episode),
+        }),
+      });
+      onCreated(result);
+    } catch (e) {
+      setError(e.message);
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal title="选择缓存剧集" onClose={() => !busy && onClose()} wide>
+      <p>
+        {roadName} · 共 {entries.length} 集。勾选指定剧集，或全选当前线路。
+      </p>
+      <p className="cache-help">已缓存或已加入任务的剧集会自动跳过，缓存失败的剧集可重新选择。</p>
+      {downloads.error && <Notice onRetry={downloads.reload}>{downloads.error}</Notice>}
+      {error && <Notice>{error}</Notice>}
+      {downloads.loading ? (
+        <Spinner text="正在读取缓存状态…" />
+      ) : (
+        <>
+          <div className="cache-selection-toolbar">
+            <label>
+              <input
+                ref={selectAllRef}
+                type="checkbox"
+                checked={allSelected}
+                disabled={busy || !available.length || !!downloads.error}
+                onChange={(e) =>
+                  setSelected(
+                    new Set(e.target.checked ? available.map(({ episode }) => episode.url) : []),
+                  )
+                }
+              />
+              全选
+            </label>
+            <span aria-live="polite">
+              已选 {chosen.length} / {available.length} 集可缓存剧集
+            </span>
+          </div>
+          <div className="cache-selection-grid" role="group" aria-label="可选缓存剧集">
+            {entries.map(({ episode: ep, item }, index) => {
+              const blocked = !!item && item.status !== 'error';
+              return (
+                <label
+                  className={`cache-episode-option ${!blocked && selected.has(ep.url) ? 'selected' : ''}`}
+                  key={ep.url}
+                >
+                  <input
+                    type="checkbox"
+                    checked={!blocked && selected.has(ep.url)}
+                    disabled={busy || blocked || !!downloads.error}
+                    aria-label={ep.name || `第 ${index + 1} 集`}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setSelected((previous) => {
+                        const next = new Set(previous);
+                        if (checked) next.add(ep.url);
+                        else next.delete(ep.url);
+                        return next;
+                      });
+                    }}
+                  />
+                  <span>
+                    <span>{ep.name || `第 ${index + 1} 集`}</span>
+                    {item && (
+                      <small className={`cache-status-${item.status}`}>{cacheStatus(item)}</small>
+                    )}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </>
+      )}
+      {chosen.length > 200 && <Notice>一次最多选择 200 集，请取消部分剧集后再缓存。</Notice>}
+      <div className="modal-actions">
+        <button className="button quiet" disabled={busy} onClick={onClose}>
+          取消
+        </button>
+        <button
+          className="button primary"
+          disabled={
+            busy || !chosen.length || chosen.length > 200 || downloads.loading || !!downloads.error
+          }
+          onClick={submit}
+        >
+          {busy ? <LoaderCircle size={15} className="spin" /> : <ArrowDownToLine size={15} />}
+          {busy ? '正在加入缓存…' : `缓存所选（${chosen.length} 集）`}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function PlayerCachePanel({
+  context,
+  episode,
+  episodes,
+  roadName,
+  resolved,
+  onCacheRemoved,
+  navigate,
+  notify,
+}) {
+  const downloads = useDownloads('all');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [removing, setRemoving] = useState(null);
+  const [selecting, setSelecting] = useState(false);
   const item = downloads.items.find((entry) =>
     sameCacheEpisode(entry, context.ruleName, episode.url),
   );
   const canCache = resolved && ['video', 'hls'].includes(resolved.type) && !resolved.cached;
   const create = async () => {
     if (!canCache || busy) return;
-    setBusy(true);
+    setBusy('current');
     setError('');
     try {
       const created = await api('/downloads', {
@@ -2718,12 +2857,12 @@ function PlayerCachePanel({ context, episode, resolved, onCacheRemoved, navigate
     }
   };
   return (
-    <section className="player-cache-panel" aria-label="当前剧集缓存">
+    <section className="player-cache-panel" aria-label="剧集缓存">
       <div className="player-cache-heading">
         <div>
           <h2>
             <ArrowDownToLine size={17} />
-            当前剧集缓存
+            剧集缓存
           </h2>
           <p>
             {resolved?.cached ? '正在播放服务器缓存。' : '缓存到服务器，关闭页面后仍会继续下载。'}
@@ -2741,8 +2880,22 @@ function PlayerCachePanel({ context, episode, resolved, onCacheRemoved, navigate
       <div className="player-cache-actions">
         {(!item || item.status === 'error') && !resolved?.cached && (
           <button className="button quiet" disabled={!canCache || busy} onClick={create}>
-            {busy ? <LoaderCircle size={15} className="spin" /> : <ArrowDownToLine size={15} />}
+            {busy === 'current' ? (
+              <LoaderCircle size={15} className="spin" />
+            ) : (
+              <ArrowDownToLine size={15} />
+            )}
             {item?.status === 'error' ? '重新缓存当前集' : '缓存当前集'}
+          </button>
+        )}
+        {!context.cacheOnly && (
+          <button
+            className="button quiet"
+            disabled={!!busy || !episodes.length}
+            onClick={() => setSelecting(true)}
+          >
+            <ArrowDownToLine size={15} />
+            选择剧集缓存
           </button>
         )}
         {item?.status === 'complete' && (
@@ -2766,10 +2919,33 @@ function PlayerCachePanel({ context, episode, resolved, onCacheRemoved, navigate
         {resolved?.type === 'iframe' && (
           <span className="cache-help">站点内嵌播放器无法缓存，请切换可直接播放的视频线路。</span>
         )}
+        {!context.cacheOnly && (
+          <span className="cache-help">
+            支持全选当前线路或勾选指定剧集，自动跳过已缓存或正在下载的剧集。
+          </span>
+        )}
         {item?.status === 'complete' && item.type === 'hls' && (
           <span className="cache-help">HLS 压缩包包含播放列表与分片，不会合并为 MP4。</span>
         )}
       </div>
+      {selecting && (
+        <CacheSelection
+          context={context}
+          episodes={episodes}
+          roadName={roadName}
+          downloads={downloads}
+          onClose={() => setSelecting(false)}
+          onCreated={(result) => {
+            downloads.accept(result.items);
+            setSelecting(false);
+            notify(
+              result.added
+                ? `已加入 ${result.added} 集缓存任务${result.skipped ? `，跳过 ${result.skipped} 集已有任务` : ''}，关闭页面后仍会继续`
+                : '所选剧集均已缓存或加入任务',
+            );
+          }}
+        />
+      )}
       {removing && (
         <CacheRemoval
           item={removing}
@@ -3114,6 +3290,8 @@ function Player({ context, settings, onClose, onProgress, notify, navigate }) {
           key={`${context.ruleName}:${episode.url}`}
           context={context}
           episode={episode}
+          episodes={episodes}
+          roadName={roads[roadIndex]?.name || `线路 ${roadIndex + 1}`}
           resolved={resolved?.episodeUrl === episode.url ? resolved : null}
           onCacheRemoved={() => setAttempt((value) => value + 1)}
           navigate={navigate}

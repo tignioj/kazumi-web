@@ -44,11 +44,26 @@ async function eventually(read, accepts, message, timeout = 5000) {
 async function fixture(t, { downloadOptions, session = false } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'kazumi-downloads-'));
   const received = [];
-  const state = { offline: false, slowConnections: 0, slowCompletes: false };
+  const state = {
+    offline: false,
+    slowConnections: 0,
+    slowCompletes: false,
+    resolvingConnections: 0,
+    watchReady: false,
+  };
   const upstream = createServer((req, res) => {
     const path = new URL(req.url, 'http://fixture').pathname;
     received.push({ path, headers: req.headers });
     if (state.offline) return res.writeHead(503).end('upstream unavailable');
+    if (path === '/resolving') {
+      state.resolvingConnections++;
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.write('<html>loading');
+      res.once('close', () => state.resolvingConnections--);
+      return;
+    }
+    if (path === '/watch' && state.watchReady)
+      return res.end(`<html><video src="http://${req.headers.host}/movie.mp4"></video></html>`);
     if (path === '/session') return res.end('<html>dynamic player</html>');
     if (path === '/broken.mp4') return res.writeHead(502).end('broken upstream');
     if (path === '/fake.mp4') {
@@ -319,6 +334,131 @@ test('download API streams MP4, deduplicates jobs, supports Range and removes ca
   assert.equal((await f.list()).usedBytes, 0);
   assert.deepEqual((await f.list()).items, []);
   assert.equal((await f.fetch(completed.playbackUrl)).status, 404);
+});
+
+test('batch downloads resolve in the background, skip existing episodes and retry only failures', async (t) => {
+  const f = await fixture(t, { downloadOptions: { concurrency: 1 } });
+  const { job } = await f.submit('/movie.mp4');
+  await f.finished(job.id);
+  const body = {
+    ruleName: `  ${f.rule.name.toUpperCase()}  `,
+    title: '整季缓存',
+    sourceUrl: `${f.upstreamUrl}/subject`,
+    episodes: [
+      { name: '第 1 集', url: `${f.upstreamUrl}/movie.mp4` },
+      { name: '第 2 集', url: `${f.upstreamUrl}/master.m3u8` },
+      { name: '重复集', url: `  ${f.upstreamUrl}/master.m3u8  ` },
+      { name: '第 3 集', url: `${f.upstreamUrl}/watch` },
+    ],
+  };
+  const batch = await f.json('/api/downloads/batch', body);
+  assert.equal(batch.status, 202, JSON.stringify(batch.data));
+  assert.equal(batch.data.added, 2);
+  assert.equal(batch.data.skipped, 1);
+  assert.equal(batch.data.items.length, 3);
+  assert.equal(batch.data.items[0].id, job.id);
+  const hls = await f.finished(batch.data.items[1].id);
+  assert.equal(hls.status, 'complete', hls.error);
+  assert.equal(hls.type, 'hls');
+  const failed = await f.finished(batch.data.items[2].id);
+  assert.equal(failed.status, 'error');
+  assert.ok(failed.error);
+  f.state.watchReady = true;
+  const retried = await f.json('/api/downloads/batch', body);
+  assert.equal(retried.status, 202, JSON.stringify(retried.data));
+  assert.equal(retried.data.added, 1);
+  assert.equal(retried.data.skipped, 2);
+  assert.equal(retried.data.items[1].id, hls.id);
+  assert.notEqual(retried.data.items[2].id, failed.id);
+  const completed = await f.finished(retried.data.items[2].id);
+  assert.equal(completed.status, 'complete', completed.error);
+  assert.equal(completed.title, '整季缓存');
+  assert.equal(completed.episodeName, '第 3 集');
+  assert.equal((await f.list()).items.length, 3);
+  const index = JSON.parse(await readFile(join(f.directory, 'downloads/index.json'), 'utf8'));
+  assert.ok(index.items.every((item) => !item.rule && !item.source));
+});
+
+test('batch validation rejects invalid episodes before enqueueing and respects the shared quota', async (t) => {
+  const f = await fixture(t, { downloadOptions: { maxBytes: movie.length } });
+  const body = {
+    ruleName: f.rule.name,
+    episodes: [{ name: '第 1 集', url: `${f.upstreamUrl}/movie.mp4` }],
+  };
+  for (const episodes of [
+    undefined,
+    [],
+    [null],
+    [...body.episodes, {}],
+    Array(201).fill(body.episodes[0]),
+  ]) {
+    const invalid = await f.json('/api/downloads/batch', { ...body, episodes });
+    assert.equal(invalid.status, 400, JSON.stringify(invalid.data));
+    assert.equal((await f.list()).items.length, 0);
+  }
+  const first = await f.json('/api/downloads/batch', body);
+  assert.equal(first.status, 202, JSON.stringify(first.data));
+  assert.equal((await f.finished(first.data.items[0].id)).status, 'complete');
+  const duplicate = await f.json('/api/downloads/batch', body);
+  assert.equal(duplicate.status, 202);
+  assert.equal(duplicate.data.added, 0);
+  assert.equal(duplicate.data.skipped, 1);
+  const full = await f.json('/api/downloads/batch', {
+    ...body,
+    episodes: [...body.episodes, { name: '第 2 集', url: `${f.upstreamUrl}/master.m3u8` }],
+  });
+  assert.equal(full.status, 507);
+  assert.equal((await f.list()).items.length, 1);
+});
+
+test('clearing a batch cancels active resolution and queued episodes without recreating jobs', async (t) => {
+  const f = await fixture(t, { downloadOptions: { concurrency: 1 } });
+  const batch = await f.json('/api/downloads/batch', {
+    ruleName: f.rule.name,
+    episodes: [
+      { name: '正在解析', url: `${f.upstreamUrl}/resolving` },
+      { name: '等待解析', url: `${f.upstreamUrl}/movie.mp4` },
+    ],
+  });
+  assert.equal(batch.status, 202, JSON.stringify(batch.data));
+  await eventually(
+    () => f.state.resolvingConnections,
+    (count) => count === 1,
+    'resolution did not start',
+  );
+  const jobs = (await f.list()).items;
+  assert.equal(jobs.find((job) => job.episodeName === '正在解析').type, 'pending');
+  assert.equal(jobs.find((job) => job.episodeName === '等待解析').status, 'queued');
+  assert.equal((await f.json('/api/downloads', undefined, 'DELETE')).status, 200);
+  await eventually(
+    () => f.state.resolvingConnections,
+    (count) => count === 0,
+    'resolution was not cancelled',
+  );
+  assert.deepEqual((await f.list()).items, []);
+  assert.equal(f.received.filter(({ path }) => path === '/movie.mp4').length, 0);
+});
+
+test('interrupted batch resolutions remain visible as retryable errors after restart', async (t) => {
+  const f = await fixture(t, { downloadOptions: { concurrency: 1 } });
+  const batch = await f.json('/api/downloads/batch', {
+    ruleName: f.rule.name,
+    episodes: [
+      { name: '正在解析', url: `${f.upstreamUrl}/resolving` },
+      { name: '等待解析', url: `${f.upstreamUrl}/movie.mp4` },
+    ],
+  });
+  assert.equal(batch.status, 202, JSON.stringify(batch.data));
+  await eventually(
+    () => f.state.resolvingConnections,
+    (count) => count === 1,
+    'resolution did not start',
+  );
+  await f.restart();
+  const jobs = (await f.list()).items;
+  assert.equal(jobs.length, 2);
+  assert.ok(jobs.every((job) => job.status === 'error' && job.error));
+  assert.equal((await f.list()).usedBytes, 0);
 });
 
 test('completed cache survives restart and resolves with its source rule removed and upstream offline', async (t) => {

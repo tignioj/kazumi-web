@@ -42,6 +42,43 @@ function sameEpisode(job, ruleName, episodeUrl) {
   );
 }
 
+function validateEpisode(input) {
+  if (
+    !input ||
+    typeof input.ruleName !== 'string' ||
+    !input.ruleName.trim() ||
+    typeof input.episodeUrl !== 'string' ||
+    !input.episodeUrl.trim()
+  )
+    throw new HttpError('请选择要缓存的视频剧集');
+  if (input.ruleName.length > 500 || input.episodeUrl.length > 8192)
+    throw new HttpError('视频信息过长');
+}
+
+function newJob(input, media) {
+  return {
+    id: randomUUID(),
+    ruleName: input.ruleName.trim(),
+    episodeUrl: input.episodeUrl.trim(),
+    sourceUrl: textField(input.sourceUrl, '', 8192),
+    title: textField(input.title, '未命名视频'),
+    episodeName: textField(input.episodeName, '视频'),
+    image: textField(input.image, '', 8192),
+    subjectId:
+      typeof input.subjectId === 'number' || typeof input.subjectId === 'string'
+        ? input.subjectId
+        : undefined,
+    ...media,
+    status: 'queued',
+    bytes: 0,
+    totalBytes: null,
+    completedFiles: 0,
+    totalFiles: media.type === 'video' ? 1 : 0,
+    createdAt: new Date().toISOString(),
+    files: [],
+  };
+}
+
 function extension(url, contentType = '', fallback = '.bin') {
   const suffix = extname(new URL(url).pathname).toLowerCase();
   if (KNOWN_EXTENSIONS.has(suffix)) return suffix;
@@ -133,7 +170,7 @@ export class DownloadManager {
       if (error.code !== 'ENOENT') throw new HttpError('视频缓存索引损坏，无法读取', 500);
     }
     for (const data of records) {
-      if (!ID.test(data.id) || !['video', 'hls'].includes(data.type)) continue;
+      if (!ID.test(data.id) || !['video', 'hls', 'pending'].includes(data.type)) continue;
       const job = {
         id: data.id,
         ruleName: textField(data.ruleName),
@@ -230,16 +267,7 @@ export class DownloadManager {
   create(input) {
     return this.lock(async () => {
       if (this.closed) throw new HttpError('缓存服务已关闭', 503);
-      if (
-        !input ||
-        typeof input.ruleName !== 'string' ||
-        !input.ruleName.trim() ||
-        typeof input.episodeUrl !== 'string' ||
-        !input.episodeUrl.trim()
-      )
-        throw new HttpError('请选择要缓存的视频剧集');
-      if (input.ruleName.length > 500 || input.episodeUrl.length > 8192)
-        throw new HttpError('视频信息过长');
+      validateEpisode(input);
       const existing = [...this.jobs.values()].find(
         (job) => !job.removed && sameEpisode(job, input.ruleName, input.episodeUrl),
       );
@@ -248,63 +276,93 @@ export class DownloadManager {
         throw new HttpError('最多保留 200 个缓存任务，请先清理缓存', 409);
       if (this.usedBytes >= this.maxBytes)
         throw new HttpError('视频缓存空间不足，请先清理缓存', 507);
-      if (typeof input.mediaUrl !== 'string' || !input.mediaUrl.startsWith('/api/media?'))
-        throw new HttpError('只能缓存已经解析的媒体链接', 400);
-      const proxy = new URL(input.mediaUrl, 'http://cache.invalid');
-      if (
-        proxy.pathname !== '/api/media' ||
-        proxy.hash ||
-        proxy.searchParams.getAll('payload').length !== 1 ||
-        proxy.searchParams.getAll('signature').length !== 1
-      )
-        throw new HttpError('媒体代理链接无效', 400);
-      const verified = this.media.verify(
-        proxy.searchParams.get('payload'),
-        proxy.searchParams.get('signature'),
-      );
-      if (!['video', 'hls'].includes(verified.kind))
-        throw new HttpError('当前播放来源暂不支持视频缓存', 422);
-      checkedUrl(verified.url, { allowPrivate: this.http.allowPrivate });
-      const source = {
-        url: verified.url,
-        headers: cleanHeaders(verified.headers),
-        session: verified.sessionId
-          ? structuredClone(this.media.sessions.get(verified.sessionId))
-          : null,
-      };
-      delete source.headers.range;
+      const media = this.mediaSource(input.mediaUrl);
       if (existing) {
         await rm(join(this.directory, existing.id), { recursive: true, force: true });
         this.jobs.delete(existing.id);
       }
-      const job = {
-        id: randomUUID(),
-        ruleName: input.ruleName.trim(),
-        episodeUrl: input.episodeUrl.trim(),
-        sourceUrl: textField(input.sourceUrl, '', 8192),
-        title: textField(input.title, '未命名视频'),
-        episodeName: textField(input.episodeName, '视频'),
-        image: textField(input.image, '', 8192),
-        subjectId:
-          typeof input.subjectId === 'number' || typeof input.subjectId === 'string'
-            ? input.subjectId
-            : undefined,
-        type: verified.kind,
-        status: 'queued',
-        bytes: 0,
-        totalBytes: null,
-        completedFiles: 0,
-        totalFiles: verified.kind === 'video' ? 1 : 0,
-        createdAt: new Date().toISOString(),
-        files: [],
-        source,
-      };
+      const job = newJob(input, media);
       this.jobs.set(job.id, job);
       await this.persist();
       const result = publicJob(job);
       this.pump();
       return result;
     });
+  }
+
+  createBatch(input, rule) {
+    return this.lock(async () => {
+      if (this.closed) throw new HttpError('缓存服务已关闭', 503);
+      if (
+        !Array.isArray(input?.episodes) ||
+        !input.episodes.length ||
+        input.episodes.length > MAX_JOBS
+      )
+        throw new HttpError('一次可缓存 1 至 200 集');
+      const episodes = new Map();
+      for (const episode of input.episodes) {
+        const entry = { ...input, episodeUrl: episode?.url, episodeName: episode?.name };
+        validateEpisode(entry);
+        episodes.set(entry.episodeUrl.trim(), entry);
+      }
+      const entries = [...episodes.values()].map((entry) => ({
+        input: entry,
+        existing: [...this.jobs.values()].find(
+          (job) => !job.removed && sameEpisode(job, entry.ruleName, entry.episodeUrl),
+        ),
+      }));
+      const pending = entries.filter(({ existing }) => !existing || existing.status === 'error');
+      if (this.jobs.size + pending.filter(({ existing }) => !existing).length > MAX_JOBS)
+        throw new HttpError('最多保留 200 个缓存任务，请先清理缓存', 409);
+      if (pending.length && this.usedBytes >= this.maxBytes)
+        throw new HttpError('视频缓存空间不足，请先清理缓存', 507);
+      for (const entry of pending) {
+        if (entry.existing) {
+          await rm(join(this.directory, entry.existing.id), { recursive: true, force: true });
+          this.jobs.delete(entry.existing.id);
+        }
+        const job = newJob(entry.input, { type: 'pending', rule });
+        this.jobs.set(job.id, job);
+        entry.existing = job;
+      }
+      await this.persist();
+      const result = {
+        items: entries.map(({ existing }) => publicJob(existing)),
+        added: pending.length,
+        skipped: entries.length - pending.length,
+      };
+      this.pump();
+      return result;
+    });
+  }
+
+  mediaSource(mediaUrl) {
+    if (typeof mediaUrl !== 'string' || !mediaUrl.startsWith('/api/media?'))
+      throw new HttpError('只能缓存已经解析的媒体链接', 400);
+    const proxy = new URL(mediaUrl, 'http://cache.invalid');
+    if (
+      proxy.pathname !== '/api/media' ||
+      proxy.hash ||
+      proxy.searchParams.getAll('payload').length !== 1 ||
+      proxy.searchParams.getAll('signature').length !== 1
+    )
+      throw new HttpError('媒体代理链接无效', 400);
+    const verified = this.media.verify(
+      proxy.searchParams.get('payload'),
+      proxy.searchParams.get('signature'),
+    );
+    if (!['video', 'hls'].includes(verified.kind))
+      throw new HttpError('当前播放来源暂不支持视频缓存', 422);
+    checkedUrl(verified.url, { allowPrivate: this.http.allowPrivate });
+    const source = {
+      url: verified.url,
+      headers: cleanHeaders(verified.headers),
+      session: verified.sessionId
+        ? structuredClone(this.media.sessions.get(verified.sessionId))
+        : null,
+    };
+    delete source.headers.range;
+    return { type: verified.kind, source };
   }
 
   persist() {
@@ -336,6 +394,7 @@ export class DownloadManager {
       job.promise = this.run(job).finally(() => {
         this.active.delete(job.id);
         delete job.source;
+        delete job.rule;
         delete job.controller;
         this.pump();
       });
@@ -349,6 +408,15 @@ export class DownloadManager {
     try {
       await mkdir(join(this.directory, job.id), { mode: 0o700 });
       await this.persist();
+      if (job.type === 'pending') {
+        const resolved = await this.media.resolve(job.rule, job.episodeUrl, {
+          signal: job.controller.signal,
+        });
+        job.controller.signal.throwIfAborted();
+        if (!['video', 'hls'].includes(resolved.type))
+          throw new HttpError('当前播放来源暂不支持视频缓存，请切换可直接播放的视频线路', 422);
+        Object.assign(job, this.mediaSource(resolved.url));
+      }
       if (job.type === 'hls') await this.hls(job);
       else await this.video(job);
       job.controller.signal.throwIfAborted();
@@ -721,6 +789,7 @@ export class DownloadManager {
           job.status = 'error';
           job.error = '缓存任务已中断，请重试';
           delete job.source;
+          delete job.rule;
         }
       }
       await Promise.all(jobs.map((job) => job.promise?.catch(() => {})));

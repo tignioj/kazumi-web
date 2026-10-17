@@ -350,6 +350,13 @@ export async function createApp(options = {}) {
       .set('Cache-Control', 'no-store')
       .json(await downloads.create(req.body));
   });
+  app.post('/api/downloads/batch', async (req, res) => {
+    const rule = store.get(inputText(req.body?.ruleName, '规则名称', 100));
+    res
+      .status(202)
+      .set('Cache-Control', 'no-store')
+      .json(await downloads.createBatch(req.body, rule));
+  });
   app.delete('/api/downloads', async (req, res) => {
     await downloads.clear();
     res.json({ ok: true });
