@@ -5,13 +5,41 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
 import { createApp } from '../index.js';
-import { newerRuleVersion } from '../rule-updates.js';
+import { availableRuleUpdates, newerRuleVersion } from '../rule-updates.js';
 
 test('rule versions compare numeric components without downgrading', () => {
   assert.equal(newerRuleVersion('1.10', '1.9'), true);
   assert.equal(newerRuleVersion('1.9', '1.10'), false);
   assert.equal(newerRuleVersion('1.0.0', '1.0'), false);
   assert.equal(newerRuleVersion('2', ''), true);
+});
+
+test('available updates count installed rules with newer known versions', () => {
+  const installed = [
+    { name: 'imported', version: '1.9', enabled: false },
+    { name: 'Same', version: '1.0' },
+    { name: 'Ahead', version: '2.0' },
+    { name: 'Custom', version: '1.0' },
+    { name: 'Unknown', version: '1.0' },
+    { name: 'Blank', version: '1.0' },
+    { name: 'Numeric', version: '1' },
+  ];
+  const catalog = [
+    { name: 'Imported', version: '1.10' },
+    { name: 'Imported', version: '1.10' },
+    { name: 'Same', version: '1.0.0' },
+    { name: 'Ahead', version: '1.10' },
+    { name: 'Not installed', version: '3.0' },
+    { name: 'Unknown' },
+    { name: 'Blank', version: '' },
+    { name: 'Numeric', version: 2 },
+  ];
+  assert.deepEqual(availableRuleUpdates(installed, catalog), [
+    { name: 'imported', version: '1.10' },
+    { name: 'Numeric', version: '2' },
+  ]);
+  assert.deepEqual(availableRuleUpdates([], catalog), []);
+  assert.deepEqual(availableRuleUpdates(installed, []), []);
 });
 
 test('imported rules update from a fresh official catalog and persist partial successes', async (t) => {
@@ -81,6 +109,16 @@ test('imported rules update from a fresh official catalog and persist partial su
   assert.equal(catalogRequests, 2, 'update bypasses the cached catalog');
   assert.equal(single.rules.find((rule) => rule.name === 'Imported').enabled, false);
   assert.equal(single.rules.length, catalog.length + 1, 'case variants replace the imported rule');
+  const pending = await fetch(`${base}/api/rules/updates`);
+  assert.equal(pending.status, 200);
+  assert.deepEqual((await pending.json()).updates, [
+    { name: 'Working', version: '1.10' },
+    { name: 'Broken', version: '1.10' },
+    { name: 'Mismatch', version: '1.10' },
+    { name: 'Unsupported', version: '1.10' },
+  ]);
+  assert.equal(catalogRequests, 2, 'checking availability reuses the cached catalog');
+  assert.equal(application.store.get('Working').version, '1.0', 'checking does not update rules');
   const batch = await post('update', {});
   assert.deepEqual(
     Object.fromEntries(batch.results.map((result) => [result.name, result.status])),
@@ -97,6 +135,11 @@ test('imported rules update from a fresh official catalog and persist partial su
   );
   for (const name of ['Broken', 'Mismatch', 'Unsupported', 'Ahead', 'Same', 'Custom'])
     assert.equal(batch.rules.find((rule) => rule.name === name).baseURL, 'https://old.example/');
+  assert.deepEqual((await (await fetch(`${base}/api/rules/updates`)).json()).updates, [
+    { name: 'Broken', version: '1.10' },
+    { name: 'Mismatch', version: '1.10' },
+    { name: 'Unsupported', version: '1.10' },
+  ]);
   assert.match(batch.results.find((rule) => rule.name === 'Mismatch').message, /名称/);
   assert.match(batch.results.find((rule) => rule.name === 'Unsupported').message, /版本不受支持/);
   assert.deepEqual(JSON.parse(await readFile(join(directory, 'rules.json'), 'utf8')), batch.rules);

@@ -14,6 +14,23 @@ export function newerRuleVersion(remote, local) {
   return false;
 }
 
+export function availableRuleUpdates(installed, catalog) {
+  const available = new Map(catalog.map((rule) => [rule.name.toLowerCase(), rule]));
+  return installed.flatMap((local) => {
+    const remote = available.get(local.name.toLowerCase());
+    const version = remote?.version;
+    if (
+      !(
+        (typeof version === 'string' && version.trim()) ||
+        (typeof version === 'number' && Number.isFinite(version))
+      ) ||
+      !newerRuleVersion(version, local.version)
+    )
+      return [];
+    return [{ name: local.name, version: String(version) }];
+  });
+}
+
 export async function downloadOfficialRule(http, repository, name) {
   const rule = normalizeRule(await http.json(`${repository}${encodeURIComponent(name)}.json`));
   if (rule.name.toLowerCase() !== name.toLowerCase())

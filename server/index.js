@@ -5,7 +5,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { createHttpClient, HttpError } from './http.js';
 import { RuleStore } from './store.js';
-import { downloadOfficialRule, updateInstalledRules } from './rule-updates.js';
+import {
+  availableRuleUpdates,
+  downloadOfficialRule,
+  updateInstalledRules,
+} from './rule-updates.js';
 import { RuleEngine } from './rules.js';
 import { MediaService } from './media.js';
 import { BrowserResolver } from './browser-resolver.js';
@@ -67,7 +71,7 @@ export async function createApp(options = {}) {
     if (!Array.isArray(rules)) throw new HttpError('规则仓库索引无效', 502);
     catalogCache = {
       rules: rules.filter((rule) => typeof rule.name === 'string'),
-      expires: Date.now() + 300000,
+      expires: Date.now() + 60 * 60 * 1000,
     };
     return catalogCache.rules;
   }
@@ -191,6 +195,10 @@ export async function createApp(options = {}) {
   );
   app.get('/api/subjects/:id', async (req, res) => res.json(await metadata.subject(req.params.id)));
   app.get('/api/rules', (req, res) => res.json({ rules: store.list() }));
+  app.get('/api/rules/updates', async (req, res) => {
+    const catalog = await officialRules();
+    res.json({ updates: availableRuleUpdates(store.list(), catalog) });
+  });
   app.get('/api/rules/catalog', async (req, res) => res.json({ rules: await officialRules() }));
   app.post('/api/rules/import', async (req, res) =>
     res.json({ rules: await store.import(req.body?.content) }),

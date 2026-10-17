@@ -180,6 +180,7 @@ function normalizeBackup(data) {
 function useRequest(path, deps = []) {
   const [state, setState] = useState({ loading: true, data: null, error: '' });
   const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
   useEffect(() => {
     if (!path) {
       setState({ loading: false, data: null, error: '' });
@@ -195,7 +196,7 @@ function useRequest(path, deps = []) {
       });
     return () => controller.abort();
   }, [path, attempt, ...deps]);
-  return { ...state, retry: () => setAttempt((n) => n + 1) };
+  return { ...state, retry };
 }
 
 function downloadJSON(data, name) {
@@ -563,6 +564,13 @@ export default function App() {
   });
   const [rules, setRules] = useState([]);
   const [rulesError, setRulesError] = useState('');
+  const { data: ruleUpdates, retry: checkRuleUpdates } = useRequest(
+    rules.length ? '/rules/updates' : null,
+    [rules],
+  );
+  const availableUpdates = new Map(
+    (ruleUpdates?.updates || []).map((rule) => [rule.name.toLowerCase(), rule.version]),
+  );
   const [toast, setToast] = useState('');
   const [player, setPlayer] = useState(null);
   const [search, setSearch] = useState('');
@@ -582,6 +590,17 @@ export default function App() {
       setRulesError(e.message);
     }
   }, []);
+  useEffect(() => {
+    const check = () => {
+      if (!document.hidden) checkRuleUpdates();
+    };
+    const interval = setInterval(check, 60 * 60 * 1000);
+    document.addEventListener('visibilitychange', check);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', check);
+    };
+  }, [checkRuleUpdates]);
   useEffect(() => {
     const fn = () => {
       const nextRoute = location.hash.slice(1) || '/discover';
@@ -740,6 +759,15 @@ export default function App() {
           >
             <SlidersHorizontal size={19} strokeWidth={1.7} />
             <span>规则管理</span>
+            {availableUpdates.size > 0 && (
+              <small
+                className="rule-update-count"
+                aria-label={`${availableUpdates.size} 条规则可更新`}
+                title={`${availableUpdates.size} 条规则可更新`}
+              >
+                {availableUpdates.size}
+              </small>
+            )}
           </a>
           <a
             className={`nav-item ${section === 'settings' ? 'active' : ''}`}
@@ -870,7 +898,13 @@ export default function App() {
                 <Sources rules={rules} onPlay={startPlayer} navigate={navigate} />
               )}
               {section === 'rules' && (
-                <Rules rules={rules} error={rulesError} reload={reloadRules} notify={notify} />
+                <Rules
+                  rules={rules}
+                  error={rulesError}
+                  reload={reloadRules}
+                  notify={notify}
+                  availableUpdates={availableUpdates}
+                />
               )}
               {section === 'settings' && (
                 <Settings
@@ -1672,7 +1706,7 @@ function SourceSearch({ defaultQuery = '', subject, rules, onPlay, navigate }) {
   );
 }
 
-function Rules({ rules, error, reload, notify }) {
+function Rules({ rules, error, reload, notify, availableUpdates }) {
   const [tab, setTab] = useState('installed');
   const [modal, setModal] = useState(null);
   const [content, setContent] = useState('');
@@ -1789,6 +1823,7 @@ function Rules({ rules, error, reload, notify }) {
             <button className="text-button" disabled={!!installing} onClick={() => update()}>
               <RefreshCw size={15} className={installing === '*' ? 'spin' : ''} />
               {installing === '*' ? '正在更新…' : '更新全部'}
+              {installing !== '*' && availableUpdates.size > 0 && `（${availableUpdates.size}）`}
             </button>
             <button
               className="text-button"
@@ -1818,7 +1853,16 @@ function Rules({ rules, error, reload, notify }) {
               <article className="rule-card" key={rule.name}>
                 <div className="rule-card-top">
                   <span className="rule-symbol">{rule.name?.slice(0, 1)}</span>
-                  <span className="rule-badge">已安装</span>
+                  {availableUpdates.has(rule.name.toLowerCase()) ? (
+                    <span
+                      className="rule-badge rule-update-badge"
+                      title={`可更新至 ${availableUpdates.get(rule.name.toLowerCase())}`}
+                    >
+                      可更新
+                    </span>
+                  ) : (
+                    <span className="rule-badge">已安装</span>
+                  )}
                 </div>
                 <h3>{rule.name}</h3>
                 <p>{rule.baseURL || rule.baseUrl || '自定义站点规则'}</p>

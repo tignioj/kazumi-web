@@ -291,6 +291,18 @@ img {
   font-size: 10px;
   font-weight: 500;
 }
+.nav-item .rule-update-count {
+  display: grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--surface);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
 .sidebar-divider {
   height: 1px;
   background: var(--line);
@@ -1318,6 +1330,10 @@ img {
   font-size: 9px;
   border-radius: 4px;
   padding: 4px 6px;
+}
+.rule-update-badge {
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 .rule-card h3 {
   font-size: 16px;
