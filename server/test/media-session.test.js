@@ -155,6 +155,30 @@ test('unresolved nested pages invoke the browser with the original page', async 
   assert.equal(browserCalls[0][1], 'https://source.example/play');
 });
 
+test('decoded playback pages bypass a broken site wrapper and preserve the original episode', async () => {
+  const target = 'https://next.example/anime/3403/play/121397?source=line1';
+  const { service, browserCalls } = fixture({
+    html: `<script>var player_aaaa=${JSON.stringify({ encrypt: 1, url: encodeURIComponent(target), from: 'X_1' })}</script>`,
+  });
+  const result = await service.resolve(rule, '/play');
+  assert.equal(browserCalls[0][1], 'https://source.example/play');
+  assert.equal(browserCalls[0][2].playbackUrl, target);
+  assert.equal(result.originalUrl, 'https://source.example/play');
+  assert.equal(result.type, 'video');
+  assert.ok(payload(result).sessionId);
+});
+
+test('opaque player identifiers stay on their original page for browser parsing', async () => {
+  for (const token of ['Doki-abcdef1234', 'ali_abcdef', 'opaque_token']) {
+    const { service, requests, browserCalls } = fixture({
+      html: `<script>var player_aaaa=${JSON.stringify({ encrypt: 0, url: token, from: 'custom' })}</script>`,
+    });
+    await service.resolve(rule, '/play');
+    assert.equal(requests.length, 1, 'opaque tokens must not be fetched as relative pages');
+    assert.equal(browserCalls[0][1], 'https://source.example/play');
+  }
+});
+
 test('retryable upstream and adapter errors reach the browser, disabled browser keeps legacy behavior', async () => {
   for (const error of [
     new HttpError('upstream failure', 502),

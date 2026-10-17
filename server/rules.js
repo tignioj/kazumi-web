@@ -142,12 +142,23 @@ export function parseXPathChapters(raw, rule) {
 }
 
 export function parseApiSearch(data, config = {}) {
+  if (config.sourceTemplate != null && typeof config.sourceTemplate !== 'string')
+    throw new HttpError('详情页地址模板必须是文本');
+  const template = (config.sourceTemplate || '').trim();
+  if (template && !template.includes('@source'))
+    throw new HttpError('详情页地址模板必须引用 @source');
   return readPath(data, config.listPath ?? '$.data[*]')
-    .map((node) => ({
-      name: scalar(first(node, config.namePath ?? '$.name')),
-      // This may be an opaque ID consumed by the chapter request's @source.
-      url: scalar(first(node, config.sourcePath ?? '$.url')),
-    }))
+    .map((node) => {
+      const source = scalar(first(node, config.sourcePath ?? '$.url'));
+      return {
+        name: scalar(first(node, config.namePath ?? '$.name')),
+        // API 9 templates allow @source immediately after text (GV@source).
+        // Encode the ID once; without a template preserve opaque API identifiers.
+        url:
+          source &&
+          (template ? template.replaceAll('@source', encodeURIComponent(source)) : source),
+      };
+    })
     .filter((item) => item.name && item.url);
 }
 

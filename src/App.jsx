@@ -1643,6 +1643,7 @@ function Rules({ rules, error, reload, notify }) {
   const fileRef = useRef();
   const catalog = useRequest(tab === 'catalog' ? '/rules/catalog' : null);
   const [installing, setInstalling] = useState('');
+  const [updateResults, setUpdateResults] = useState([]);
   const [catalogFilter, setCatalogFilter] = useState('');
   const openImport = () => {
     setModal({ type: 'import' });
@@ -1675,6 +1676,32 @@ function Rules({ rules, error, reload, notify }) {
       await api('/rules/install', { method: 'POST', body: JSON.stringify({ name }) });
       await reload();
       notify(`已安装「${name}」`);
+    } catch (e) {
+      notify(e.message);
+    } finally {
+      setInstalling('');
+    }
+  };
+  const update = async (name) => {
+    setInstalling(name || '*');
+    setUpdateResults([]);
+    try {
+      const { results } = await api('/rules/update', {
+        method: 'POST',
+        body: JSON.stringify(name ? { name } : {}),
+      });
+      await reload();
+      if (tab === 'catalog') catalog.retry();
+      setUpdateResults(results.filter((result) => ['failed', 'unlisted'].includes(result.status)));
+      const updated = results.filter((result) => result.status === 'updated').length;
+      const latest = results.filter((result) => result.status === 'latest').length;
+      notify(
+        updated
+          ? `已更新 ${updated} 条规则`
+          : latest === results.length
+            ? '规则已是最新版本'
+            : '规则更新完成，请查看更新结果',
+      );
     } catch (e) {
       notify(e.message);
     } finally {
@@ -1719,13 +1746,32 @@ function Rules({ rules, error, reload, notify }) {
           </button>
         </div>
         {rules.length > 0 && tab === 'installed' && (
-          <button className="text-button" onClick={() => downloadJSON(rules, 'kazumi-rules.json')}>
-            <Download size={15} />
-            导出全部规则
-          </button>
+          <div className="button-group">
+            <button className="text-button" disabled={!!installing} onClick={() => update()}>
+              <RefreshCw size={15} className={installing === '*' ? 'spin' : ''} />
+              {installing === '*' ? '正在更新…' : '更新全部'}
+            </button>
+            <button
+              className="text-button"
+              onClick={() => downloadJSON(rules, 'kazumi-rules.json')}
+            >
+              <Download size={15} />
+              导出全部规则
+            </button>
+          </div>
         )}
       </div>
       {error && <Notice onRetry={reload}>{error}</Notice>}
+      {updateResults.length > 0 && (
+        <Notice>
+          {updateResults.map((result) => (
+            <span key={result.name}>
+              {result.name}：{result.message}
+              <br />
+            </span>
+          ))}
+        </Notice>
+      )}
       {tab === 'installed' &&
         (rules.length ? (
           <div className="rule-grid">
@@ -1754,6 +1800,15 @@ function Rules({ rules, error, reload, notify }) {
                     编辑规则
                   </button>
                   <div>
+                    <button
+                      className="icon-button"
+                      aria-label={`更新 ${rule.name}`}
+                      title="从官方目录更新规则"
+                      disabled={!!installing}
+                      onClick={() => update(rule.name)}
+                    >
+                      <RefreshCw size={16} className={installing === rule.name ? 'spin' : ''} />
+                    </button>
                     <button
                       className="icon-button"
                       aria-label={`导出 ${rule.name}`}
@@ -1815,7 +1870,9 @@ function Rules({ rules, error, reload, notify }) {
                 {remoteRules
                   .filter((r) => r.name.toLowerCase().includes(catalogFilter.toLowerCase()))
                   .map((rule) => {
-                    const installed = rules.some((r) => r.name === rule.name);
+                    const installed = rules.some(
+                      (r) => r.name.toLowerCase() === rule.name.toLowerCase(),
+                    );
                     return (
                       <article key={rule.name}>
                         <span className="rule-symbol">{rule.name.slice(0, 1)}</span>
@@ -1829,7 +1886,7 @@ function Rules({ rules, error, reload, notify }) {
                         <button
                           className={`button ${installed ? 'quiet' : 'primary'}`}
                           disabled={!!installing}
-                          onClick={() => install(rule.name)}
+                          onClick={() => (installed ? update(rule.name) : install(rule.name))}
                         >
                           {installing === rule.name ? (
                             <LoaderCircle size={15} className="spin" />
@@ -1838,7 +1895,7 @@ function Rules({ rules, error, reload, notify }) {
                           ) : (
                             <Plus size={15} />
                           )}
-                          {installed ? '重新安装' : '安装'}
+                          {installed ? '检查更新' : '安装'}
                         </button>
                       </article>
                     );

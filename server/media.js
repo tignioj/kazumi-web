@@ -44,12 +44,18 @@ export function extractMedia(html, pageUrl) {
         } catch {
           continue;
         }
+        // Player identifiers (ali_*, Doki-*, etc.) are inputs to the site's
+        // parser, not relative web pages. Keep the original page for sniffing.
+        if (!/^(?:(?:https?:)?\/\/|\/|\.\.?\/)/i.test(raw) && !mediaType(raw)) continue;
         const url = absoluteUrl(raw, pageUrl);
-        if (url)
+        if (url) {
+          const type = mediaType(url) || (/m3u8|hls/i.test(data.from || '') ? 'hls' : 'iframe');
           return {
-            type: mediaType(url) || (/m3u8|hls/i.test(data.from || '') ? 'hls' : 'iframe'),
+            type,
             url,
+            ...(type === 'iframe' ? { browserUrl: url } : {}),
           };
+        }
       }
       // Recognize literal media URLs without executing any source JavaScript.
       const literal =
@@ -141,6 +147,7 @@ export class MediaService {
     if (!originalUrl) throw new HttpError('播放地址无效');
     checkedUrl(originalUrl, { allowPrivate: this.http.allowPrivate });
     signal?.throwIfAborted();
+    let playbackUrl;
     try {
       const result = await this.resolveStatic(rule, originalUrl, signal);
       if (result.type !== 'iframe') {
@@ -175,6 +182,7 @@ export class MediaService {
         };
       }
       if (!this.browserResolver) return result;
+      playbackUrl = result.browserUrl;
     } catch (error) {
       // Private-network/URL validation failures are never retried in a browser.
       // HTTP upstream status codes are wrapped as 502 by the static resolver.
@@ -184,6 +192,7 @@ export class MediaService {
     signal?.throwIfAborted();
     const result = await this.browserResolver.resolve(rule, originalUrl, {
       signal,
+      ...(playbackUrl && playbackUrl !== originalUrl ? { playbackUrl } : {}),
       ...(onVerification ? { onVerification } : {}),
     });
     signal?.throwIfAborted();
@@ -203,6 +212,7 @@ export class MediaService {
     let headers = ruleHeaders(rule);
     let url = originalUrl;
     let fallback = originalUrl;
+    let browserUrl;
     const visited = new Set();
     for (let depth = 0; depth < 4; depth++) {
       signal?.throwIfAborted();
@@ -271,9 +281,10 @@ export class MediaService {
           originalUrl,
         };
       fallback = extracted.url;
+      if (extracted.browserUrl) browserUrl = extracted.browserUrl;
       url = extracted.url;
     }
-    return { type: 'iframe', url: fallback, originalUrl };
+    return { type: 'iframe', url: fallback, originalUrl, ...(browserUrl && { browserUrl }) };
   }
   close() {
     this.sessions.close();

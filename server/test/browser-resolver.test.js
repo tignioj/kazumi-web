@@ -184,6 +184,36 @@ browserTest(
 );
 
 browserTest(
+  'decoded playback fallback shares the source session and keeps the original parser running',
+  async (t) => {
+    const { resolver, baseURL, rule, requests } = await fixture(t, (request, response) => {
+      if (request.url === '/watch') {
+        response.setHeader('set-cookie', 'source_session=ready; Path=/; HttpOnly');
+        return html(
+          response,
+          `<video></video><script>
+          setTimeout(() => { document.querySelector('video').src='/movie.mp4'; }, 2200);
+        </script>`,
+        );
+      }
+      if (request.url === '/parser-input') {
+        assert.match(request.headers.cookie, /source_session=ready/);
+        return html(response, '<p>This HTTP source is an input to the original parser.</p>');
+      }
+      if (request.url === '/movie.mp4')
+        return response.writeHead(206, { 'content-type': 'video/mp4' }).end(mp4);
+      response.writeHead(404).end();
+    });
+    const result = await resolver.resolve(rule, `${baseURL}/watch`, {
+      playbackUrl: `${baseURL}/parser-input`,
+    });
+    assert.equal(result.url, `${baseURL}/movie.mp4`);
+    assert.ok(requests.some((request) => request.path === '/parser-input'));
+    assert.equal(resolver.browser.contexts().length, 0);
+  },
+);
+
+browserTest(
   'browser resolver cancellation releases context and concurrency without killing the reusable browser',
   async (t) => {
     let loaded;
@@ -304,6 +334,12 @@ test('already cancelled requests and private source URLs never start Chromium', 
   );
   await assert.rejects(
     resolver.resolve({ baseURL: 'http://127.0.0.1' }, 'http://127.0.0.1/watch'),
+    { status: 403 },
+  );
+  await assert.rejects(
+    resolver.resolve({ baseURL: 'https://example.com' }, 'https://example.com/watch', {
+      playbackUrl: 'http://127.0.0.1/decoded',
+    }),
     { status: 403 },
   );
   const controller = new AbortController();

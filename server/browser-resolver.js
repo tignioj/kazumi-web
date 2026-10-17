@@ -576,8 +576,9 @@ export class BrowserResolver {
     throw new HttpError('HLS 播放列表嵌套过深', 422);
   }
 
-  async resolve(rule, originalUrl, { signal: callerSignal, onVerification } = {}) {
+  async resolve(rule, originalUrl, { signal: callerSignal, onVerification, playbackUrl } = {}) {
     checkedUrl(originalUrl, { allowPrivate: this.http.allowPrivate });
+    if (playbackUrl) checkedUrl(playbackUrl, { allowPrivate: this.http.allowPrivate });
     if (this.closed) throw new HttpError('动态解析服务已关闭', 503);
     if (this.active.size >= this.options.maxConcurrency)
       throw new HttpError('动态解析繁忙，请稍后重试', 503);
@@ -729,9 +730,12 @@ export class BrowserResolver {
       });
       await context.addInitScript(installObservers);
       const page = await context.newPage();
-      context.on('page', (popup) => {
-        if (popup !== page) void popup.close().catch(() => {});
-      });
+      const closePopups = (owner) =>
+        owner.on('popup', (popup) => void popup.close().catch(() => {}));
+      closePopups(page);
+      const navigationStarted = Date.now();
+      let playbackPage;
+      let playbackNavigationError;
       let navigationError;
       void page
         .goto(originalUrl, {
@@ -747,9 +751,39 @@ export class BrowserResolver {
       let lastChallengeCheck = 0;
       let verificationAttempts = 0;
       while (!signal.aborted) {
+        // Some wrappers fail even though their decoded playback page works.
+        // Keep the wrapper running for sites that exchange their HTTP source URL
+        // through a parser, while trying one decoded page in the same session.
+        if (
+          playbackUrl &&
+          playbackUrl !== originalUrl &&
+          !playbackPage &&
+          (navigationError || Date.now() - navigationStarted >= 1500) &&
+          [...candidates.keys()].every((url) => rejected.has(url))
+        ) {
+          playbackPage = await context.newPage();
+          closePopups(playbackPage);
+          void playbackPage
+            .goto(playbackUrl, {
+              waitUntil: 'domcontentloaded',
+              timeout: this.options.timeout,
+              referer: rule.referer || originalUrl,
+            })
+            .catch((error) => {
+              playbackNavigationError = error;
+            });
+        }
+        const pages = playbackPage ? [page, playbackPage] : [page];
         if (onVerification && (manualPending || Date.now() - lastChallengeCheck > 700)) {
           lastChallengeCheck = Date.now();
-          const challenge = await inspectBrowserChallenge(page, rule);
+          const inspected = await Promise.all(
+            pages.map(async (target) => ({
+              page: target,
+              challenge: await inspectBrowserChallenge(target, rule),
+            })),
+          );
+          const active = inspected.find((item) => item.challenge.detected) || inspected.at(-1);
+          const { challenge } = active;
           if (challenge.detected || manualPending) {
             if (verificationAttempts >= 5) throw verificationRequired();
             verificationAttempts++;
@@ -758,7 +792,7 @@ export class BrowserResolver {
             manualPending = false;
             clearTimeout(deadline);
             await waitForVerification(
-              page,
+              active.page,
               onVerification,
               {
                 ruleName: rule.name,
@@ -778,7 +812,7 @@ export class BrowserResolver {
         }
         if (Date.now() - lastTrigger > 1200) {
           lastTrigger = Date.now();
-          for (const frame of page.frames()) {
+          for (const frame of pages.flatMap((target) => target.frames())) {
             void frame
               .evaluate(() => {
                 for (const video of document.querySelectorAll('video'))
@@ -829,10 +863,15 @@ export class BrowserResolver {
             }
           }
         }
-        if (navigationError && !candidates.size)
+        if (
+          navigationError &&
+          (!playbackUrl || playbackUrl === originalUrl || playbackNavigationError) &&
+          !candidates.size
+        )
           throw new HttpError('动态解析无法打开来源页面，请检查片源或网络连接', 502);
         if (
           validationError &&
+          (!playbackPage || playbackNavigationError) &&
           [...candidates.keys()].every((url) => rejected.has(url)) &&
           Date.now() - lastCandidate > 3000
         )

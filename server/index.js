@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { createHttpClient, HttpError } from './http.js';
 import { RuleStore } from './store.js';
+import { downloadOfficialRule, updateInstalledRules } from './rule-updates.js';
 import { RuleEngine } from './rules.js';
 import { MediaService } from './media.js';
 import { BrowserResolver } from './browser-resolver.js';
@@ -60,8 +61,8 @@ export async function createApp(options = {}) {
     process.env.RULES_REPOSITORY || 'https://raw.githubusercontent.com/Predidit/KazumiRules/main/'
   ).replace(/\/?$/, '/');
   let catalogCache;
-  async function officialRules() {
-    if (catalogCache && catalogCache.expires > Date.now()) return catalogCache.rules;
+  async function officialRules(refresh = false) {
+    if (!refresh && catalogCache && catalogCache.expires > Date.now()) return catalogCache.rules;
     const rules = await http.json(`${repository}index.json`);
     if (!Array.isArray(rules)) throw new HttpError('规则仓库索引无效', 502);
     catalogCache = {
@@ -200,8 +201,14 @@ export async function createApp(options = {}) {
       (rule) => rule.name.toLowerCase() === name.toLowerCase(),
     );
     if (!listed) throw new HttpError('官方规则仓库中找不到此规则', 404);
-    const rule = await http.json(`${repository}${encodeURIComponent(listed.name)}.json`);
+    const rule = await downloadOfficialRule(http, repository, listed.name);
     res.json({ rules: await store.import(rule) });
+  });
+  app.post('/api/rules/update', async (req, res) => {
+    const name =
+      req.body?.name === undefined ? undefined : inputText(req.body.name, '规则名称', 100);
+    if (name) store.get(name);
+    res.json(await updateInstalledRules(store, http, repository, await officialRules(true), name));
   });
   app.put('/api/rules/:name', async (req, res) =>
     res.json({ rules: await store.replace(req.params.name, req.body) }),

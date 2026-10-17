@@ -40,6 +40,11 @@ test(
           'playback=private-cookie; Path=/stream; HttpOnly; SameSite=Lax',
         );
         res.end('<video src="/stream/file" controls></video>');
+      } else if (req.url === '/broken-wrapper') {
+        res.setHeader('content-type', 'text/html');
+        res.end(
+          `<script>var player_aaaa={"encrypt":1,"url":"${encodeURIComponent(`${origin}/watch`)}","from":"X_1"}</script><p>解析出错!</p>`,
+        );
       } else if (req.url === '/session') {
         res.setHeader(
           'set-cookie',
@@ -91,11 +96,13 @@ test(
       await closeServer(upstream);
       await rm(directory, { recursive: true, force: true });
     });
-    for (const path of ['/watch', '/static-watch']) {
+    for (const path of ['/watch', '/static-watch', '/broken-wrapper']) {
       await t.test(
         path === '/watch'
           ? 'runtime iframe and media URL'
-          : 'static URL with a browser-only cookie session',
+          : path === '/static-watch'
+            ? 'static URL with a browser-only cookie session'
+            : 'decoded playback page with a broken source wrapper',
         async () => {
           const response = await fetch(`${base}/api/resolve`, {
             method: 'POST',
@@ -117,7 +124,7 @@ test(
           assert.deepEqual(Buffer.from(await media.arrayBuffer()), movie.subarray(40, 80));
           assert.ok(requests.at(-1).cookie.includes('playback=private-cookie'));
           assert.ok(
-            requests.at(-1).referer.endsWith(path === '/watch' ? '/embed' : '/static-watch'),
+            requests.at(-1).referer.endsWith(path === '/static-watch' ? '/static-watch' : '/embed'),
           );
         },
       );

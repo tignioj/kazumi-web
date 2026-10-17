@@ -132,6 +132,51 @@ test('API search preserves opaque source identifiers', () => {
   );
 });
 
+test('API 9 search templates encode IDs once, support adjoining text, and skip missing sources', () => {
+  const config = {
+    listPath: '$.list[*]',
+    namePath: '$.name',
+    sourcePath: '$.id',
+    sourceTemplate: ' https://example.com/GV@source/?id=@source ',
+  };
+  assert.deepEqual(
+    parseApiSearch(
+      {
+        list: [
+          { id: '中文/a%2Fb?x=1&y=2#part', name: '番剧' },
+          { id: 0, name: '零号条目' },
+          { name: '缺少 ID' },
+          { id: '123' },
+        ],
+      },
+      config,
+    ),
+    [
+      {
+        name: '番剧',
+        url: 'https://example.com/GV%E4%B8%AD%E6%96%87%2Fa%252Fb%3Fx%3D1%26y%3D2%23part/?id=%E4%B8%AD%E6%96%87%2Fa%252Fb%3Fx%3D1%26y%3D2%23part',
+      },
+      { name: '零号条目', url: 'https://example.com/GV0/?id=0' },
+    ],
+  );
+  for (const sourceTemplate of [null, '', '   '])
+    assert.deepEqual(
+      parseApiSearch(
+        { list: [{ name: '番剧', id: 'opaque-id' }] },
+        {
+          ...config,
+          sourceTemplate,
+        },
+      ),
+      [{ name: '番剧', url: 'opaque-id' }],
+    );
+  assert.throws(() => parseApiSearch({}, { sourceTemplate: {} }), /必须是文本/);
+  assert.throws(
+    () => parseApiSearch({}, { sourceTemplate: 'https://example.com/fixed' }),
+    /必须引用 @source/,
+  );
+});
+
 test('nested chapter mapping supports captures and 0/1-based episode templates', () => {
   const config = {
     roadsPath: '$.roads[*]',

@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { HttpError, checkedUrl } from './http.js';
 
+export const RULE_API_VERSION = 9;
+
 export function normalizeRule(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input))
     throw new HttpError('每条规则必须是 JSON 对象');
@@ -12,9 +14,9 @@ export function normalizeRule(input) {
     !['string', 'number'].includes(typeof (input.api ?? 1)) ||
     !Number.isInteger(Number(input.api ?? 1)) ||
     Number(input.api ?? 1) < 1 ||
-    Number(input.api ?? 1) > 8
+    Number(input.api ?? 1) > RULE_API_VERSION
   )
-    throw new HttpError('规则 API 版本不受支持（最高 8）');
+    throw new HttpError(`规则 API 版本不受支持（最高 ${RULE_API_VERSION}）`);
   const rule = {
     api: '1',
     type: 'anime',
