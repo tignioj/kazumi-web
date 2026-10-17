@@ -15,7 +15,7 @@ import { timeLabel } from '../../lib/format.js';
 import { useRequest } from '../../hooks/use-request.js';
 import { Notice, Empty } from '../../components/feedback.jsx';
 import { PageHeading } from '../../components/PageHeading.jsx';
-import { PosterGrid } from './PosterGrid.jsx';
+import { PosterGrid } from '../../components/PosterGrid.jsx';
 
 export function Discover({ query, library, history, onOpen, onResume, navigate }) {
   const [sort, setSort] = useState('trending');

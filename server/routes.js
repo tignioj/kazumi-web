@@ -1,4 +1,3 @@
-import { registerImageRoutes } from './modules/images/routes.js';
 import { registerWatchRoutes } from './modules/watch/routes.js';
 import { registerVerificationRoutes } from './modules/verification/routes.js';
 import { createInteractive } from './modules/verification/interactive.js';
@@ -13,7 +12,7 @@ export function registerRoutes(
 ) {
   const interactive = createInteractive(verification);
   app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
-  registerImageRoutes(app, { images });
+  app.get('/api/image', async (req, res) => images.serve(req, res));
   registerWatchRoutes(app, { watchStore });
   registerVerificationRoutes(app, { verification });
   registerMetadataRoutes(app, { metadata, archive });

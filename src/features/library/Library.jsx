@@ -4,7 +4,7 @@ import { ArrowRight, Heart, Search } from 'lucide-react';
 import { titleOf } from '../../lib/format.js';
 import { Empty } from '../../components/feedback.jsx';
 import { PageHeading } from '../../components/PageHeading.jsx';
-import { PosterGrid } from '../catalog/PosterGrid.jsx';
+import { PosterGrid } from '../../components/PosterGrid.jsx';
 
 export function Library({ library, onOpen, navigate }) {
   const [filter, setFilter] = useState('全部');

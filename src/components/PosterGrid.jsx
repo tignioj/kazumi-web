@@ -1,8 +1,8 @@
 import React from 'react';
-import { imageSource } from '../../../shared/images.js';
-import { CachedImage } from '../../components/CachedImage.jsx';
+import { imageSource } from '../../shared/images.js';
+import { CachedImage } from './CachedImage.jsx';
 import { ArrowRight, Film, Star } from 'lucide-react';
-import { titleOf } from '../../lib/format.js';
+import { titleOf } from '../lib/format.js';
 
 function Poster({ subject, onOpen, library }) {
   const status = library?.[subject.id]?.status;

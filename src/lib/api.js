@@ -1,7 +1,4 @@
-import {
-  awaitVerification,
-  ensureVerificationSession,
-} from '../features/verification/VerificationHost.jsx';
+import { awaitVerification, ensureVerificationSession } from './verification.js';
 
 export async function api(path, options = {}) {
   if (['/rules/search', '/rules/chapters', '/resolve'].includes(path)) {

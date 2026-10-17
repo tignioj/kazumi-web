@@ -174,7 +174,7 @@ npm run test:e2e
 
 ### 测试目录
 
-- `test/frontend/`：直接验证 `src/` 中前端模块的逻辑，目前包含媒体探测、播放错误与播放器控制测试。
+- `test/frontend/`：直接验证 `src/` 中前端模块的逻辑，包含媒体探测、播放错误、播放器控制、API 请求与验证会话队列测试。
 - `test/server/`：验证 `server/` 的规则、HTTP 接口、存储、缓存、媒体代理和浏览器解析；后端专用的归档及规则夹具放在 `test/server/fixtures/`。
 - `test/shared/`：直接验证根目录 `shared/` 中前后端复用的纯逻辑，目前包含图片地址处理测试。后端测试使用共享工具构造数据时，仍按被测服务归属放在后端目录。
 - `test/e2e/`：Playwright 浏览器及生产 HTTP 流程测试，包含启动脚本和模拟上游服务，测试时使用临时数据目录。
@@ -187,19 +187,19 @@ npm run test:e2e
 
 - `src/App.jsx`：应用布局、Hash 导航与全局状态协调。
 - `src/features/`：按功能组织番剧浏览、收藏、历史、下载缓存、片源搜索、规则、设置、播放器和人工验证；功能内部的组件与逻辑放在一起。
-- `src/components/`：跨功能使用的弹窗、提示、标题和缓存图片组件。
+- `src/components/`：跨功能使用的弹窗、提示、标题、海报网格和缓存图片组件。
 - `src/hooks/`：通用请求、本机偏好与观看记录同步的 React hooks。
-- `src/lib/`：API 请求、格式化和 JSON 文件导出工具；前后端共用的数据约定仍放在根目录 `shared/`。
+- `src/lib/`：API 请求、验证会话通信与队列、格式化和 JSON 文件导出工具；前后端共用的数据约定仍放在根目录 `shared/`。
 - `src/styles.css`：样式唯一入口，按原有层叠顺序导入 `src/styles/` 中的功能样式。跨功能的响应式覆盖集中在 `responsive.css`，调整导入顺序前需检查桌面、移动端和深色主题。
 
-新增页面放入对应的功能目录，由 `App.jsx` 接入导航；公共组件避免依赖具体页面。整理前端后运行 `npm run check` 和 `npm run test:e2e`，播放器基础逻辑的测试位于 `test/frontend/playback.test.js`。
+新增页面放入对应的功能目录，由 `App.jsx` 接入导航；公共组件和工具避免依赖具体功能页面。验证弹窗通过 `src/lib/verification.js` 订阅待处理请求，与 API 客户端共享通信状态，通信层可直接在 Node.js 中测试。整理前端后运行 `npm run check` 和 `npm run test:e2e`，播放器基础逻辑的测试位于 `test/frontend/playback.test.js`。
 
 ### 后端代码结构
 
 - `server/index.js`：命令行入口，负责监听端口、启动资料更新和处理退出信号；仍导出 `createApp`，供测试及程序调用。
 - `server/app.js`：按原有顺序初始化服务、装配中间件和路由，并统一关闭服务资源；`createApp(options)` 的配置和返回值保持一致。
-- `server/routes.js`：集中注册各业务路由，保留路由注册顺序。
-- `server/modules/`：按规则、观看记录、番剧资料、图片缓存、播放解析、人工验证和下载缓存归拢模块；各目录的 `routes.js` 处理 HTTP 输入输出，服务、存储和解析逻辑放在同目录。
+- `server/routes.js`：集中注册各业务路由，保留路由注册顺序；健康检查和图片代理入口直接注册，图片请求的处理仍由图片缓存模块负责。
+- `server/modules/`：按规则、观看记录、番剧资料、图片缓存、播放解析、人工验证和下载缓存归拢模块；业务目录中的 `routes.js` 处理 HTTP 输入输出，服务、存储和解析逻辑放在同目录。
 - `server/middleware/`：请求安全校验、每实例 API 限流、静态文件与页面回退、API 404 和统一错误响应。装配顺序为安全校验、JSON 解析、限流、业务路由、API 404、前端文件与回退、错误处理。
 - `server/lib/`：HTTP 客户端、网络地址校验、ECH 通道、浏览器出口代理与请求参数校验。
 - `server/defaults/`：首次启动使用的来源规则；后端测试位于 `test/server/`，包含中间件顺序、静态页面回退和应用实例隔离的回归测试。

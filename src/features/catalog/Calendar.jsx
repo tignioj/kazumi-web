@@ -3,7 +3,7 @@ import { CalendarDays } from 'lucide-react';
 import { useRequest } from '../../hooks/use-request.js';
 import { Notice, Empty } from '../../components/feedback.jsx';
 import { PageHeading } from '../../components/PageHeading.jsx';
-import { PosterGrid } from './PosterGrid.jsx';
+import { PosterGrid } from '../../components/PosterGrid.jsx';
 
 export function Calendar({ library, onOpen }) {
   const request = useRequest('/calendar');
