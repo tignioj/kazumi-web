@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { HttpError, checkedUrl } from './http.js';
+import { HttpError, checkedUrl } from '../../lib/http.js';
 
 export const RULE_API_VERSION = 9;
 

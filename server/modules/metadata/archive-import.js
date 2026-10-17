@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { StringDecoder } from 'node:string_decoder';
 import yauzl from 'yauzl';
-import { METADATA_SCHEMA, foldText } from './local-metadata.js';
+import { METADATA_SCHEMA, foldText } from './local-store.js';
 
 const PLATFORMS = { 1: 'TV', 2: 'OVA', 3: '剧场版', 4: '短片', 5: 'WEB', 2006: '动态漫画' };
 const positiveId = (value) => Number.isSafeInteger(Number(value)) && Number(value) > 0;

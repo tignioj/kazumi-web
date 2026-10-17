@@ -10,8 +10,8 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { join } from 'node:path';
-import { bangumiImageUrl } from '../shared/images.js';
-import { HttpError } from './http.js';
+import { bangumiImageUrl } from '../../../shared/images.js';
+import { HttpError } from '../../lib/http.js';
 
 const MAX_IMAGE_BYTES = 5 * 1024 ** 2;
 const DEFAULT_MAX_AGE = 7 * 24 * 3600 * 1000;

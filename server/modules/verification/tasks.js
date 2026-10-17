@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { HttpError } from './http.js';
+import { HttpError } from '../../lib/http.js';
 
 const id = () => randomBytes(24).toString('base64url');
 const KEYS = new Set([

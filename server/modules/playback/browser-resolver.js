@@ -1,8 +1,8 @@
 import { chromium } from 'playwright';
-import { HttpError, checkedUrl, readLimited } from './http.js';
-import { createBrowserEgress } from './browser-egress.js';
-import { headersForSession } from './media-session.js';
-import { inspectBrowserChallenge, verificationRequired } from './challenge.js';
+import { HttpError, checkedUrl, readLimited } from '../../lib/http.js';
+import { createBrowserEgress } from '../../lib/browser-egress.js';
+import { headersForSession } from './session-store.js';
+import { inspectBrowserChallenge, verificationRequired } from '../verification/challenge.js';
 
 const MAX_PLAYLIST_BYTES = 1024 * 1024;
 const HEADER_NAMES = new Set([

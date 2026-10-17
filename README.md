@@ -180,6 +180,18 @@ npm run test:e2e
 
 新增页面放入对应的功能目录，由 `App.jsx` 接入导航；公共组件避免依赖具体页面。整理前端后运行 `npm run check` 和 `npm run test:e2e`，播放器基础逻辑的测试位于 `server/test/playback.test.js`。
 
+### 后端代码结构
+
+- `server/index.js`：命令行入口，负责监听端口、启动资料更新和处理退出信号；仍导出 `createApp`，供测试及程序调用。
+- `server/app.js`：按原有顺序初始化服务、装配中间件和路由，并统一关闭服务资源；`createApp(options)` 的配置和返回值保持一致。
+- `server/routes.js`：集中注册各业务路由，保留路由注册顺序。
+- `server/modules/`：按规则、观看记录、番剧资料、图片缓存、播放解析、人工验证和下载缓存归拢模块；各目录的 `routes.js` 处理 HTTP 输入输出，服务、存储和解析逻辑放在同目录。
+- `server/middleware/`：请求安全校验、每实例 API 限流、静态文件与页面回退、API 404 和统一错误响应。装配顺序为安全校验、JSON 解析、限流、业务路由、API 404、前端文件与回退、错误处理。
+- `server/lib/`：HTTP 客户端、网络地址校验、ECH 通道、浏览器出口代理与请求参数校验。
+- `server/defaults/`：首次启动使用的来源规则；`server/test/`：服务端与共享逻辑测试，包含中间件顺序、静态页面回退和应用实例隔离的回归测试。
+
+新增接口放入对应业务目录，通过 `server/routes.js` 接入；限流计数、规则目录缓存和验证任务等状态由各应用实例持有。调整后运行 `npm run check` 和 `npm run test:e2e`。
+
 ### 服务端环境变量
 
 | 变量                             | 默认值                      | 用途                                                                                                                |

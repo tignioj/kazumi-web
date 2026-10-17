@@ -5,9 +5,9 @@ import { createServer } from 'node:http';
 import { mkdtemp, readdir, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ImageCache } from '../images.js';
+import { ImageCache } from '../modules/images/cache.js';
 import { createApp } from '../index.js';
-import { createHttpClient, HttpError } from '../http.js';
+import { createHttpClient, HttpError } from '../lib/http.js';
 import { bangumiImageUrl, imageSource } from '../../shared/images.js';
 
 const png = Buffer.from(

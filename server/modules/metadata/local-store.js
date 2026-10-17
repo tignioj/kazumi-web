@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { HttpError } from './http.js';
+import { HttpError } from '../../lib/http.js';
 
 export const METADATA_SCHEMA = 1;
 export const DATABASE_NAME = /^metadata-[a-f0-9-]{36}\.sqlite$/;

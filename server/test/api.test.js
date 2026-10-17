@@ -6,8 +6,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createApp } from '../index.js';
-import { createHttpClient } from '../http.js';
-import { MetadataService } from '../metadata.js';
+import { createHttpClient } from '../lib/http.js';
+import { MetadataService } from '../modules/metadata/service.js';
 
 test('real HTTP API, rule execution, metadata and media proxy integration', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'kazumi-api-'));

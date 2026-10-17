@@ -1,5 +1,5 @@
-import { createHttpClient } from '../server/http.js';
-import { categorySearchOptions } from '../server/metadata.js';
+import { createHttpClient } from '../server/lib/http.js';
+import { categorySearchOptions } from '../server/modules/metadata/service.js';
 
 // Keep each comparison on the exact same request body and timeout. This is a
 // live diagnostic, intentionally separate from the offline test suite.

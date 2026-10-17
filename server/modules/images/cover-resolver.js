@@ -1,5 +1,5 @@
-import { bangumiImageUrl } from '../shared/images.js';
-import { HttpError } from './http.js';
+import { bangumiImageUrl } from '../../../shared/images.js';
+import { HttpError } from '../../lib/http.js';
 
 // Official wiki archives omit cover filenames. Resolve only these stable
 // subject-image placeholders, on a cache miss or background refresh, separately from local queries.

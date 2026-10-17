@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { cleanHeaders, HttpError } from './http.js';
+import { cleanHeaders, HttpError } from '../../lib/http.js';
 
 // Browser cookies remain on the server. Playwright uses an initial dot for
 // domain cookies and -1 for cookies that expire with the browser session.

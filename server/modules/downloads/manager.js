@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { extname, join, resolve } from 'node:path';
-import { checkedUrl, cleanHeaders, HttpError } from './http.js';
-import { headersForSession } from './media-session.js';
-import { streamArchive } from './download-archive.js';
+import { checkedUrl, cleanHeaders, HttpError } from '../../lib/http.js';
+import { headersForSession } from '../playback/session-store.js';
+import { streamArchive } from './archive.js';
 
 const MAX_JOBS = 200;
 const MAX_FILES = 20000;

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { categorySearchOptions } from '../metadata.js';
+import { categorySearchOptions } from '../modules/metadata/service.js';
 
 test('category date ranges include the selected quarter and exclude the next', () => {
   for (const [season, start, end] of [

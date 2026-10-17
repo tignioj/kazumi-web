@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { once } from 'node:events';
 import { chromium } from 'playwright';
-import { BrowserResolver } from '../browser-resolver.js';
-import { createHttpClient } from '../http.js';
+import { BrowserResolver } from '../modules/playback/browser-resolver.js';
+import { createHttpClient } from '../lib/http.js';
 
 const browserInstalled = await chromium
   .launch({ headless: true, args: ['--disable-background-networking'] })

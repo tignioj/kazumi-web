@@ -1,6 +1,6 @@
 import { JSDOM } from 'jsdom';
-import { HttpError } from './http.js';
-import { jsonObjectAt } from './player-json.js';
+import { HttpError } from '../../../lib/http.js';
+import { jsonObjectAt } from '../player-json.js';
 
 const ORIGIN = 'https://www.7sefun.top';
 const INDEX_PATH = '/addons/dp/player/index.php';

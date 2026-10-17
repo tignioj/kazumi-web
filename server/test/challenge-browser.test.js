@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { once } from 'node:events';
 import { chromium } from 'playwright';
-import { BrowserResolver } from '../browser-resolver.js';
-import { RuleEngine } from '../rules.js';
-import { hasChallenge } from '../challenge.js';
-import { createHttpClient } from '../http.js';
+import { BrowserResolver } from '../modules/playback/browser-resolver.js';
+import { RuleEngine } from '../modules/rules/engine.js';
+import { hasChallenge } from '../modules/verification/challenge.js';
+import { createHttpClient } from '../lib/http.js';
 
 const installed = await chromium.launch({ headless: true }).then(
   async (browser) => {

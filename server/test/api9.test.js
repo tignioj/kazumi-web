@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
 import { createApp } from '../index.js';
-import { normalizeRule, parseImport, RuleStore, RULE_API_VERSION } from '../store.js';
+import { normalizeRule, parseImport, RuleStore, RULE_API_VERSION } from '../modules/rules/store.js';
 
 // https://github.com/Predidit/KazumiRules snapshots from 2026-10-17.
 // No public site is required by tests.

@@ -1,6 +1,6 @@
 import { JSDOM } from 'jsdom';
-import { HttpError, checkedUrl } from './http.js';
-import { jsonObjectAt } from './player-json.js';
+import { HttpError, checkedUrl } from '../../../lib/http.js';
+import { jsonObjectAt } from '../player-json.js';
 
 // This player obtains the media URL through its public JSON endpoint. Calling
 // that endpoint here keeps mobile devices on our media proxy instead of an iframe.

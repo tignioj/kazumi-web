@@ -2,12 +2,12 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { JSDOM } from 'jsdom';
-import { HttpError, checkedUrl, readLimited } from './http.js';
-import { absoluteUrl, ruleHeaders } from './rules.js';
+import { HttpError, checkedUrl, readLimited } from '../../lib/http.js';
+import { absoluteUrl, ruleHeaders } from '../rules/engine.js';
 import { jsonObjectAt } from './player-json.js';
-import { resolveHhjx } from './hhjx.js';
-import { resolveSevenSefun } from './sevensefun.js';
-import { headersForSession, MediaSessionStore } from './media-session.js';
+import { resolveHhjx } from './adapters/hhjx.js';
+import { resolveSevenSefun } from './adapters/sevensefun.js';
+import { headersForSession, MediaSessionStore } from './session-store.js';
 
 export function mediaType(url) {
   if (/\.m3u8(?:[?#]|$)/i.test(url)) return 'hls';

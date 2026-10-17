@@ -1,5 +1,5 @@
 import { JSDOM } from 'jsdom';
-import { HttpError } from './http.js';
+import { HttpError } from '../../lib/http.js';
 
 export function verificationRequired() {
   const error = new HttpError('来源要求人机验证，请完成验证后继续，或更换来源', 422);

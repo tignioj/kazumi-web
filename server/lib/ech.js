@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 const HOSTS = new Set(['api.bgm.tv', 'next.bgm.tv', 'lain.bgm.tv']);
 const MAX_RESPONSE = 8 * 1024 ** 2;
 const DEFAULT_BINARY = fileURLToPath(
-  new URL(`../bin/kazumi-ech${process.platform === 'win32' ? '.exe' : ''}`, import.meta.url),
+  new URL(`../../bin/kazumi-ech${process.platform === 'win32' ? '.exe' : ''}`, import.meta.url),
 );
 
 export function isEchTarget(value) {

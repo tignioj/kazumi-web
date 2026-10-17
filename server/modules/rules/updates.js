@@ -1,4 +1,4 @@
-import { HttpError } from './http.js';
+import { HttpError } from '../../lib/http.js';
 import { normalizeRule } from './store.js';
 
 export function newerRuleVersion(remote, local) {

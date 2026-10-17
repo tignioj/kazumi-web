@@ -1,12 +1,12 @@
 import { mkdir, readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { HttpError } from './http.js';
+import { HttpError } from '../../lib/http.js';
 import {
   normalizeHistoryItem,
   normalizeLibraryItem,
   normalizeWatchData,
-} from '../shared/watch-data.js';
+} from '../../../shared/watch-data.js';
 
 function validated(normalize, value) {
   try {

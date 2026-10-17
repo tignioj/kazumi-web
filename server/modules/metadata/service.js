@@ -1,10 +1,10 @@
-import { HttpError, USER_AGENT } from './http.js';
+import { HttpError, USER_AGENT } from '../../lib/http.js';
 import {
   CATEGORY_FIRST_YEAR,
   CATEGORY_FORMATS,
   CATEGORY_MAX_TAGS,
   CATEGORY_SORTS,
-} from '../shared/categories.js';
+} from '../../../shared/categories.js';
 
 export function categorySearchOptions(query) {
   const sort = query.sort ?? 'heat';

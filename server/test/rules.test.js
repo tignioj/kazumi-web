@@ -10,11 +10,11 @@ import {
   parseApiChapters,
   prepareApiRequest,
   readPath,
-} from '../rules.js';
-import { normalizeRule, parseImport, RuleStore } from '../store.js';
-import { checkedUrl, isPublicAddress } from '../http.js';
-import { extractMedia, rewritePlaylist, MediaService } from '../media.js';
-import { normalizeSubject } from '../metadata.js';
+} from '../modules/rules/engine.js';
+import { normalizeRule, parseImport, RuleStore } from '../modules/rules/store.js';
+import { checkedUrl, isPublicAddress } from '../lib/http.js';
+import { extractMedia, rewritePlaylist, MediaService } from '../modules/playback/media.js';
+import { normalizeSubject } from '../modules/metadata/service.js';
 
 const rule = {
   name: 'Fixture',

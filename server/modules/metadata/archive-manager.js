@@ -6,8 +6,8 @@ import { pipeline } from 'node:stream/promises';
 import { Readable, Transform } from 'node:stream';
 import { createHash, randomUUID } from 'node:crypto';
 import { basename, join, resolve } from 'node:path';
-import { HttpError } from './http.js';
-import { DATABASE_NAME, METADATA_SCHEMA } from './local-metadata.js';
+import { HttpError } from '../../lib/http.js';
+import { DATABASE_NAME, METADATA_SCHEMA } from './local-store.js';
 
 export const ARCHIVE_MANIFEST =
   'https://raw.githubusercontent.com/bangumi/Archive/master/aux/latest.json';

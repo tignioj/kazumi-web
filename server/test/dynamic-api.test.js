@@ -6,8 +6,8 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../index.js';
-import { createHttpClient } from '../http.js';
-import { BrowserResolver } from '../browser-resolver.js';
+import { createHttpClient } from '../lib/http.js';
+import { BrowserResolver } from '../modules/playback/browser-resolver.js';
 
 async function listen(server) {
   server.listen(0, '127.0.0.1');

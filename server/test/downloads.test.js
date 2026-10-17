@@ -8,8 +8,8 @@ import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { gunzipSync } from 'node:zlib';
 import { createApp } from '../index.js';
-import { createHttpClient } from '../http.js';
-import { tarHeader } from '../download-archive.js';
+import { createHttpClient } from '../lib/http.js';
+import { tarHeader } from '../modules/downloads/archive.js';
 
 const movie = Buffer.from('0123456789abcdefghijklmnopqrstuvwxyz');
 const hlsAsset = Buffer.from('INITseg1seg2');

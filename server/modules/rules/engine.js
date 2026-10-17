@@ -1,7 +1,11 @@
 import { JSDOM } from 'jsdom';
 import { JSONPath } from 'jsonpath-plus';
-import { HttpError, checkedUrl, readLimited } from './http.js';
-import { hasChallenge, inspectChallengeDocument, verificationRequired } from './challenge.js';
+import { HttpError, checkedUrl, readLimited } from '../../lib/http.js';
+import {
+  hasChallenge,
+  inspectChallengeDocument,
+  verificationRequired,
+} from '../verification/challenge.js';
 
 const scalar = (value) => (value == null ? '' : String(value).trim());
 export function absoluteUrl(value, base) {

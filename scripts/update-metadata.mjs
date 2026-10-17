@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
-import { createHttpClient } from '../server/http.js';
-import { LocalMetadataStore } from '../server/local-metadata.js';
-import { ArchiveManager } from '../server/archive-manager.js';
+import { createHttpClient } from '../server/lib/http.js';
+import { LocalMetadataStore } from '../server/modules/metadata/local-store.js';
+import { ArchiveManager } from '../server/modules/metadata/archive-manager.js';
 
 const args = process.argv.slice(2);
 const options = {};
