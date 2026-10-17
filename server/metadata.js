@@ -86,12 +86,14 @@ export class MetadataService {
     {
       apiUrl = process.env.BANGUMI_API_URL || 'https://api.bgm.tv',
       nextUrl = process.env.BANGUMI_NEXT_URL || 'https://next.bgm.tv',
+      local = null,
     } = {},
   ) {
     this.http = http;
     this.apiUrl = apiUrl.replace(/\/$/, '');
     this.nextUrl = nextUrl.replace(/\/$/, '');
     this.cache = new Map();
+    this.local = local;
   }
   async cached(key, action, ttl = 5 * 60000) {
     const hit = this.cache.get(key);
@@ -111,6 +113,7 @@ export class MetadataService {
     });
   }
   async search(keyword, { sort = 'match', page = 1, tags = [], airDate = [] } = {}) {
+    if (this.local) return this.local.search(keyword, { sort, page, tags, airDate });
     return this.cached(
       `search:${JSON.stringify([keyword, sort, page, tags, airDate])}`,
       async () => {
@@ -145,6 +148,9 @@ export class MetadataService {
         items: (data.data || []).map(normalizeSubject),
         total: Number(data.total || (data.data || []).length),
       };
+    }).catch((error) => {
+      if (this.local) return this.local.search('', { sort: 'heat', page });
+      throw error;
     });
   }
   async calendar() {
@@ -168,6 +174,7 @@ export class MetadataService {
     });
   }
   async subject(id) {
+    if (this.local) return this.local.subject(id);
     if (!/^\d+$/.test(String(id))) throw new HttpError('条目 ID 无效');
     return this.cached(`subject:${id}`, async () => {
       const data = await this.get(`${this.apiUrl}/v0/subjects/${id}`);

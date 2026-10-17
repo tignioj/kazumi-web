@@ -63,11 +63,19 @@ async function imageBytes(response) {
 }
 
 export class ImageCache {
-  constructor({ directory, http, maxBytes = 256 * 1024 ** 2, ttl = CACHE_TTL, now = Date.now }) {
+  constructor({
+    directory,
+    http,
+    maxBytes = 256 * 1024 ** 2,
+    ttl = CACHE_TTL,
+    now = Date.now,
+    resolveUrl,
+  }) {
     if (!Number.isSafeInteger(maxBytes) || maxBytes < 0)
       throw new Error('IMAGE_CACHE_MAX_BYTES 必须为非负安全整数');
     this.directory = directory;
     this.http = http;
+    this.resolveUrl = resolveUrl;
     this.maxBytes = maxBytes;
     this.ttl = ttl;
     this.now = now;
@@ -132,10 +140,13 @@ export class ImageCache {
   }
 
   async download(url, key) {
-    const result = await this.http.request(url, {
+    const signal = AbortSignal.timeout(15000);
+    const target = this.resolveUrl ? await this.resolveUrl(url, signal) : url;
+    validateImageUrl(target);
+    const result = await this.http.request(target, {
       // The HTTP client invokes this before EVERY redirect hop, before opening its socket.
       validateUrl: validateImageUrl,
-      signal: AbortSignal.timeout(15000),
+      signal,
       headers: { accept: 'image/avif,image/webp,image/png,image/jpeg,image/gif' },
     });
     validateImageUrl(result.url);

@@ -36,6 +36,7 @@ COPY --from=ech-build --chown=node:node /usr/local/go/LICENSE ./bin/GO-LICENSE
 # Node bundles its own roots; Go's TLS client needs the system CA bundle.
 COPY --from=ech-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --chown=node:node scripts/check-ech.mjs ./scripts/check-ech.mjs
+COPY --chown=node:node scripts/update-metadata.mjs ./scripts/update-metadata.mjs
 RUN mkdir -p /app/data && chown node:node /app/data
 USER node
 EXPOSE 3000

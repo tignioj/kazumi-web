@@ -1584,6 +1584,23 @@ img {
   flex-direction: column;
   gap: 22px;
 }
+
+.metadata-state {
+  margin: 0 0 12px;
+}
+.metadata-version {
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+}
+.metadata-progress {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+}
+.metadata-progress progress {
+  width: 100%;
+  accent-color: var(--accent);
+}
 .settings-card {
   padding: 25px 28px;
   background: var(--surface);

@@ -14,6 +14,7 @@ const child = spawn(process.execPath, ['server/index.js'], {
     PORT: String(process.env.E2E_PORT || 4173),
     DATA_DIR: directory,
     NODE_ENV: 'test',
+    METADATA_MODE: 'remote',
     ALLOW_PRIVATE_NETWORK: 'true',
     BANGUMI_API_URL: fixtureUrl,
     BANGUMI_NEXT_URL: fixtureUrl,

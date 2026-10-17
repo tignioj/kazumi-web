@@ -70,6 +70,26 @@ test('concurrent image misses share one request and persist across restarts', as
   assert.equal((await readdir(directory)).length, 1);
 });
 
+test('archive cover URLs are resolved only on cache misses, including after restart', async (t) => {
+  let lookups = 0;
+  const resolveUrl = async () => {
+    lookups++;
+    return image;
+  };
+  const { cache, calls, directory, http } = await fixture(t, { resolveUrl });
+  const placeholder = 'https://api.bgm.tv/v0/subjects/10440/image?type=large';
+  await cache.get(placeholder);
+  await cache.get(placeholder);
+  const reopened = await new ImageCache({ directory, http, resolveUrl }).init();
+  t.after(() => reopened.close());
+  assert.deepEqual((await reopened.get(placeholder)).bytes, png);
+  assert.equal(lookups, 1);
+  assert.deepEqual(
+    calls.map((call) => call.url),
+    [image],
+  );
+});
+
 test('a full poster grid queues image misses while bounding upstream concurrency', async (t) => {
   const { cache, http } = await fixture(t);
   let active = 0,

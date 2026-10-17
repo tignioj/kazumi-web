@@ -6,6 +6,8 @@ import { randomBytes } from 'node:crypto';
 import { createHttpClient, HttpError } from './http.js';
 import { RuleStore } from './store.js';
 import { WatchStore } from './watch-store.js';
+import { LocalMetadataStore } from './local-metadata.js';
+import { ArchiveManager } from './archive-manager.js';
 import {
   availableRuleUpdates,
   downloadOfficialRule,
@@ -14,6 +16,7 @@ import {
 import { RuleEngine } from './rules.js';
 import { MediaService } from './media.js';
 import { ImageCache } from './images.js';
+import { createCoverResolver } from './cover-resolver.js';
 import { BrowserResolver } from './browser-resolver.js';
 import { MetadataService, categorySearchOptions } from './metadata.js';
 import { VerificationTasks } from './verification.js';
@@ -35,8 +38,15 @@ function pageNumber(value) {
 
 export async function createApp(options = {}) {
   const http = options.httpClient || createHttpClient();
-  const metadata = options.metadata || new MetadataService(http);
   const dataDir = options.dataDir || process.env.DATA_DIR || resolve(directory, '../data');
+  const localMetadata =
+    !options.metadata && process.env.METADATA_MODE !== 'remote'
+      ? await new LocalMetadataStore(resolve(dataDir, 'metadata')).init()
+      : null;
+  const archive = localMetadata
+    ? new ArchiveManager({ store: localMetadata, http, ...options.archiveOptions })
+    : null;
+  const metadata = options.metadata || new MetadataService(http, { local: localMetadata });
   const initialRules =
     options.seedRules ??
     (await Promise.all(
@@ -49,6 +59,7 @@ export async function createApp(options = {}) {
   const images = await new ImageCache({
     directory: resolve(dataDir, 'images'),
     http,
+    resolveUrl: createCoverResolver(http),
     maxBytes: Number(process.env.IMAGE_CACHE_MAX_BYTES ?? 256 * 1024 ** 2),
   }).init();
   const browserResolver =
@@ -218,6 +229,14 @@ export async function createApp(options = {}) {
     if (!['rank', 'trending'].includes(sort)) throw new HttpError('排序参数无效');
     res.json(await metadata.catalog(sort, pageNumber(req.query.page)));
   });
+  app.get('/api/metadata/status', async (req, res) =>
+    res.json(archive ? await archive.status() : { mode: 'remote', ready: true }),
+  );
+  app.post('/api/metadata/update', async (req, res) => {
+    if (!archive) throw new HttpError('当前使用远程资料模式', 409);
+    void archive.update().catch((error) => console.warn('[metadata]', error.message));
+    res.status(202).json(await archive.status());
+  });
   app.get('/api/categories', async (req, res) => {
     res.json(
       await metadata.search('', {
@@ -381,7 +400,11 @@ export async function createApp(options = {}) {
     store,
     watchStore,
     downloads,
+    archive,
+    localMetadata,
     async close() {
+      await archive?.close();
+      localMetadata?.close();
       verification.close();
       await watchStore.pending;
       await downloads.close();
@@ -394,12 +417,13 @@ export async function createApp(options = {}) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  const { app, close } = await createApp();
+  const { app, close, archive } = await createApp();
   const port = Number(process.env.PORT || 3000);
   const host = process.env.HOST || '0.0.0.0';
-  const server = app.listen(port, host, () =>
-    console.log(`Kazumi Web listening on http://${host}:${port}`),
-  );
+  const server = app.listen(port, host, () => {
+    console.log(`Kazumi Web listening on http://${host}:${port}`);
+    archive?.start();
+  });
   function shutdown() {
     const timer = setTimeout(() => process.exit(1), 10000).unref();
     server.close(async () => {
