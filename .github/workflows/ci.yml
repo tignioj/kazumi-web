@@ -12,11 +12,18 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+      - run: npm run build:ech
+      - run: go test ./...
+        working-directory: native/ech
       - run: npx playwright install --with-deps chromium
       - run: npm run check
       - run: npm run test:e2e
       - run: docker compose config --quiet
       - run: docker build -t kazumi-web:test .
+      - run: docker run --rm --read-only kazumi-web:test test -s /etc/ssl/certs/ca-certificates.crt
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

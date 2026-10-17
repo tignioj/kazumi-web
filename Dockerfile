@@ -1,4 +1,9 @@
 # syntax=docker/dockerfile:1
+FROM golang:1.26-bookworm AS ech-build
+WORKDIR /build
+COPY native/ech/ ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/kazumi-ech .
+
 FROM node:24-bookworm-slim AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -26,6 +31,11 @@ COPY --from=build --chown=node:node /app/dist ./dist
 COPY --chown=node:node package.json LICENSE ./
 COPY --chown=node:node server ./server
 COPY --chown=node:node shared ./shared
+COPY --from=ech-build --chown=node:node /out/kazumi-ech ./bin/kazumi-ech
+COPY --from=ech-build --chown=node:node /usr/local/go/LICENSE ./bin/GO-LICENSE
+# Node bundles its own roots; Go's TLS client needs the system CA bundle.
+COPY --from=ech-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --chown=node:node scripts/check-ech.mjs ./scripts/check-ech.mjs
 RUN mkdir -p /app/data && chown node:node /app/data
 USER node
 EXPOSE 3000

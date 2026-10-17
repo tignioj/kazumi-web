@@ -1,6 +1,7 @@
 import dns from 'node:dns';
 import { Agent, fetch } from 'undici';
 import ipaddr from 'ipaddr.js';
+import { createEchTransport, isEchTarget } from './ech.js';
 
 export class HttpError extends Error {
   constructor(message, status = 400) {
@@ -65,6 +66,24 @@ function safeLookup(allowPrivate, resolver) {
   };
 }
 
+async function queryDnsOverHttps(endpoint, dispatcher, hostname, type) {
+  const url = checkedUrl(endpoint);
+  if (url.protocol !== 'https:') throw new HttpError('DNS_OVER_HTTPS_URL 必须使用 HTTPS');
+  url.searchParams.set('name', hostname);
+  url.searchParams.set('type', type);
+  const response = await fetch(url, {
+    dispatcher,
+    headers: { accept: 'application/dns-json' },
+    redirect: 'error',
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new HttpError('安全 DNS 解析服务不可用', 502);
+  }
+  return JSON.parse(await readLimited(response, 65536));
+}
+
 function dnsOverHttps(endpoint, dispatcher) {
   const base = checkedUrl(endpoint);
   if (base.protocol !== 'https:') throw new HttpError('DNS_OVER_HTTPS_URL 必须使用 HTTPS');
@@ -76,20 +95,7 @@ function dnsOverHttps(endpoint, dispatcher) {
     let addresses = [],
       ttl = 60;
     for (const type of family === 6 ? ['AAAA'] : ['A', 'AAAA']) {
-      const url = new URL(base);
-      url.searchParams.set('name', hostname);
-      url.searchParams.set('type', type);
-      const response = await fetch(url, {
-        dispatcher,
-        headers: { accept: 'application/dns-json' },
-        redirect: 'error',
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!response.ok) {
-        await response.body?.cancel();
-        throw new HttpError('安全 DNS 解析服务不可用', 502);
-      }
-      const data = JSON.parse(await readLimited(response, 65536));
+      const data = await queryDnsOverHttps(base, dispatcher, hostname, type);
       const answers = (data.Answer || []).filter((answer) => [1, 28].includes(answer.type));
       addresses = answers.map((answer) => ({
         address: answer.data,
@@ -139,6 +145,10 @@ export function createHttpClient({
   allowPrivate = process.env.ALLOW_PRIVATE_NETWORK === 'true',
   timeout = 20000,
   dnsOverHttpsUrl = process.env.DNS_OVER_HTTPS_URL,
+  bangumiEch = process.env.BANGUMI_ECH === 'true',
+  echDohUrl = process.env.ECH_DOH_URL || 'https://1.1.1.1/dns-query',
+  echHelperPath = process.env.ECH_HELPER_PATH,
+  echTransport,
 } = {}) {
   const dnsLookup = createSafeLookup({ allowPrivate, dnsOverHttpsUrl });
   const dispatcher = new Agent({
@@ -146,6 +156,19 @@ export function createHttpClient({
     headersTimeout: timeout,
     bodyTimeout: 60000,
   });
+  const echLookup = bangumiEch ? createSafeLookup({ dnsOverHttpsUrl: echDohUrl }) : null;
+  const echBootstrap = bangumiEch
+    ? new Agent({ connect: { lookup: safeLookup(false), timeout: 8000 } })
+    : null;
+  const ech = bangumiEch
+    ? echTransport ||
+      createEchTransport({
+        lookup: echLookup.lookup,
+        binary: echHelperPath,
+        queryConfig: () =>
+          queryDnsOverHttps(echDohUrl, echBootstrap, 'crypto.cloudflare.com', 'HTTPS'),
+      })
+    : null;
   async function request(input, options = {}) {
     let url = checkedUrl(input, { allowPrivate });
     let method = options.method || 'GET';
@@ -160,23 +183,34 @@ export function createHttpClient({
       if (options.headersForUrl) headers = cleanHeaders(await options.headersForUrl(url.href));
       if (dropContentType) delete headers['content-type'];
       let response;
+      const usingEch = !!ech && isEchTarget(url);
       try {
-        response = await fetch(url, {
-          dispatcher,
-          method,
-          body,
-          headers,
-          redirect: 'manual',
-          signal: options.signal || AbortSignal.timeout(options.timeout || timeout),
-        });
+        response = await (usingEch
+          ? ech.request(url, {
+              method,
+              body,
+              headers,
+              timeout: options.timeout || timeout,
+              signal: options.signal || AbortSignal.timeout(options.timeout || timeout),
+            })
+          : fetch(url, {
+              dispatcher,
+              method,
+              body,
+              headers,
+              redirect: 'manual',
+              signal: options.signal || AbortSignal.timeout(options.timeout || timeout),
+            }));
       } catch (error) {
         if (error.cause instanceof HttpError) throw error.cause;
-        throw new HttpError(
+        const failure = new HttpError(
           error.name === 'TimeoutError'
             ? '上游请求超时'
-            : `无法连接上游站点: ${error.cause?.code || error.message}`,
+            : `${usingEch ? 'ECH 连接失败' : '无法连接上游站点'}: ${error.cause?.code || error.message}`,
           502,
         );
+        if (usingEch) failure.echAccepted = error.echAccepted === true;
+        throw failure;
       }
       if ([301, 302, 303, 307, 308].includes(response.status) && response.headers.get('location')) {
         await response.body?.cancel();
@@ -200,7 +234,7 @@ export function createHttpClient({
         url = next;
         continue;
       }
-      return { response, url: url.href };
+      return { response, url: url.href, ...(usingEch && { echAccepted: true }) };
     }
     throw new HttpError('上游重定向次数过多', 502);
   }
@@ -228,7 +262,15 @@ export function createHttpClient({
     request,
     text,
     json,
-    close: () => Promise.all([dispatcher.close(), dnsLookup.close()]),
+    close: () => {
+      ech?.close();
+      return Promise.all([
+        dispatcher.close(),
+        dnsLookup.close(),
+        echLookup?.close(),
+        echBootstrap?.close(),
+      ]);
+    },
     allowPrivate,
   };
 }

@@ -59,7 +59,7 @@ docker compose down                  # 停止服务，保留规则数据
 
 这是独立的 Web 移植实现。动态解析可以运行网页 JavaScript 并捕获普通 MP4/HLS 请求，但不保证所有源可用。DRM、私有分片协议、DASH 和浏览器不支持的编码尚未处理，也不执行转码。播放失败时可换源，或使用页面提供的原站链接。
 
-Bangumi 图片通过同源 `/api/image` 加载，服务端缓存在 `DATA_DIR/images`，有效期为 24 小时，默认最多占用 256 MiB，超出后优先淘汰最近最少使用的图片。缓存跨重启保留，同时支持浏览器缓存和 ETag；单张图片最多 5 MiB。仅代理 Bangumi 图片域名和图片接口，逐跳检查重定向并校验公网地址、响应类型及图片文件标记，不转发浏览器 Cookie。导入数据中的其他图片地址仍按原地址加载。ECH 暂未接入，图片可达性取决于部署服务器的网络。
+Bangumi 图片通过同源 `/api/image` 加载，服务端缓存在 `DATA_DIR/images`，有效期为 24 小时，默认最多占用 256 MiB，超出后优先淘汰最近最少使用的图片。缓存跨重启保留，同时支持浏览器缓存和 ETag；单张图片最多 5 MiB。仅代理 Bangumi 图片域名和图片接口，逐跳检查重定向并校验公网地址、响应类型及图片文件标记，不转发浏览器 Cookie。导入数据中的其他图片地址仍按原地址加载。可选的 Bangumi ECH 通道见下文，图片可达性仍取决于部署服务器的网络和上游状态。
 
 播放器在「播放信息与诊断」中显示编码、浏览器支持情况和实际加载结果。HLS 扩展播放使用清单及分片编码信息，原生 HLS 检查主清单，普通视频额外读取最多 256 KiB 前缀以识别 MP4 编码；检查并行执行，不阻塞播放。未提供编码、MP4 元数据位于文件尾部或无法准确识别编码配置时会显示未确定，最终以实际加载为准。错误提示区分访问拒绝、地址失效、资源缺失、网络超时、编码不支持、内容解析、解密和解码失败；编码检查不会增加浏览器解码能力，也不进行转码。
 
@@ -137,25 +137,34 @@ npm run test:e2e
 
 ### 服务端环境变量
 
-| 变量                           | 默认值                | 用途                                                                                                                |
-| ------------------------------ | --------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `HOST`                         | `0.0.0.0`             | Node 监听地址                                                                                                       |
-| `PORT`                         | `3000`                | Node 监听端口；Compose 中 `.env` 的 PORT 只修改宿主机映射                                                           |
-| `DATA_DIR`                     | `./data`              | 规则和视频缓存数据目录，容器为 `/app/data`                                                                          |
-| `VIDEO_CACHE_MAX_BYTES`        | `10737418240`         | 视频缓存总容量上限（字节，默认 10 GiB），Compose 支持从 `.env` 传入                                                 |
-| `IMAGE_CACHE_MAX_BYTES`        | `268435456`           | 图片磁盘缓存上限（字节，默认 256 MiB），设为 `0` 关闭磁盘缓存；Compose 支持从 `.env` 传入                           |
-| `BANGUMI_API_URL`              | `https://api.bgm.tv`  | Bangumi API 基址                                                                                                    |
-| `BANGUMI_NEXT_URL`             | `https://next.bgm.tv` | Bangumi Next API 基址                                                                                               |
-| `RULES_REPOSITORY`             | 上游 KazumiRules 仓库 | 规则目录和规则文件基址                                                                                              |
-| `ALLOW_PRIVATE_NETWORK`        | `false`               | 仅可信内网源/隔离测试环境可开启；Compose 默认关闭                                                                   |
-| `DNS_OVER_HTTPS_URL`           | 空                    | 可选的 DNS JSON 查询端点，例如 `https://1.1.1.1/dns-query`；仍校验并绑定解析后的公网 IP，Compose 支持从 `.env` 传入 |
-| `DYNAMIC_RESOLVER`             | `true`                | 是否启用服务端浏览器解析；设为 `false` 时保留快速解析与原有 iframe 回退                                             |
-| `DYNAMIC_RESOLVER_TIMEOUT_MS`  | `20000`               | 单次浏览器解析超时（毫秒）                                                                                          |
-| `DYNAMIC_RESOLVER_CONCURRENCY` | `2`                   | 同时运行的浏览器解析任务上限                                                                                        |
+| 变量                           | 默认值                      | 用途                                                                                                                |
+| ------------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `HOST`                         | `0.0.0.0`                   | Node 监听地址                                                                                                       |
+| `PORT`                         | `3000`                      | Node 监听端口；Compose 中 `.env` 的 PORT 只修改宿主机映射                                                           |
+| `DATA_DIR`                     | `./data`                    | 规则和视频缓存数据目录，容器为 `/app/data`                                                                          |
+| `VIDEO_CACHE_MAX_BYTES`        | `10737418240`               | 视频缓存总容量上限（字节，默认 10 GiB），Compose 支持从 `.env` 传入                                                 |
+| `IMAGE_CACHE_MAX_BYTES`        | `268435456`                 | 图片磁盘缓存上限（字节，默认 256 MiB），设为 `0` 关闭磁盘缓存；Compose 支持从 `.env` 传入                           |
+| `BANGUMI_API_URL`              | `https://api.bgm.tv`        | Bangumi API 基址                                                                                                    |
+| `BANGUMI_NEXT_URL`             | `https://next.bgm.tv`       | Bangumi Next API 基址                                                                                               |
+| `RULES_REPOSITORY`             | 上游 KazumiRules 仓库       | 规则目录和规则文件基址                                                                                              |
+| `ALLOW_PRIVATE_NETWORK`        | `false`                     | 仅可信内网源/隔离测试环境可开启；Compose 默认关闭                                                                   |
+| `DNS_OVER_HTTPS_URL`           | 空                          | 可选的 DNS JSON 查询端点，例如 `https://1.1.1.1/dns-query`；仍校验并绑定解析后的公网 IP，Compose 支持从 `.env` 传入 |
+| `BANGUMI_ECH`                  | `false`                     | 为 Bangumi API 和图片启用 ECH；Docker 已内置辅助程序，Compose 支持从 `.env` 传入                                    |
+| `ECH_DOH_URL`                  | `https://1.1.1.1/dns-query` | ECH 专用 DNS JSON 端点，用于查询公网 IP 和 HTTPS 记录中的 ECH 配置                                                  |
+| `ECH_HELPER_PATH`              | 项目内 `bin/kazumi-ech`     | 本地开发可指定预先构建的 ECH 程序路径，Windows 使用 `.exe`                                                          |
+| `DYNAMIC_RESOLVER`             | `true`                      | 是否启用服务端浏览器解析；设为 `false` 时保留快速解析与原有 iframe 回退                                             |
+| `DYNAMIC_RESOLVER_TIMEOUT_MS`  | `20000`                     | 单次浏览器解析超时（毫秒）                                                                                          |
+| `DYNAMIC_RESOLVER_CONCURRENCY` | `2`                         | 同时运行的浏览器解析任务上限                                                                                        |
 
 高级环境变量需要添加到 `compose.yaml` 的 `environment`，仅写入 `.env` 不会自动传入容器。
 
 若开启了 TUN/Fake-IP DNS，域名可能解析为 `198.18.x.x`，页面会提示「域名解析到私有或保留网络地址」。在 `.env` 设置 `DNS_OVER_HTTPS_URL=https://1.1.1.1/dns-query` 后重新运行 `docker compose up -d`，不必关闭内网访问保护。DNS 查询将由所配置的解析服务处理。
+
+ECH 默认关闭。需要试用时，在部署用的 `.env` 中设置 `BANGUMI_ECH=true`，然后运行 `docker compose up -d --build`。本地开发先运行 `npm run build:ech`（需要 Go 1.23 或更新版本），再用 `BANGUMI_ECH=true npm run dev` 启动；开发模式的设置仍通过进程环境变量传入。
+
+ECH 辅助程序使用 Go 标准库 TLS，只有 `api.bgm.tv`、`next.bgm.tv`、`lain.bgm.tv` 的 HTTPS 默认端口请求会进入此通道。和原版一样，从 `crypto.cloudflare.com` 的 HTTPS DNS 记录取得 Cloudflare 的共享 ECH 配置；目标地址通过 DoH 解析、校验后绑定到连接，不关闭证书验证。每次响应必须确认 ECH 被服务端接受；失败时报告错误，不自动退回普通 TLS。重定向仍交给 Node 逐跳校验和移除跨域凭据。请求体上限为 1 MiB，响应上限为 8 MiB，不处理视频流。
+
+运行 `npm run check:ech` 可对同一组默认分类参数比较直连与 ECH，输出 HTTP 状态、耗时、条目数量和 `echAccepted`；本地会读取部署用的 `.env`。Docker 中可运行 `docker compose exec kazumi npm run check:ech`。这是实时网络诊断，不属于离线测试；ECH 分类请求失败时退出码为 1。ECH 成功协商不代表上游一定及时响应，分类超时仍可能出现在握手完成之后。
 
 ## 常见问题
 

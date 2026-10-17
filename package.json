@@ -13,6 +13,8 @@
     "dev:client": "vite --host 0.0.0.0",
     "dev:server": "node --watch server/index.js",
     "build": "vite build",
+    "build:ech": "node scripts/build-ech.mjs",
+    "check:ech": "node --env-file-if-exists=.env scripts/check-ech.mjs",
     "start": "node server/index.js",
     "test": "node --test server/test/*.test.js",
     "test:e2e": "playwright test",
