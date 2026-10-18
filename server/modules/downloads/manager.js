@@ -749,7 +749,7 @@ export class DownloadManager {
         const result = await this.request(job, url);
         const { bytes } = await this.consume(job, result, { kind, maxBytes: MAX_MANIFEST_BYTES });
         const original = bytes.toString('utf8').replace(/^\uFEFF/, '');
-        const raw = job.source.adBlocker ? filterHlsAds(original) : original;
+        const raw = job.source.adBlocker ? filterHlsAds(original, result.url) : original;
         identities.push([url, raw]);
         if (!raw.trimStart().startsWith('#EXTM3U'))
           throw new HttpError('HLS 播放列表格式无效', 422);

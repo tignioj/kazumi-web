@@ -1,7 +1,8 @@
-// Port of Kazumi's M3u8AdFilter: group segments by DISCONTINUITY and
-// compare each group's total duration with the longest content group.
+// Kazumi's download duration heuristic supplies candidates, not proof of ads:
+// DISCONTINUITY also marks legitimate timestamp/encoding changes in content.
+// Keep short groups sharing a media directory with the longer content groups.
 // Keep encryption and byte ranges tied to the original segment positions.
-export function filterHlsAds(text) {
+export function filterHlsAds(text, playlistUrl = 'https://playlist.invalid/') {
   if (!text.trimStart().startsWith('#EXTM3U')) return text;
   if (/#EXT-X-(?:STREAM-INF|MEDIA|PART|PRELOAD-HINT|SKIP|DEFINE):/i.test(text)) return text;
   const header = [],
@@ -57,6 +58,13 @@ export function filterHlsAds(text) {
     else if (line.startsWith('#')) tags.push(line);
     else {
       if (duration === null) return text;
+      let directory;
+      try {
+        // Normalize relative paths and ignore per-segment query signatures.
+        directory = new URL('.', new URL(line, playlistUrl)).href;
+      } catch {
+        return text;
+      }
       let byteRange;
       if (range) {
         if (!range[2] && previousRange?.uri !== line) return text;
@@ -64,7 +72,7 @@ export function filterHlsAds(text) {
         byteRange = `${range[1]}@${start}`;
         previousRange = { uri: line, end: start + BigInt(range[1]) };
       } else previousRange = null;
-      segments.push({ uri: line, tags, duration, group, sequence, key, map, byteRange });
+      segments.push({ uri: line, tags, duration, group, sequence, key, map, byteRange, directory });
       durations.set(group, (durations.get(group) || 0) + duration);
       sequence++;
       tags = [];
@@ -86,6 +94,12 @@ export function filterHlsAds(text) {
       );
     }),
   );
+  const contentDirectories = new Set(
+    segments.filter((segment) => !ads.has(segment.group)).map((segment) => segment.directory),
+  );
+  for (const segment of segments) {
+    if (contentDirectories.has(segment.directory)) ads.delete(segment.group);
+  }
   const kept = segments.filter((segment) => !ads.has(segment.group));
   if (kept.length === segments.length || !kept.length) return text;
   const first = kept[0];

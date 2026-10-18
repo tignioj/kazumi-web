@@ -15,6 +15,10 @@ const movie = Buffer.from('0123456789abcdefghijklmnopqrstuvwxyz');
 const rangeMovie = Buffer.alloc(64 * 1024).map((_, i) => i % 251);
 const hlsAsset = Buffer.from('INITseg1seg2');
 const hlsKey = Buffer.from('0123456789abcdef');
+const discontinuityPlaylist = await readFile(
+  new URL('./fixtures/dm84-discontinuities.m3u8', import.meta.url),
+  'utf8',
+);
 const imageSegment = Buffer.concat([
   Buffer.from('89504e470d0a1a0a', 'hex'),
   Buffer.alloc(105),
@@ -237,11 +241,26 @@ async function fixture(t, { downloadOptions, session = false } = {}) {
       res.setHeader('content-type', 'application/vnd.apple.mpegurl');
       return res.end('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=5000\nads-variant.m3u8\n');
     }
+    if (path === '/discontinuities.m3u8') {
+      res.setHeader('content-type', 'application/vnd.apple.mpegurl');
+      // Mix absolute and relative URLs for the same content directory. Both
+      // playback and caching must resolve them against the upstream URL.
+      return res.end(
+        discontinuityPlaylist.replace(
+          /\/content\/segment-[0-4]\.ts/g,
+          (uri) => `http://${req.headers.host}${uri}`,
+        ),
+      );
+    }
+    if (/^\/content\/segment-\d+\.ts$/.test(path)) {
+      res.setHeader('content-type', 'video/mp2t');
+      return res.end('fixture segment');
+    }
     if (path === '/ads-variant.m3u8') {
       res.setHeader('content-type', 'application/vnd.apple.mpegurl');
       return res.end(
         '#EXTM3U\n#EXT-X-TARGETDURATION:100\n#EXT-X-MEDIA-SEQUENCE:50\n' +
-          '#EXTINF:5,\nmissing-ad.ts\n#EXT-X-DISCONTINUITY\n' +
+          '#EXTINF:5,\nads/missing-ad.ts\n#EXT-X-DISCONTINUITY\n' +
           '#EXT-X-KEY:METHOD=AES-128,URI="key",IV=0x00000000000000000000000000000001\n' +
           '#EXT-X-MAP:URI="asset",BYTERANGE="4@0"\n#EXT-X-KEY:METHOD=AES-128,URI="key"\n' +
           '#EXTINF:100,\nasset\n#EXT-X-ENDLIST\n',
@@ -734,7 +753,7 @@ test('rule adBlocker follows nested signed playlists into playback, single cache
   assert.equal(batch.status, 202, JSON.stringify(batch.data));
   assert.equal((await f.finished(batch.data.items[0].id)).status, 'complete');
   assert.equal(
-    f.received.some(({ path }) => path === '/missing-ad.ts'),
+    f.received.some(({ path }) => path === '/ads/missing-ad.ts'),
     false,
     'removed ads are never requested or cached',
   );
@@ -751,6 +770,36 @@ test('rule adBlocker follows nested signed playlists into playback, single cache
   const rawMaster = await (await f.fetch(unfiltered.url)).text();
   const rawChild = rawMaster.split('\n').find((line) => line && !line.startsWith('#'));
   assert.match(await (await f.fetch(rawChild)).text(), /#EXTINF:5,/);
+});
+
+test('adBlocker preserves the full DM84 timeline through playback, single caches and batch caches', async (t) => {
+  const f = await fixture(t);
+  assert.equal(
+    (
+      await f.json(
+        `/api/rules/${encodeURIComponent(f.rule.name)}`,
+        { ...f.rule, adBlocker: true },
+        'PUT',
+      )
+    ).status,
+    200,
+  );
+  const timeline = (text) => text.split('\n').filter((line) => line.startsWith('#'));
+  const expected = timeline(discontinuityPlaylist);
+  const resolved = await f.resolve('/discontinuities.m3u8');
+  assert.deepEqual(timeline(await (await f.fetch(resolved.url)).text()), expected);
+  const { job } = await f.submit('/discontinuities.m3u8');
+  const batch = await f.json('/api/downloads/batch', {
+    ruleName: f.rule.name,
+    episodes: [{ name: 'Batch', url: `${f.upstreamUrl}/discontinuities.m3u8?batch` }],
+  });
+  assert.equal(batch.status, 202, JSON.stringify(batch.data));
+  for (const id of [job.id, batch.data.items[0].id]) {
+    const completed = await f.finished(id);
+    assert.equal(completed.status, 'complete', completed.error);
+    assert.equal(completed.completedFiles, 360, 'all 359 segments and the manifest are cached');
+    assert.deepEqual(timeline(await (await f.fetch(completed.playbackUrl)).text()), expected);
+  }
 });
 
 test('HLS cache preserves image-prefixed segments served with image MIME types for offline playback and export', async (t) => {

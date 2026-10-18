@@ -192,7 +192,7 @@ export class MediaService {
       if (isPlaylist) {
         const raw = await readLimited(response, 2 * 1024 * 1024);
         const playlist = rewritePlaylist(
-          data.adBlocker ? filterHlsAds(raw) : raw,
+          data.adBlocker ? filterHlsAds(raw, url) : raw,
           url,
           (target, kind) =>
             this.proxyUrl(target, data.headers, data.expires, kind, data.sessionId, data.adBlocker),

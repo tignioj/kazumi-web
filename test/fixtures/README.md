@@ -27,6 +27,12 @@ The runner at `test/e2e/run-app.mjs` uses a disposable data directory and enable
 private upstream addresses only in its child process so the application can reach
 these loopback fixtures.
 
+`../server/fixtures/dm84-discontinuities.m3u8` preserves the segment durations and
+discontinuity layout observed on DM84's episode 1 of 孤独摇滚！. All media URLs
+are replaced with synthetic paths; it contains no video or upstream credentials.
+It covers the regression where duration-based ad filtering reduced 359 segments
+(1439.087 seconds) to 110 segments (436.356 seconds).
+
 `network/` contains a self-signed localhost certificate and its test-only private
 key. The proxy integration tests trust this certificate inside their isolated
 test process to verify HTTPS proxies and TLS to the destination through a tunnel.
