@@ -24,7 +24,8 @@
     "test:e2e": "playwright test",
     "check": "npm test && npm run build",
     "smoke": "node scripts/smoke.mjs",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "build:hls": "node scripts/build-hls.mjs"
   },
   "dependencies": {
     "artplayer": "5.4.0",
@@ -32,6 +33,7 @@
     "hls.js": "1.7.3",
     "ipaddr.js": "2.5.0",
     "lucide-react": "1.51.0",
+    "mp4box": "2.4.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "socks": "2.8.10",

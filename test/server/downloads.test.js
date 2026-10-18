@@ -266,6 +266,10 @@ async function fixture(t, { downloadOptions, session = false } = {}) {
           '#EXTINF:100,\nasset\n#EXT-X-ENDLIST\n',
       );
     }
+    if (path === '/ads/missing-ad.ts') {
+      res.setHeader('content-type', 'video/mp2t');
+      return res.end('ad fixture segment');
+    }
     if (path === '/variant') {
       res.setHeader('content-type', 'application/octet-stream');
       return res.end(
@@ -724,7 +728,7 @@ test('HLS cache includes extensionless playlists, alternate audio, keys, maps an
   assert.equal(f.received.length, beforeOffline);
 });
 
-test('rule adBlocker follows nested signed playlists into playback, single caches and batch caches', async (t) => {
+test('native ad filtering keeps source playlists intact and persists across single and batch caches', async (t) => {
   const f = await fixture(t);
   assert.equal(
     (
@@ -737,15 +741,17 @@ test('rule adBlocker follows nested signed playlists into playback, single cache
     200,
   );
   const resolved = await f.resolve('/ads-master.m3u8');
+  assert.equal(resolved.nativePlayback, true);
   const master = await (await f.fetch(resolved.url)).text();
   const child = master.split('\n').find((line) => line && !line.startsWith('#'));
   const playlist = await (await f.fetch(child)).text();
-  assert.doesNotMatch(playlist, /#EXTINF:5,/);
-  assert.match(playlist, /#EXT-X-MEDIA-SEQUENCE:51/);
-  assert.match(playlist, /IV=0x00000000000000000000000000000033/);
+  assert.match(playlist, /#EXTINF:5,/);
+  assert.match(playlist, /#EXT-X-MEDIA-SEQUENCE:50/);
+  assert.doesNotMatch(playlist, /IV=0x00000000000000000000000000000033/);
   const { job } = await f.submit('/ads-master.m3u8');
   const completed = await f.finished(job.id);
   assert.equal(completed.status, 'complete', completed.error);
+  assert.equal(completed.nativePlayback, true);
   const batch = await f.json('/api/downloads/batch', {
     ruleName: f.rule.name,
     episodes: [{ name: 'Batch', url: `${f.upstreamUrl}/ads-master.m3u8?batch` }],
@@ -754,19 +760,23 @@ test('rule adBlocker follows nested signed playlists into playback, single cache
   assert.equal((await f.finished(batch.data.items[0].id)).status, 'complete');
   assert.equal(
     f.received.some(({ path }) => path === '/ads/missing-ad.ts'),
-    false,
-    'removed ads are never requested or cached',
+    true,
+    'cache original packets so the native filter can make playback decisions',
   );
   const cachedMaster = await (await f.fetch(completed.playbackUrl)).text();
   const cachedChild = cachedMaster.split('\n').find((line) => line && !line.startsWith('#'));
   const childPath = new URL(cachedChild, `http://local${completed.playbackUrl}`).pathname;
-  assert.match(await (await f.fetch(childPath)).text(), /IV=0x00000000000000000000000000000033/);
+  assert.match(await (await f.fetch(childPath)).text(), /#EXT-X-MEDIA-SEQUENCE:50/);
+  await f.restart();
+  const restored = await f.resolve('/ads-master.m3u8');
+  assert.equal(restored.nativePlayback, true);
   await f.json(
     `/api/rules/${encodeURIComponent(f.rule.name)}`,
     { ...f.rule, adBlocker: false },
     'PUT',
   );
   const unfiltered = await f.resolve('/ads-master.m3u8?unfiltered');
+  assert.equal(unfiltered.nativePlayback, false);
   const rawMaster = await (await f.fetch(unfiltered.url)).text();
   const rawChild = rawMaster.split('\n').find((line) => line && !line.startsWith('#'));
   assert.match(await (await f.fetch(rawChild)).text(), /#EXTINF:5,/);

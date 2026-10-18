@@ -6,6 +6,8 @@ export function createApiRateLimit() {
     if (
       req.path === '/health' ||
       req.path === '/media' ||
+      req.path === '/native-media/info' ||
+      req.path === '/native-media/stream' ||
       (['GET', 'HEAD'].includes(req.method) && req.path === '/image') ||
       (['GET', 'HEAD'].includes(req.method) &&
         /^\/downloads\/[^/]+\/(?:files\/[^/]+|download)$/.test(req.path))

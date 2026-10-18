@@ -12,6 +12,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: npm run build:hls
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.x'

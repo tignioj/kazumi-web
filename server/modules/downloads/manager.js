@@ -3,7 +3,6 @@ import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'nod
 import { extname, join, resolve } from 'node:path';
 import { checkedUrl, cleanHeaders, HttpError } from '../../lib/http.js';
 import { headersForSession } from '../playback/session-store.js';
-import { filterHlsAds } from '../playback/hls-ad-filter.js';
 import { streamArchive } from './archive.js';
 import { contentLength, checkContent } from './content.js';
 import { fingerprint, parallel } from './transfers.js';
@@ -108,6 +107,7 @@ function publicJob(job) {
     title: job.title,
     episodeName: job.episodeName,
     type: job.type,
+    nativePlayback: job.type === 'hls' && job.adBlocker === true,
     status: job.status,
     bytes: job.bytes,
     totalBytes: job.totalBytes,
@@ -173,6 +173,7 @@ export class DownloadManager {
         image: textField(data.image, '', 8192),
         subjectId: data.subjectId,
         type: data.type,
+        adBlocker: data.adBlocker === true,
         status: data.status,
         bytes: 0,
         totalBytes: null,
@@ -498,7 +499,7 @@ export class DownloadManager {
     };
     delete source.headers.range;
     delete source.headers['if-range'];
-    return { type: verified.kind, source };
+    return { type: verified.kind, source, adBlocker: verified.adBlocker === true };
   }
 
   persist() {
@@ -507,6 +508,7 @@ export class DownloadManager {
         .filter((job) => !job.removed)
         .map((job) => ({
           ...publicJob(job),
+          adBlocker: job.adBlocker === true,
           mainFile: job.mainFile,
           files: job.files.map((file) => ({ ...file })),
           resume: job.resume ? structuredClone(job.resume) : undefined,
@@ -749,7 +751,7 @@ export class DownloadManager {
         const result = await this.request(job, url);
         const { bytes } = await this.consume(job, result, { kind, maxBytes: MAX_MANIFEST_BYTES });
         const original = bytes.toString('utf8').replace(/^\uFEFF/, '');
-        const raw = job.source.adBlocker ? filterHlsAds(original, result.url) : original;
+        const raw = original;
         identities.push([url, raw]);
         if (!raw.trimStart().startsWith('#EXTM3U'))
           throw new HttpError('HLS 播放列表格式无效', 422);

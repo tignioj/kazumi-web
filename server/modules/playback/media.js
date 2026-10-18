@@ -2,7 +2,6 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { HttpError, checkedUrl, readLimited } from '../../lib/http.js';
-import { filterHlsAds } from './hls-ad-filter.js';
 import { headersForSession, MediaSessionStore } from './session-store.js';
 
 export function mediaType(url) {
@@ -141,6 +140,7 @@ export class MediaService {
     }
     return {
       type: result.type,
+      nativePlayback: result.type === 'hls' && rule.adBlocker === true,
       url: this.proxyUrl(
         result.url,
         undefined,
@@ -191,11 +191,8 @@ export class MediaService {
         data.kind === 'hls' || mediaType(url) === 'hls' || /mpegurl/i.test(contentType);
       if (isPlaylist) {
         const raw = await readLimited(response, 2 * 1024 * 1024);
-        const playlist = rewritePlaylist(
-          data.adBlocker ? filterHlsAds(raw, url) : raw,
-          url,
-          (target, kind) =>
-            this.proxyUrl(target, data.headers, data.expires, kind, data.sessionId, data.adBlocker),
+        const playlist = rewritePlaylist(raw, url, (target, kind) =>
+          this.proxyUrl(target, data.headers, data.expires, kind, data.sessionId, data.adBlocker),
         );
         res.type('application/vnd.apple.mpegurl').set('Cache-Control', 'no-store').send(playlist);
         return;

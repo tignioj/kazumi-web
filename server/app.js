@@ -12,6 +12,7 @@ import { ArchiveManager } from './modules/metadata/archive-manager.js';
 import { KazumiCoreClient } from './modules/core/client.js';
 import { createBrowserEgress } from './lib/browser-egress.js';
 import { MediaService } from './modules/playback/media.js';
+import { NativeHlsService, registerNativeHlsRoutes } from './modules/playback/native-hls.js';
 import { ImageCache } from './modules/images/cache.js';
 import { createCoverResolver } from './modules/images/cover-resolver.js';
 import { MetadataService } from './modules/metadata/service.js';
@@ -89,11 +90,13 @@ export async function createApp(options = {}) {
     ...options.downloadOptions,
   }).init();
   const verification = new VerificationTasks(options.verificationOptions);
+  const nativeHls = new NativeHlsService({ media, downloads, ...options.nativeHlsOptions });
   const app = express();
   app.disable('x-powered-by');
   app.use(secureRequests);
   app.use(express.json({ limit: '2mb' }));
   app.use('/api', createApiRateLimit());
+  registerNativeHlsRoutes(app, { nativeHls });
   registerRoutes(app, {
     http: rulesHttp,
     images,
@@ -131,6 +134,7 @@ export async function createApp(options = {}) {
       await images.close();
       await egress?.close();
       media.close?.();
+      nativeHls.close();
       await Promise.all([...clients].map((client) => client.close()));
     },
   };

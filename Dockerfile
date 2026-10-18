@@ -1,4 +1,13 @@
 # syntax=docker/dockerfile:1
+FROM node:24-bookworm-slim AS hls-build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential pkg-config patch ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+COPY native/hls ./native/hls
+COPY scripts/build-hls.mjs ./scripts/build-hls.mjs
+RUN node scripts/build-hls.mjs
+
 FROM golang:1.26-bookworm AS ech-build
 WORKDIR /build
 COPY native/ech/ ./
@@ -29,6 +38,9 @@ COPY --chown=node:node package.json LICENSE ./
 COPY --chown=node:node server ./server
 COPY --chown=node:node shared ./shared
 COPY --from=ech-build --chown=node:node /out/kazumi-ech ./bin/kazumi-ech
+COPY --from=hls-build --chown=node:node /build/bin/ ./bin/
+COPY --chown=node:node native/hls ./native/hls
+COPY --chown=node:node scripts/build-hls.mjs ./scripts/build-hls.mjs
 COPY --from=ech-build --chown=node:node /usr/local/go/LICENSE ./bin/GO-LICENSE
 # Node bundles its own roots; Go's TLS client needs the system CA bundle.
 COPY --from=ech-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt

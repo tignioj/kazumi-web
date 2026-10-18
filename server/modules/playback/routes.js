@@ -12,6 +12,7 @@ export function registerResolveRoute(app, { store, media, downloads, interactive
         originalUrl: source,
         cached: true,
         downloadId: cached.id,
+        nativePlayback: cached.nativePlayback,
       });
     const rule = store.get(ruleName);
     await interactive(req, res, (options) => media.resolve(rule, source, options));

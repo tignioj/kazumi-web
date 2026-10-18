@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import Artplayer from 'artplayer';
 import Hls from 'hls.js';
+import { attachNativePlayback } from './native-playback.js';
 
 // Only application events are adapted here. ArtPlayer owns controls and playback.
 export function WebPlayer({ source, resume = 0, autoplay, onProgress, onEnded, onError }) {
@@ -25,7 +26,13 @@ export function WebPlayer({ source, resume = 0, autoplay, onProgress, onEnded, o
       playsInline: true,
       customType: {
         m3u8(video, url, player) {
-          if (Hls.isSupported()) {
+          if (source.nativePlayback) {
+            const stop = attachNativePlayback(video, url, {
+              resume,
+              onError: (message) => callbacks.current.onError?.(message),
+            });
+            player.on('destroy', stop);
+          } else if (Hls.isSupported()) {
             const hls = new Hls();
             hls.loadSource(url);
             hls.attachMedia(video);
