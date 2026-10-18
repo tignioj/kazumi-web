@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { normalizeWatchData } from '../../shared/watch-data.js';
+import { normalizeLibraryItem, normalizeWatchData } from '../../shared/watch-data.js';
 
 function browserLegacy() {
   let rawLibrary;
@@ -110,8 +110,8 @@ export function useWatchData(request) {
     (subject, status) =>
       mutate(`/library/${subject.id}`, {
         method: status ? 'PUT' : 'DELETE',
-        ...(status ? { body: JSON.stringify({ subject, status }) } : {}),
-        keepalive: true,
+        // A detail response can include hundreds of episodes; save only collection fields.
+        ...(status ? { body: JSON.stringify(normalizeLibraryItem({ subject, status })) } : {}),
       }),
     [mutate],
   );
