@@ -46,6 +46,18 @@
   flex-direction: column;
   gap: 16px;
 }
+.search-progress {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.search-progress .button {
+  margin-left: auto;
+}
 .source-group {
   padding: 20px;
   border: 1px solid var(--line);

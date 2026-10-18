@@ -7,6 +7,7 @@ import {
 } from './updates.js';
 import { createOfficialRulesCatalog } from './catalog.js';
 import { RULE_API_VERSION, ruleCompatibility } from './validation.js';
+import { createRuleSearch } from './search.js';
 
 export function registerRuleRoutes(app, { http, store, engine, interactive }) {
   const { repository, officialRules, officialRule } = createOfficialRulesCatalog(http);
@@ -78,28 +79,14 @@ export function registerRuleRoutes(app, { http, store, engine, interactive }) {
     )
       throw new HttpError('ruleNames 必须是规则名称数组');
     const rules = names
-      ? names.map((name) => store.get(name))
+      ? [...new Set(names)].map((name) => store.get(name))
       : store.list().filter((rule) => rule.enabled !== false);
     if (rules.length > 30) throw new HttpError('一次最多搜索 30 个来源，请选择部分规则');
-    await interactive(req, res, async (options) => {
-      const results = [];
-      // Bound external concurrency to avoid overwhelming small Compose hosts.
-      for (let index = 0; index < rules.length; index += 4) {
-        options.signal.throwIfAborted();
-        results.push(
-          ...(await Promise.all(
-            rules.slice(index, index + 4).map(async (rule) => {
-              try {
-                return { ruleName: rule.name, items: await engine.search(rule, keyword, options) };
-              } catch (error) {
-                options.signal.throwIfAborted();
-                return { ruleName: rule.name, items: [], error: error.message };
-              }
-            }),
-          )),
-        );
-      }
-      return { results };
+    const search = createRuleSearch(engine, rules, keyword);
+    await interactive(req, res, search.run, {
+      stream:
+        req.accepts('application/x-ndjson') && req.get('accept')?.includes('application/x-ndjson'),
+      onTimeout: search.onTimeout,
     });
   });
   app.post('/api/rules/chapters', async (req, res) => {

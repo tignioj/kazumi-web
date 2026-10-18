@@ -12,7 +12,7 @@ export class VerificationTasks {
     this.closed = false;
   }
 
-  async start(owner, run, { signal } = {}) {
+  async start(owner, run, { signal, onTimeout } = {}) {
     if (this.closed) throw new HttpError('验证服务已关闭', 503);
     if (
       this.tasks.size >= this.maxTasks ||
@@ -94,6 +94,16 @@ export class VerificationTasks {
         }
       })
       .catch((error) => {
+        // Searches can keep completed sources when the shared deadline expires.
+        if (error.status === 504 && controller.signal.aborted && onTimeout) {
+          task.status = 'completed';
+          task.result = onTimeout();
+          if (!task.published) {
+            readyResolve(task.result);
+            this.remove(task);
+          }
+          return;
+        }
         task.status = 'failed';
         task.error = error.status ? error.message : '验证后的请求未能完成，请重试或更换来源';
         if (!task.published) {

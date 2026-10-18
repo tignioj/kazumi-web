@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { LoaderCircle, Play, Plus, Search, SlidersHorizontal } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { titleOf } from '../../lib/format.js';
-import { Notice, Empty, Spinner } from '../../components/feedback.jsx';
+import { Notice, Empty } from '../../components/feedback.jsx';
 
 export function SourceSearch({ defaultQuery = '', subject, rules, onPlay, navigate }) {
   const [keyword, setKeyword] = useState(defaultQuery);
@@ -11,8 +11,10 @@ export function SourceSearch({ defaultQuery = '', subject, rules, onPlay, naviga
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [opening, setOpening] = useState('');
+  const [total, setTotal] = useState(0);
   const mounted = useRef(true);
   const requestsRef = useRef(new Set());
+  const searchRef = useRef(null);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -26,23 +28,37 @@ export function SourceSearch({ defaultQuery = '', subject, rules, onPlay, naviga
     if (!keyword.trim() || loading) return;
     setLoading(true);
     setError('');
-    setResults(null);
+    setResults([]);
+    setTotal(selected ? 1 : rules.filter((rule) => rule.enabled !== false).length);
     const controller = new AbortController();
+    searchRef.current = controller;
     requestsRef.current.add(controller);
     try {
       const data = await api('/rules/search', {
         method: 'POST',
         signal: controller.signal,
+        onResult: (result) => {
+          if (mounted.current && !controller.signal.aborted)
+            setResults((current) => [
+              ...current.filter((group) => group.ruleName !== result.ruleName),
+              result,
+            ]);
+        },
         body: JSON.stringify({
           keyword: keyword.trim(),
           ...(selected ? { ruleNames: [selected] } : {}),
         }),
       });
-      if (mounted.current) setResults(data.results || []);
+      if (mounted.current) {
+        setResults(data.results || []);
+        if (data.timedOut) setError('部分片源搜索超时，已保留完成的结果。');
+      }
     } catch (e) {
-      if (mounted.current && e.name !== 'AbortError') setError(e.message);
+      if (mounted.current)
+        setError(e.name === 'AbortError' ? '已停止搜索，已保留收到的结果。' : e.message);
     } finally {
       requestsRef.current.delete(controller);
+      searchRef.current = null;
       if (mounted.current) setLoading(false);
     }
   };
@@ -125,7 +141,17 @@ export function SourceSearch({ defaultQuery = '', subject, rules, onPlay, naviga
         </button>
       </form>
       {error && <Notice>{error}</Notice>}
-      {loading && <Spinner text="正在各个片源中寻找，请稍候…" />}
+      {loading && (
+        <div className="search-progress" role="status">
+          <LoaderCircle className="spin" size={16} />
+          <span>
+            已完成 {results?.length || 0} / {total} 个片源，继续搜索中…
+          </span>
+          <button className="button quiet" onClick={() => searchRef.current?.abort()}>
+            停止搜索
+          </button>
+        </div>
+      )}
       {results && (
         <div className="source-results">
           {results.map((group) => (
@@ -159,7 +185,7 @@ export function SourceSearch({ defaultQuery = '', subject, rules, onPlay, naviga
               )}
             </section>
           ))}
-          {results.length === 0 && (
+          {!loading && !error && results.length === 0 && (
             <Empty icon={Search} title="没有找到可用结果">
               试试其他关键词，或在规则管理中添加片源。
             </Empty>
