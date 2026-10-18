@@ -46,7 +46,11 @@ export function headersForSession(session, target, now = Date.now()) {
   const headers = cleanHeaders(captured ? captured.headers : session.headers);
   if (!captured && !sameOrigin) {
     for (const name of Object.keys(headers)) {
-      if (!['user-agent', 'accept', 'accept-language'].includes(name)) delete headers[name];
+      if (
+        !['user-agent', 'accept', 'accept-language'].includes(name) &&
+        !(session.forwardReferer && name === 'referer')
+      )
+        delete headers[name];
     }
   }
   // The player decides Range for each request. The browser's probe range and
@@ -81,6 +85,7 @@ export class MediaSessionStore {
     const session = {
       url: new URL(input.url).href,
       headers: cleanHeaders(input.headers),
+      ...(input.forwardReferer ? { forwardReferer: true } : {}),
       cookies: (input.cookies || []).slice(0, 500).map((cookie) => ({ ...cookie })),
       requestHeaders: (input.requestHeaders || []).slice(-128).map((entry) => ({
         url: new URL(entry.url).href,

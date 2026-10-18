@@ -1,4 +1,5 @@
 import { inputText } from '../../lib/validation.js';
+import { verificationOwner } from '../verification/interactive.js';
 
 export function registerDownloadRoutes(app, { downloads, store }) {
   app.get('/api/downloads', (req, res) => {
@@ -15,7 +16,11 @@ export function registerDownloadRoutes(app, { downloads, store }) {
     res
       .status(202)
       .set('Cache-Control', 'no-store')
-      .json(await downloads.createBatch(req.body, rule));
+      .json(
+        await downloads.createBatch(req.body, rule, {
+          sessionOwner: verificationOwner(req, res, true),
+        }),
+      );
   });
   app.delete('/api/downloads', async (req, res) => {
     await downloads.clear();

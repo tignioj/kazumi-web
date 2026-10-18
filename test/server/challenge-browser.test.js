@@ -7,6 +7,7 @@ import { BrowserResolver } from '../../server/modules/playback/browser-resolver.
 import { RuleEngine } from '../../server/modules/rules/engine.js';
 import { hasChallenge } from '../../server/modules/verification/challenge.js';
 import { createHttpClient } from '../../server/lib/http.js';
+import { MediaService } from '../../server/modules/playback/media.js';
 
 const installed = await chromium.launch({ headless: true }).then(
   async (browser) => {
@@ -203,6 +204,100 @@ browserTest(
     assert.equal(rounds, 1);
     assert.equal(result.url, `${baseURL}/movie.mp4`);
     assert.ok(result.cookies.some((cookie) => cookie.name === 'verified' && cookie.httpOnly));
+    assert.equal(resolver.browser.contexts().length, 0);
+  },
+);
+
+browserTest(
+  'verified cookies and UA span search, chapters and playback while browser storage and owner isolation survive new contexts',
+  async (t) => {
+    let verifiedUA;
+    let rounds = 0;
+    const received = [];
+    const { baseURL, resolver, engine, client } = await fixture(
+      t,
+      async (request, response) => {
+        received.push({
+          path: request.url,
+          cookie: request.headers.cookie,
+          ua: request.headers['user-agent'],
+        });
+        if ((await captchaRoutes(request, response)) !== false) return;
+        const verified =
+          request.headers.cookie?.includes('verified=1') &&
+          request.headers['user-agent'] === verifiedUA;
+        if (!verified) {
+          response.setHeader('set-cookie', 'challenge=abc; Path=/; HttpOnly');
+          return html(response, challenge('/results'), 403);
+        }
+        if (request.url.startsWith('/search') || request.url === '/results')
+          return html(response, '<article><a href="/show">Found</a></article>');
+        if (request.url === '/show')
+          return html(response, '<ul><li><a href="/watch">Episode 1</a></li></ul>');
+        if (request.url === '/watch')
+          return html(
+            response,
+            `<video></video><script>
+      if (localStorage.getItem('clearance') === 'ready') document.querySelector('video').src='/movie.mp4';
+    </script>`,
+          );
+        if (request.url === '/movie.mp4')
+          return response.writeHead(206, { 'content-type': 'video/mp4' }).end(mp4);
+        response.writeHead(404).end();
+      },
+      { timeout: 4000 },
+    );
+    const rule = {
+      name: 'Reusable clearance',
+      baseURL,
+      searchURL: `${baseURL}/search?q=@keyword`,
+      searchList: '//article',
+      searchName: '//a',
+      searchResult: '//a',
+      chapterRoads: '//ul',
+      chapterResult: '//a',
+      antiCrawlerConfig: captchaConfig,
+    };
+    const options = {
+      sessionOwner: 'alice',
+      async onVerification({ page }) {
+        rounds++;
+        verifiedUA = await page.evaluate(() => navigator.userAgent);
+        await page.evaluate(() => localStorage.setItem('clearance', 'ready'));
+        await page.locator('input').fill('2468');
+        await page.locator('button').click();
+      },
+    };
+    assert.equal((await engine.search(rule, 'first', options)).length, 1);
+    const requestsBeforeRepeat = received.length;
+    assert.equal((await engine.search(rule, 'second', options)).length, 1);
+    assert.equal(
+      received.length,
+      requestsBeforeRepeat + 1,
+      'the second search uses the HTTP cookie jar directly',
+    );
+    assert.equal((await engine.chapters(rule, `${baseURL}/show`, options))[0].episodes.length, 1);
+    const media = new MediaService(client, 'verified-fixture', { browserResolver: resolver });
+    t.after(() => media.close());
+    const resolved = await media.resolve(rule, `${baseURL}/watch`, options);
+    const payload = JSON.parse(
+      Buffer.from(new URL(resolved.url, baseURL).searchParams.get('payload'), 'base64url'),
+    );
+    assert.equal(resolved.type, 'video');
+    assert.equal(typeof payload.sessionId, 'string');
+    assert.doesNotMatch(JSON.stringify(payload), /clearance|verified=1/);
+    assert.equal(
+      rounds,
+      1,
+      'new playback contexts restore clearance and localStorage without asking again',
+    );
+    await media.resolve(rule, `${baseURL}/movie.mp4`, options);
+    await assert.rejects(engine.search(rule, 'isolated', { sessionOwner: 'bob' }));
+    assert.equal(received.at(-1).cookie, undefined);
+    await assert.rejects(
+      engine.search({ ...rule, version: '2' }, 'changed', { sessionOwner: 'alice' }),
+    );
+    assert.equal(received.at(-1).cookie, undefined);
     assert.equal(resolver.browser.contexts().length, 0);
   },
 );

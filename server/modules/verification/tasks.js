@@ -76,6 +76,7 @@ export class VerificationTasks {
         controller.signal.throwIfAborted();
         return run({
           signal: controller.signal,
+          sessionOwner: owner,
           onVerification: (input) => {
             controller.signal.throwIfAborted();
             if (task.challenges.length >= 8)

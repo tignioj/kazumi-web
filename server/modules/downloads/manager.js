@@ -3,6 +3,7 @@ import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'nod
 import { extname, join, resolve } from 'node:path';
 import { checkedUrl, cleanHeaders, HttpError } from '../../lib/http.js';
 import { headersForSession } from '../playback/session-store.js';
+import { filterHlsAds } from '../playback/hls-ad-filter.js';
 import { streamArchive } from './archive.js';
 
 const MAX_JOBS = 200;
@@ -296,7 +297,7 @@ export class DownloadManager {
     });
   }
 
-  createBatch(input, rule) {
+  createBatch(input, rule, { sessionOwner } = {}) {
     return this.lock(async () => {
       if (this.closed) throw new HttpError('缓存服务已关闭', 503);
       if (
@@ -327,7 +328,7 @@ export class DownloadManager {
           await rm(join(this.directory, entry.existing.id), { recursive: true, force: true });
           this.jobs.delete(entry.existing.id);
         }
-        const job = newJob(entry.input, { type: 'pending', rule });
+        const job = newJob(entry.input, { type: 'pending', rule, sessionOwner });
         this.jobs.set(job.id, job);
         entry.existing = job;
       }
@@ -362,6 +363,7 @@ export class DownloadManager {
     checkedUrl(verified.url, { allowPrivate: this.http.allowPrivate });
     const source = {
       url: verified.url,
+      adBlocker: verified.adBlocker === true,
       headers: cleanHeaders(verified.headers),
       session: verified.sessionId
         ? structuredClone(this.media.sessions.get(verified.sessionId))
@@ -401,6 +403,7 @@ export class DownloadManager {
         this.active.delete(job.id);
         delete job.source;
         delete job.rule;
+        delete job.sessionOwner;
         delete job.controller;
         this.pump();
       });
@@ -417,6 +420,7 @@ export class DownloadManager {
       if (job.type === 'pending') {
         const resolved = await this.media.resolve(job.rule, job.episodeUrl, {
           signal: job.controller.signal,
+          ...(job.sessionOwner !== undefined ? { sessionOwner: job.sessionOwner } : {}),
         });
         job.controller.signal.throwIfAborted();
         if (!['video', 'hls'].includes(resolved.type))
@@ -607,7 +611,8 @@ export class DownloadManager {
         });
       } else {
         const { bytes } = await this.consume(job, result, { kind, maxBytes: MAX_MANIFEST_BYTES });
-        const raw = bytes.toString('utf8').replace(/^\uFEFF/, '');
+        const original = bytes.toString('utf8').replace(/^\uFEFF/, '');
+        const raw = job.source.adBlocker ? filterHlsAds(original) : original;
         if (!raw.trimStart().startsWith('#EXTM3U'))
           throw new HttpError('HLS 播放列表格式无效', 422);
         if (

@@ -253,11 +253,14 @@ export class RuleEngine {
     this.http = http;
     this.browserResolver = browserResolver;
   }
-  async execute(request, rule, { signal, onVerification } = {}) {
+  async execute(request, rule, { signal, onVerification, sessionOwner } = {}) {
     signal?.throwIfAborted();
+    const headers = { ...ruleHeaders(rule), ...request.headers };
     const options = {
       ...request,
-      headers: { ...ruleHeaders(rule), ...request.headers },
+      ...(this.browserResolver?.requestOptions?.(rule, request.url, headers, sessionOwner) || {
+        headers,
+      }),
       signal,
     };
     // Challenge pages commonly use 403 or 429. Read their bounded body before

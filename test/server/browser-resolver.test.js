@@ -259,6 +259,34 @@ browserTest(
 );
 
 browserTest(
+  'legacy rules resolve dynamically inserted iframe parameters without loading the media in Chromium',
+  async (t) => {
+    const { resolver, baseURL, rule } = await fixture(t, (request, response) => {
+      if (request.url === '/watch')
+        return html(
+          response,
+          `<script>
+      setTimeout(() => { const frame = document.createElement('iframe');
+      frame.src='/broken-parser?url='+encodeURIComponent(location.origin+'/movie.mp4?token=a%2Fb');
+      document.body.append(frame); }, 50);
+    </script>`,
+        );
+      if (request.url.startsWith('/movie.mp4')) {
+        assert.equal(request.headers['user-agent'], 'Legacy fixture');
+        return response.writeHead(206, { 'content-type': 'video/mp4' }).end(mp4);
+      }
+      response.writeHead(502).end('parser unavailable');
+    });
+    const result = await resolver.resolve(
+      { ...rule, useLegacyParser: true, userAgent: 'Legacy fixture' },
+      `${baseURL}/watch`,
+    );
+    assert.equal(result.url, `${baseURL}/movie.mp4?token=a%2Fb`);
+    assert.equal(result.type, 'video');
+  },
+);
+
+browserTest(
   'rejected candidates wait until the overall deadline and retain the validation error without offering manual verification',
   async (t) => {
     const timeout = 4600;

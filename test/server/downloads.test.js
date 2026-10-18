@@ -149,6 +149,20 @@ async function fixture(t, { downloadOptions, session = false } = {}) {
           '#EXT-X-STREAM-INF:BANDWIDTH=5000,AUDIO="audio"\nvariant\n',
       );
     }
+    if (path === '/ads-master.m3u8') {
+      res.setHeader('content-type', 'application/vnd.apple.mpegurl');
+      return res.end('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=5000\nads-variant.m3u8\n');
+    }
+    if (path === '/ads-variant.m3u8') {
+      res.setHeader('content-type', 'application/vnd.apple.mpegurl');
+      return res.end(
+        '#EXTM3U\n#EXT-X-TARGETDURATION:100\n#EXT-X-MEDIA-SEQUENCE:50\n' +
+          '#EXTINF:5,\nmissing-ad.ts\n#EXT-X-DISCONTINUITY\n' +
+          '#EXT-X-KEY:METHOD=AES-128,URI="key",IV=0x00000000000000000000000000000001\n' +
+          '#EXT-X-MAP:URI="asset",BYTERANGE="4@0"\n#EXT-X-KEY:METHOD=AES-128,URI="key"\n' +
+          '#EXTINF:100,\nasset\n#EXT-X-ENDLIST\n',
+      );
+    }
     if (path === '/variant') {
       res.setHeader('content-type', 'application/octet-stream');
       return res.end(
@@ -586,6 +600,54 @@ test('HLS cache includes extensionless playlists, alternate audio, keys, maps an
     assert.deepEqual(archived[1], bytes);
   }
   assert.equal(f.received.length, beforeOffline);
+});
+
+test('rule adBlocker follows nested signed playlists into playback, single caches and batch caches', async (t) => {
+  const f = await fixture(t);
+  assert.equal(
+    (
+      await f.json(
+        `/api/rules/${encodeURIComponent(f.rule.name)}`,
+        { ...f.rule, adBlocker: true },
+        'PUT',
+      )
+    ).status,
+    200,
+  );
+  const resolved = await f.resolve('/ads-master.m3u8');
+  const master = await (await f.fetch(resolved.url)).text();
+  const child = master.split('\n').find((line) => line && !line.startsWith('#'));
+  const playlist = await (await f.fetch(child)).text();
+  assert.doesNotMatch(playlist, /#EXTINF:5,/);
+  assert.match(playlist, /#EXT-X-MEDIA-SEQUENCE:51/);
+  assert.match(playlist, /IV=0x00000000000000000000000000000033/);
+  const { job } = await f.submit('/ads-master.m3u8');
+  const completed = await f.finished(job.id);
+  assert.equal(completed.status, 'complete', completed.error);
+  const batch = await f.json('/api/downloads/batch', {
+    ruleName: f.rule.name,
+    episodes: [{ name: 'Batch', url: `${f.upstreamUrl}/ads-master.m3u8?batch` }],
+  });
+  assert.equal(batch.status, 202, JSON.stringify(batch.data));
+  assert.equal((await f.finished(batch.data.items[0].id)).status, 'complete');
+  assert.equal(
+    f.received.some(({ path }) => path === '/missing-ad.ts'),
+    false,
+    'removed ads are never requested or cached',
+  );
+  const cachedMaster = await (await f.fetch(completed.playbackUrl)).text();
+  const cachedChild = cachedMaster.split('\n').find((line) => line && !line.startsWith('#'));
+  const childPath = new URL(cachedChild, `http://local${completed.playbackUrl}`).pathname;
+  assert.match(await (await f.fetch(childPath)).text(), /IV=0x00000000000000000000000000000033/);
+  await f.json(
+    `/api/rules/${encodeURIComponent(f.rule.name)}`,
+    { ...f.rule, adBlocker: false },
+    'PUT',
+  );
+  const unfiltered = await f.resolve('/ads-master.m3u8?unfiltered');
+  const rawMaster = await (await f.fetch(unfiltered.url)).text();
+  const rawChild = rawMaster.split('\n').find((line) => line && !line.startsWith('#'));
+  assert.match(await (await f.fetch(rawChild)).text(), /#EXTINF:5,/);
 });
 
 test('HLS cache preserves image-prefixed segments served with image MIME types for offline playback and export', async (t) => {

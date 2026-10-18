@@ -2,6 +2,9 @@ import { chromium } from 'playwright';
 import { HttpError, checkedUrl, readLimited } from '../../lib/http.js';
 import { createBrowserEgress } from '../../lib/browser-egress.js';
 import { headersForSession } from './session-store.js';
+import { legacyIframeMedia } from './legacy-parser.js';
+import { filterHlsAds } from './hls-ad-filter.js';
+import { RuleSessionStore } from '../verification/session-store.js';
 import { inspectBrowserChallenge, verificationRequired } from '../verification/challenge.js';
 
 const MAX_PLAYLIST_BYTES = 1024 * 1024;
@@ -140,7 +143,7 @@ async function waitForVerification(page, onVerification, details, signal) {
 
 // Runs in every frame before source scripts. It observes calls the player already
 // makes; it never downloads an unknown response body solely to identify media.
-function installObservers() {
+function installObservers({ legacy = false } = {}) {
   const send = (data) => {
     try {
       Promise.resolve(window.__kazumiMedia(data)).catch(() => {});
@@ -170,6 +173,10 @@ function installObservers() {
     return originalOpen.apply(this, args);
   };
   const scan = () => {
+    if (legacy) {
+      for (const iframe of document.querySelectorAll('iframe[src]'))
+        send({ url: iframe.src, iframe: true });
+    }
     for (const video of document.querySelectorAll('video,audio')) {
       const rect = video.getBoundingClientRect();
       const owner = video.closest('[id],[class]');
@@ -226,6 +233,7 @@ export class BrowserResolver {
     this.starting = null;
     this.egress = null;
     this.closed = false;
+    this.ruleSessions = new RuleSessionStore(options.ruleSessionOptions);
   }
 
   async getBrowser() {
@@ -283,12 +291,29 @@ export class BrowserResolver {
     return this.starting;
   }
 
-  async createContext(browser, rule, interactive = false) {
+  requestOptions(rule, url, headers, owner) {
+    return this.ruleSessions.requestOptions(rule, url, headers, owner);
+  }
+
+  mediaSession(rule, url, headers, owner) {
+    return this.ruleSessions.mediaSession(rule, url, headers, owner);
+  }
+
+  async rememberContext(rule, owner, context, page) {
+    const storageState = await context.storageState();
+    const userAgent = await page.evaluate(() => navigator.userAgent);
+    if (!this.closed) this.ruleSessions.set(rule, owner, storageState, userAgent);
+  }
+
+  async createContext(browser, rule, interactive = false, sessionOwner, requestUserAgent) {
+    const saved = this.ruleSessions.get(rule, sessionOwner);
     const context = await browser.newContext({
       serviceWorkers: 'block',
       acceptDownloads: false,
       viewport: { width: 1000, height: 700 },
       ...(rule.userAgent ? { userAgent: rule.userAgent } : {}),
+      ...(requestUserAgent ? { userAgent: requestUserAgent } : {}),
+      ...(saved ? { storageState: saved.storageState, userAgent: saved.userAgent } : {}),
     });
     try {
       await context.routeWebSocket(/.*/, (socket) => {
@@ -319,6 +344,7 @@ export class BrowserResolver {
 
   async navigateRequest(page, request, rule) {
     let pending = true;
+    const userAgent = await page.evaluate(() => navigator.userAgent);
     const requestUrl = new URL(request.url);
     requestUrl.hash = '';
     const override = async (route) => {
@@ -332,7 +358,7 @@ export class BrowserResolver {
         pending = false;
         return route.fallback({
           method: request.method || 'GET',
-          headers: { ...current.headers(), ...request.headers },
+          headers: { ...current.headers(), ...request.headers, 'user-agent': userAgent },
           ...(request.body !== undefined ? { postData: request.body } : {}),
         });
       }
@@ -355,7 +381,7 @@ export class BrowserResolver {
   async read(
     rule,
     request,
-    { signal: callerSignal, onVerification, parse, responseType = 'html' } = {},
+    { signal: callerSignal, onVerification, parse, responseType = 'html', sessionOwner } = {},
   ) {
     checkedUrl(request.url, { allowPrivate: this.http.allowPrivate });
     // Playwright navigation header overrides also apply to redirects. Unlike
@@ -400,7 +426,10 @@ export class BrowserResolver {
     try {
       signal.throwIfAborted();
       const browser = await abortable(this.getBrowser(), signal);
-      context = await this.createContext(browser, rule, true);
+      const requestUserAgent = Object.entries(request.headers || {}).find(
+        ([key]) => key.toLowerCase() === 'user-agent',
+      )?.[1];
+      context = await this.createContext(browser, rule, true, sessionOwner, requestUserAgent);
       signal.throwIfAborted();
       const page = await context.newPage();
       context.on('page', (popup) => {
@@ -431,6 +460,8 @@ export class BrowserResolver {
               await this.navigateRequest(page, request, rule);
               continue;
             }
+            await this.rememberContext(rule, sessionOwner, context, page);
+            signal.throwIfAborted();
             return result;
           } catch (error) {
             if (error.code !== 'VERIFICATION_REQUIRED') {
@@ -502,7 +533,8 @@ export class BrowserResolver {
       }
       const contentType = response.headers.get('content-type') || '';
       if (kind === 'hls' || /mpegurl/i.test(contentType)) {
-        const text = await readLimited(response, MAX_PLAYLIST_BYTES);
+        const raw = await readLimited(response, MAX_PLAYLIST_BYTES);
+        const text = session.adBlocker ? filterHlsAds(raw) : raw;
         if (!text.trimStart().startsWith('#EXTM3U'))
           throw new HttpError('动态解析返回了无效的 HLS 播放列表', 422);
         const lines = text
@@ -588,7 +620,11 @@ export class BrowserResolver {
     throw new HttpError('HLS 播放列表嵌套过深', 422);
   }
 
-  async resolve(rule, originalUrl, { signal: callerSignal, onVerification, playbackUrl } = {}) {
+  async resolve(
+    rule,
+    originalUrl,
+    { signal: callerSignal, onVerification, playbackUrl, sessionOwner } = {},
+  ) {
     checkedUrl(originalUrl, { allowPrivate: this.http.allowPrivate });
     if (playbackUrl) checkedUrl(playbackUrl, { allowPrivate: this.http.allowPrivate });
     if (this.closed) throw new HttpError('动态解析服务已关闭', 503);
@@ -608,14 +644,18 @@ export class BrowserResolver {
     let deadline;
     let manualOffered = false;
     let manualPending = false;
+    let candidateSeen = false;
+    let validationError;
     const armDeadline = () => {
       clearTimeout(deadline);
       deadline = setTimeout(() => {
-        if (onVerification && !manualOffered) manualPending = true;
+        if (onVerification && !manualOffered && !candidateSeen) manualPending = true;
         else
           controller.abort(
             new HttpError(
-              '动态解析超时：未找到可播放视频，来源可能需要验证码或不支持当前线路',
+              validationError
+                ? `动态解析超时：已捕获视频，但服务端验证失败：${validationError.message}`
+                : '动态解析超时：未找到可播放视频，来源可能需要验证码或不支持当前线路',
               504,
             ),
           );
@@ -632,7 +672,7 @@ export class BrowserResolver {
     try {
       signal.throwIfAborted();
       const browser = await abortable(this.getBrowser(), signal);
-      context = await this.createContext(browser, rule, !!onVerification);
+      context = await this.createContext(browser, rule, !!onVerification, sessionOwner);
       signal.throwIfAborted();
       const candidates = new Map();
       const observed = new Map();
@@ -662,6 +702,7 @@ export class BrowserResolver {
             advertisements.delete(advertisements.values().next().value);
           return;
         }
+        candidateSeen = true;
         mediaRequests.add(url);
         if (mediaRequests.size > 512) mediaRequests.delete(mediaRequests.values().next().value);
         const old = candidates.get(url);
@@ -727,6 +768,13 @@ export class BrowserResolver {
       });
       await context.exposeBinding('__kazumiMedia', ({ frame }, data) => {
         if (!data || typeof data !== 'object') return;
+        if (data.iframe) {
+          if (rule.useLegacyParser === true) {
+            const media = legacyIframeMedia(data.url, frame.url());
+            if (media) offer(media.url, media.type, 120, { legacy: true });
+          }
+          return;
+        }
         let frameScore = 0;
         try {
           if (/play|video|embed/i.test(new URL(frame.url()).pathname)) frameScore = 5;
@@ -740,7 +788,7 @@ export class BrowserResolver {
           { ad: data.ad === true },
         );
       });
-      await context.addInitScript(installObservers);
+      await context.addInitScript(installObservers, { legacy: rule.useLegacyParser === true });
       const page = await context.newPage();
       const closePopups = (owner) =>
         owner.on('popup', (popup) => void popup.close().catch(() => {}));
@@ -759,7 +807,6 @@ export class BrowserResolver {
           navigationError = error;
         });
       let lastTrigger = 0;
-      let validationError;
       let lastChallengeCheck = 0;
       let verificationAttempts = 0;
       while (!signal.aborted) {
@@ -845,11 +892,13 @@ export class BrowserResolver {
             if (rejected.has(candidate.url)) continue;
             signal.throwIfAborted();
             const cookies = await context.cookies();
-            const headers =
-              observed.get(candidate.url) ||
-              (rule.userAgent ? { 'user-agent': rule.userAgent } : {});
+            const headers = observed.get(candidate.url) || {
+              'user-agent': await page.evaluate(() => navigator.userAgent),
+              ...(candidate.legacy && rule.referer ? { referer: rule.referer } : {}),
+            };
             const session = {
               url: candidate.url,
+              adBlocker: rule.adBlocker === true,
               headers,
               cookies,
               // Include bounded actual requests to extensionless key/segment endpoints,
@@ -865,7 +914,9 @@ export class BrowserResolver {
                 .map((url) => ({ url, headers: observed.get(url) })),
             };
             try {
-              const type = await this.validate(candidate, session, signal);
+              const type = await abortable(this.validate(candidate, session, signal), signal);
+              await this.rememberContext(rule, sessionOwner, context, page);
+              signal.throwIfAborted();
               // Return actual CookieJar state; sensitive headers stay server-side.
               return { type, ...session };
             } catch (error) {
@@ -881,16 +932,6 @@ export class BrowserResolver {
           !candidates.size
         )
           throw new HttpError('动态解析无法打开来源页面，请检查片源或网络连接', 502);
-        if (
-          validationError &&
-          (!playbackPage || playbackNavigationError) &&
-          [...candidates.keys()].every((url) => rejected.has(url)) &&
-          Date.now() - lastCandidate > 3000
-        )
-          throw new HttpError(
-            `已捕获视频，但服务端验证失败：${validationError.message}`,
-            validationError.status || 502,
-          );
         await delay(100, signal);
       }
       throw signal.reason;
@@ -909,6 +950,7 @@ export class BrowserResolver {
 
   async close() {
     this.closed = true;
+    this.ruleSessions.close();
     for (const controller of this.active)
       controller.abort(new HttpError('动态解析服务已关闭', 503));
     if (this.starting) await this.starting.catch(() => {});

@@ -5,6 +5,8 @@ import { JSDOM } from 'jsdom';
 import { HttpError, checkedUrl, readLimited } from '../../lib/http.js';
 import { absoluteUrl, ruleHeaders } from '../rules/engine.js';
 import { jsonObjectAt } from './player-json.js';
+import { legacyIframeMedia } from './legacy-parser.js';
+import { filterHlsAds } from './hls-ad-filter.js';
 import { resolveHhjx } from './adapters/hhjx.js';
 import { resolveSevenSefun } from './adapters/sevensefun.js';
 import { headersForSession, MediaSessionStore } from './session-store.js';
@@ -17,10 +19,16 @@ export function mediaType(url) {
   return null;
 }
 
-export function extractMedia(html, pageUrl) {
+export function extractMedia(html, pageUrl, { useLegacyParser = false } = {}) {
   const dom = new JSDOM(html);
   try {
     const document = dom.window.document;
+    if (useLegacyParser) {
+      for (const iframe of document.querySelectorAll('iframe[src]')) {
+        const media = legacyIframeMedia(iframe.getAttribute('src'), pageUrl);
+        if (media) return { ...media, legacy: true };
+      }
+    }
     for (const node of document.querySelectorAll(
       'video[src],video source[src],audio[src],audio source[src]',
     )) {
@@ -118,9 +126,17 @@ export class MediaService {
   signature(value) {
     return createHmac('sha256', this.secret).update(value).digest('hex');
   }
-  proxyUrl(url, headers, expires = Math.floor(Date.now() / 1000) + 24 * 3600, kind, sessionId) {
+  proxyUrl(
+    url,
+    headers,
+    expires = Math.floor(Date.now() / 1000) + 24 * 3600,
+    kind,
+    sessionId,
+    adBlocker = false,
+  ) {
     checkedUrl(url, { allowPrivate: this.http.allowPrivate });
     const data = sessionId ? { url, sessionId, expires, kind } : { url, headers, expires, kind };
+    if (adBlocker) data.adBlocker = true;
     const payload = Buffer.from(JSON.stringify(data)).toString('base64url');
     return `/api/media?payload=${payload}&signature=${this.signature(payload)}`;
   }
@@ -144,15 +160,21 @@ export class MediaService {
       throw new HttpError('播放链接已过期，请重新打开剧集', 403);
     return data;
   }
-  async resolve(rule, source, { signal, onVerification } = {}) {
+  async resolve(rule, source, { signal, onVerification, sessionOwner } = {}) {
     const originalUrl = absoluteUrl(source, rule.baseURL);
     if (!originalUrl) throw new HttpError('播放地址无效');
     checkedUrl(originalUrl, { allowPrivate: this.http.allowPrivate });
     signal?.throwIfAborted();
     let playbackUrl;
     try {
-      const result = await this.resolveStatic(rule, originalUrl, signal);
+      const result = await this.resolveStatic(rule, originalUrl, signal, sessionOwner);
       if (result.type !== 'iframe') {
+        const restored = this.browserResolver?.mediaSession?.(
+          rule,
+          result.url,
+          result.headers,
+          sessionOwner,
+        );
         if (this.browserResolver?.validate) {
           // A literal <video src> can still depend on cookies created by page
           // scripts. Only keep the fast path when the proxy can fetch its media.
@@ -164,7 +186,15 @@ export class MediaService {
           try {
             const type = await this.browserResolver.validate(
               { url: result.url, type: result.type },
-              { url: result.url, headers: result.headers, cookies: [], requestHeaders: [] },
+              {
+                ...(restored || {
+                  url: result.url,
+                  headers: result.headers,
+                  cookies: [],
+                  requestHeaders: [],
+                }),
+                adBlocker: rule.adBlocker === true,
+              },
               probeSignal,
             );
             if (['hls', 'video'].includes(type)) result.type = type;
@@ -177,9 +207,17 @@ export class MediaService {
           }
         }
         signal?.throwIfAborted();
+        const session = restored ? this.sessions.create(restored) : null;
         return {
           type: result.type,
-          url: this.proxyUrl(result.url, result.headers, undefined, result.type),
+          url: this.proxyUrl(
+            result.url,
+            session ? undefined : result.headers,
+            session?.expires,
+            result.type,
+            session?.sessionId,
+            rule.adBlocker === true,
+          ),
           originalUrl,
         };
       }
@@ -196,6 +234,7 @@ export class MediaService {
       signal,
       ...(playbackUrl && playbackUrl !== originalUrl ? { playbackUrl } : {}),
       ...(onVerification ? { onVerification } : {}),
+      ...(sessionOwner !== undefined ? { sessionOwner } : {}),
     });
     signal?.throwIfAborted();
     if (!result || !['hls', 'video'].includes(result.type))
@@ -206,11 +245,18 @@ export class MediaService {
     const session = this.sessions.create(result);
     return {
       type: result.type,
-      url: this.proxyUrl(result.url, undefined, session.expires, result.type, session.sessionId),
+      url: this.proxyUrl(
+        result.url,
+        undefined,
+        session.expires,
+        result.type,
+        session.sessionId,
+        rule.adBlocker === true,
+      ),
       originalUrl,
     };
   }
-  async resolveStatic(rule, originalUrl, signal) {
+  async resolveStatic(rule, originalUrl, signal, sessionOwner) {
     let headers = ruleHeaders(rule);
     let url = originalUrl;
     let fallback = originalUrl;
@@ -225,7 +271,12 @@ export class MediaService {
       visited.add(url);
       let result;
       try {
-        result = await this.http.request(url, { headers, signal });
+        result = await this.http.request(url, {
+          ...(this.browserResolver?.requestOptions?.(rule, url, headers, sessionOwner) || {
+            headers,
+          }),
+          signal,
+        });
         signal?.throwIfAborted();
       } catch (error) {
         if (signal?.aborted || depth === 0 || error.status === 403) throw error;
@@ -273,13 +324,18 @@ export class MediaService {
         headers = playerPage.headers;
         continue;
       }
-      const extracted = extractMedia(raw, result.url);
+      const extracted = extractMedia(raw, result.url, rule);
       if (!extracted) break;
       checkedUrl(extracted.url, { allowPrivate: this.http.allowPrivate });
       if (extracted.type !== 'iframe')
         return {
           ...extracted,
-          headers,
+          headers:
+            extracted.legacy && !rule.referer
+              ? Object.fromEntries(
+                  Object.entries(headers).filter(([name]) => name.toLowerCase() !== 'referer'),
+                )
+              : headers,
           originalUrl,
         };
       fallback = extracted.url;
@@ -326,10 +382,12 @@ export class MediaService {
       const isPlaylist =
         data.kind === 'hls' || mediaType(url) === 'hls' || /mpegurl/i.test(contentType);
       if (isPlaylist) {
+        const raw = await readLimited(response, 2 * 1024 * 1024);
         const playlist = rewritePlaylist(
-          await readLimited(response, 2 * 1024 * 1024),
+          data.adBlocker ? filterHlsAds(raw) : raw,
           url,
-          (target, kind) => this.proxyUrl(target, data.headers, data.expires, kind, data.sessionId),
+          (target, kind) =>
+            this.proxyUrl(target, data.headers, data.expires, kind, data.sessionId, data.adBlocker),
         );
         res.type('application/vnd.apple.mpegurl').set('Cache-Control', 'no-store').send(playlist);
         return;
