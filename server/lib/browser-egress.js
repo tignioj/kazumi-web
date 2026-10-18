@@ -1,6 +1,7 @@
 import http from 'node:http';
 import net from 'node:net';
 import { checkedUrl, createSafeLookup, HttpError } from './http.js';
+import { createProxyTunnels } from './proxy-tunnel.js';
 
 const HOP_HEADERS = new Set([
   'connection',
@@ -52,10 +53,19 @@ export async function createBrowserEgress({
   timeout = 30000,
   tunnelTimeout = 60000,
   maxConnections = 128,
+  getProxySettings = () => null,
 } = {}) {
   const dns = createSafeLookup({ allowPrivate, dnsOverHttpsUrl, resolver });
+  const tunnels = createProxyTunnels({ lookup: dns.lookup, timeout });
   const sockets = new Set();
   const agent = new http.Agent({ keepAlive: false, lookup: dns.lookup, maxSockets: 64 });
+  agent.createConnection = (options, callback) => {
+    const proxy = getProxySettings();
+    if (!proxy?.enabled) return net.connect({ ...options, lookup: dns.lookup });
+    tunnels
+      .connect(proxy, options.host.replace(/^\[|\]$/g, ''), Number(options.port) || 80)
+      .then((socket) => callback(null, socket), callback);
+  };
   let closing = false;
   let closed;
   const track = (socket) => {
@@ -115,7 +125,7 @@ export async function createBrowserEgress({
     socket.setTimeout(timeout, () => socket.destroy());
     if (closing) socket.destroy();
   });
-  server.on('connect', (request, client, head) => {
+  server.on('connect', async (request, client, head) => {
     let target;
     try {
       target = connectUrl(request.url, allowPrivate);
@@ -124,14 +134,27 @@ export async function createBrowserEgress({
       client.end(`HTTP/1.1 ${errorStatus(error)} Rejected\r\nConnection: close\r\n\r\n`);
       return;
     }
-    const remote = track(
-      net.connect({
-        host: target.hostname.replace(/^\[|\]$/g, ''),
-        port: Number(target.port) || 443,
-        lookup: dns.lookup,
-        autoSelectFamily: false,
-      }),
-    );
+    const proxy = getProxySettings();
+    let remote;
+    try {
+      remote = track(
+        proxy?.enabled
+          ? await tunnels.connect(
+              proxy,
+              target.hostname.replace(/^\[|\]$/g, ''),
+              Number(target.port) || 443,
+            )
+          : net.connect({
+              host: target.hostname.replace(/^\[|\]$/g, ''),
+              port: Number(target.port) || 443,
+              lookup: dns.lookup,
+              autoSelectFamily: false,
+            }),
+      );
+    } catch (error) {
+      client.end(`HTTP/1.1 ${errorStatus(error)} Rejected\r\nConnection: close\r\n\r\n`);
+      return;
+    }
     let connected = false;
     const timer = setTimeout(
       () => remote.destroy(new Error('Proxy tunnel timed out')),
@@ -155,14 +178,16 @@ export async function createBrowserEgress({
       if (connected) client.destroy();
       else client.end(`HTTP/1.1 ${errorStatus(error)} Rejected\r\nConnection: close\r\n\r\n`);
     });
-    remote.once('connect', () => {
+    const connectedRemote = () => {
       if (client.destroyed) return remote.destroy();
       connected = true;
       client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
       if (head.length) remote.write(head);
       client.pipe(remote);
       remote.pipe(client);
-    });
+    };
+    if (proxy?.enabled) connectedRemote();
+    else remote.once('connect', connectedRemote);
   });
   server.on('upgrade', (_request, socket) => {
     socket.end('HTTP/1.1 403 Rejected\r\nConnection: close\r\n\r\n');
@@ -174,6 +199,7 @@ export async function createBrowserEgress({
     });
   } catch (error) {
     agent.destroy();
+    await tunnels.close();
     await dns.close();
     throw error;
   }
@@ -186,7 +212,7 @@ export async function createBrowserEgress({
         const stopped = new Promise((resolve) => server.close(resolve));
         agent.destroy();
         for (const socket of sockets) socket.destroy();
-        await Promise.all([stopped, dns.close()]);
+        await Promise.all([stopped, dns.close(), tunnels.close()]);
       })();
       return closed;
     },

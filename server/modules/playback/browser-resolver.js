@@ -236,6 +236,7 @@ export class BrowserResolver {
       const egress = await (this.options.egressFactory || createBrowserEgress)({
         allowPrivate: this.http.allowPrivate,
         dnsOverHttpsUrl: this.options.dnsOverHttpsUrl ?? process.env.DNS_OVER_HTTPS_URL,
+        getProxySettings: this.http.getProxySettings,
       });
       this.egress = egress;
       try {

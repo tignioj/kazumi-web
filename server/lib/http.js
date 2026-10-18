@@ -1,7 +1,8 @@
 import dns from 'node:dns';
-import { Agent, fetch } from 'undici';
+import { Agent, buildConnector, fetch } from 'undici';
 import ipaddr from 'ipaddr.js';
 import { createEchTransport, isEchTarget } from './ech.js';
+import { createProxyTunnels } from './proxy-tunnel.js';
 
 export class HttpError extends Error {
   constructor(message, status = 400) {
@@ -149,8 +150,10 @@ export function createHttpClient({
   echDohUrl = process.env.ECH_DOH_URL || 'https://1.1.1.1/dns-query',
   echHelperPath = process.env.ECH_HELPER_PATH,
   echTransport,
+  getProxySettings = () => null,
+  resolver,
 } = {}) {
-  const dnsLookup = createSafeLookup({ allowPrivate, dnsOverHttpsUrl });
+  const dnsLookup = createSafeLookup({ allowPrivate, dnsOverHttpsUrl, resolver });
   const dispatcher = new Agent({
     connect: { lookup: dnsLookup.lookup, timeout: 15000 },
     headersTimeout: timeout,
@@ -169,7 +172,51 @@ export function createHttpClient({
           queryDnsOverHttps(echDohUrl, echBootstrap, 'crypto.cloudflare.com', 'HTTPS'),
       })
     : null;
+  const tunnels = createProxyTunnels({ lookup: dnsLookup.lookup });
+  const tlsConnector = buildConnector({ timeout: 15000 });
+  let proxyDispatcher;
+  let proxyKey;
+  const retiring = new Set();
+  function requestDispatcher(settings) {
+    const key = settings?.enabled ? JSON.stringify(settings) : '';
+    if (key !== proxyKey) {
+      if (proxyDispatcher) {
+        const closing = proxyDispatcher.close().catch(() => {});
+        retiring.add(closing);
+        void closing.finally(() => retiring.delete(closing));
+      }
+      proxyKey = key;
+      proxyDispatcher = key
+        ? new Agent({
+            headersTimeout: timeout,
+            bodyTimeout: 60000,
+            connect(options, callback) {
+              const hostname = options.hostname.replace(/^\[|\]$/g, '');
+              tunnels
+                .connect(
+                  settings,
+                  hostname,
+                  Number(options.port) || (options.protocol === 'https:' ? 443 : 80),
+                )
+                .then(
+                  (socket) => {
+                    if (options.protocol !== 'https:') return callback(null, socket);
+                    tlsConnector({ ...options, httpSocket: socket }, (error, secure) => {
+                      if (error) socket.destroy();
+                      callback(error, secure);
+                    });
+                  },
+                  (error) => callback(error, null),
+                );
+            },
+          })
+        : null;
+    }
+    return proxyDispatcher || dispatcher;
+  }
   async function request(input, options = {}) {
+    const proxy = getProxySettings();
+    const activeDispatcher = requestDispatcher(proxy);
     let url = checkedUrl(input, { allowPrivate });
     let method = options.method || 'GET';
     let body = options.body;
@@ -183,7 +230,7 @@ export function createHttpClient({
       if (options.headersForUrl) headers = cleanHeaders(await options.headersForUrl(url.href));
       if (dropContentType) delete headers['content-type'];
       let response;
-      const usingEch = !!ech && isEchTarget(url);
+      const usingEch = !proxy?.enabled && !!ech && isEchTarget(url);
       try {
         response = await (usingEch
           ? ech.request(url, {
@@ -194,7 +241,7 @@ export function createHttpClient({
               signal: options.signal || AbortSignal.timeout(options.timeout || timeout),
             })
           : fetch(url, {
-              dispatcher,
+              dispatcher: activeDispatcher,
               method,
               body,
               headers,
@@ -206,7 +253,9 @@ export function createHttpClient({
         const failure = new HttpError(
           error.name === 'TimeoutError'
             ? '上游请求超时'
-            : `${usingEch ? 'ECH 连接失败' : '无法连接上游站点'}: ${error.cause?.code || error.message}`,
+            : error.cause?.code === 'PROXY_AUTH_FAILED'
+              ? '代理连接失败：代理认证失败，请检查用户名和密码'
+              : `${usingEch ? 'ECH 连接失败' : proxy?.enabled ? '代理连接失败' : '无法连接上游站点'}: ${error.cause?.code || error.message}`,
           502,
         );
         if (usingEch) failure.echAccepted = error.echAccepted === true;
@@ -262,16 +311,20 @@ export function createHttpClient({
     request,
     text,
     json,
-    close: () => {
+    close: async () => {
       ech?.close();
-      return Promise.all([
+      await Promise.all([
         dispatcher.close(),
+        proxyDispatcher?.close(),
+        ...retiring,
         dnsLookup.close(),
         echLookup?.close(),
         echBootstrap?.close(),
       ]);
+      await tunnels.close();
     },
     allowPrivate,
+    getProxySettings,
   };
 }
 

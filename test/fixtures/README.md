@@ -26,3 +26,7 @@ suite therefore exercises both native MP4 and hls.js playback through the proxy.
 The runner at `test/e2e/run-app.mjs` uses a disposable data directory and enables
 private upstream addresses only in its child process so the application can reach
 these loopback fixtures.
+
+`network/` contains a self-signed localhost certificate and its test-only private
+key. The proxy integration tests trust this certificate inside their isolated
+test process to verify HTTPS proxies and TLS to the destination through a tunnel.

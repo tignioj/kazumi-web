@@ -7,6 +7,7 @@ import { PageHeading } from '../../components/PageHeading.jsx';
 import { Modal } from '../../components/Modal.jsx';
 import { normalizeBackup } from './backup.js';
 import { MetadataSettings } from './MetadataSettings.jsx';
+import { NetworkSettings } from './NetworkSettings.jsx';
 
 export function Settings({ settings, setSettings, library, history, watchData, notify, navigate }) {
   const fileRef = useRef();
@@ -179,6 +180,7 @@ export function Settings({ settings, setSettings, library, history, watchData, n
             </button>
           </div>
         </section>
+        <NetworkSettings notify={notify} />
         <MetadataSettings notify={notify} />
         <section className="settings-card about-card">
           <div className="about-brand">

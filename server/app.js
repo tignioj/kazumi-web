@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createHttpClient } from './lib/http.js';
 import { RuleStore } from './modules/rules/store.js';
 import { WatchStore } from './modules/watch/store.js';
+import { NetworkStore } from './modules/network/store.js';
 import { LocalMetadataStore } from './modules/metadata/local-store.js';
 import { ArchiveManager } from './modules/metadata/archive-manager.js';
 import { RuleEngine } from './modules/rules/engine.js';
@@ -24,8 +25,14 @@ import { registerRoutes } from './routes.js';
 const directory = dirname(fileURLToPath(import.meta.url));
 
 export async function createApp(options = {}) {
-  const http = options.httpClient || createHttpClient();
   const dataDir = options.dataDir || process.env.DATA_DIR || resolve(directory, '../data');
+  const network = await new NetworkStore(dataDir).init();
+  const http =
+    options.httpClient ||
+    createHttpClient({
+      ...options.httpOptions,
+      getProxySettings: () => network.data,
+    });
   const localMetadata =
     !options.metadata && process.env.METADATA_MODE !== 'remote'
       ? await new LocalMetadataStore(resolve(dataDir, 'metadata')).init()
@@ -76,6 +83,7 @@ export async function createApp(options = {}) {
     http,
     images,
     watchStore,
+    network,
     verification,
     metadata,
     archive,
@@ -92,6 +100,7 @@ export async function createApp(options = {}) {
     app,
     store,
     watchStore,
+    network,
     downloads,
     archive,
     localMetadata,
@@ -100,6 +109,7 @@ export async function createApp(options = {}) {
       localMetadata?.close();
       verification.close();
       await watchStore.pending;
+      await network.pending;
       await downloads.close();
       await images.close();
       await browserResolver?.close();

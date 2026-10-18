@@ -5,6 +5,48 @@
   gap: 22px;
 }
 
+.network-fields {
+  border: 0;
+  padding: 0;
+  margin: 20px 0;
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+}
+.network-fields label {
+  min-width: 0;
+  display: grid;
+  gap: 9px;
+  font-size: 12px;
+}
+.network-fields input {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.network-credentials {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.network-fields .text-button {
+  justify-self: start;
+}
+.network-form > .button-group {
+  margin-top: 23px;
+  flex-wrap: wrap;
+}
+.network-result {
+  margin-top: 16px;
+}
+@media (max-width: 600px) {
+  .network-credentials {
+    grid-template-columns: 1fr;
+  }
+}
+
 .metadata-state {
   margin: 0 0 12px;
 }
