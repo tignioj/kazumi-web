@@ -20,7 +20,7 @@ export class NetworkStore {
       this.data = normalizeNetworkSettings(JSON.parse(await readFile(this.file, 'utf8')));
     } catch (error) {
       if (error.code !== 'ENOENT')
-        throw new Error('无法读取网络代理设置，请检查 network-settings.json');
+        throw new Error('无法读取网络设置，请检查 network-settings.json');
     }
     return this;
   }

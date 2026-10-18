@@ -3,11 +3,13 @@ export const DEFAULT_NETWORK_SETTINGS = {
   url: '',
   username: '',
   password: '',
+  bangumiEch: false,
+  echDohUrl: 'https://1.1.1.1/dns-query',
 };
 
 export function normalizeNetworkSettings(input, previous = DEFAULT_NETWORK_SETTINGS) {
   if (!input || typeof input !== 'object' || Array.isArray(input))
-    throw new Error('代理设置格式无效');
+    throw new Error('网络设置格式无效');
   if (typeof input.enabled !== 'boolean') throw new Error('请选择是否启用网络代理');
   const result = { enabled: input.enabled };
   for (const key of ['url', 'username', 'password']) {
@@ -41,5 +43,25 @@ export function normalizeNetworkSettings(input, previous = DEFAULT_NETWORK_SETTI
   } else if (result.enabled) {
     throw new Error('启用网络代理前请填写代理地址');
   }
+  result.bangumiEch =
+    input.bangumiEch === undefined
+      ? (previous.bangumiEch ?? DEFAULT_NETWORK_SETTINGS.bangumiEch)
+      : input.bangumiEch;
+  if (typeof result.bangumiEch !== 'boolean') throw new Error('请选择是否启用 Bangumi ECH');
+  const echDohUrl =
+    input.echDohUrl === undefined
+      ? (previous.echDohUrl ?? DEFAULT_NETWORK_SETTINGS.echDohUrl)
+      : input.echDohUrl;
+  if (typeof echDohUrl !== 'string' || echDohUrl.length > 2048 || /[\r\n\0]/.test(echDohUrl))
+    throw new Error('ECH DNS 地址无效');
+  let endpoint;
+  try {
+    endpoint = new URL(echDohUrl.trim());
+  } catch {
+    throw new Error('ECH DNS 地址无效，请填写完整的 HTTPS 地址');
+  }
+  if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password || endpoint.hash)
+    throw new Error('ECH DNS 仅支持不含认证信息和片段的 HTTPS 地址');
+  result.echDohUrl = endpoint.href;
   return result;
 }

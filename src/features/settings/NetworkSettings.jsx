@@ -29,7 +29,13 @@ export function NetworkSettings({ request, notify }) {
     setBusy(action);
     setError('');
     setResult('');
-    const settings = { enabled: form.enabled, url: form.url, username: form.username };
+    const settings = {
+      enabled: form.enabled,
+      url: form.url,
+      username: form.username,
+      bangumiEch: form.bangumiEch,
+      echDohUrl: form.echDohUrl,
+    };
     if (passwordChanged) settings.password = form.password;
     try {
       if (action === 'save') {
@@ -37,14 +43,14 @@ export function NetworkSettings({ request, notify }) {
         setForm({ ...saved, password: '' });
         setPasswordChanged(false);
         setResult('saved');
-        notify('网络代理设置已保存');
+        notify('网络设置已保存');
       } else {
         const tested = await api('/network-settings/test', {
           method: 'POST',
           body: JSON.stringify({ settings, url: testUrl }),
         });
         setResult(
-          `${tested.mode === 'proxy' ? '代理' : '直连'}测试成功 · HTTP ${tested.status} · ${tested.elapsedMs} ms。测试不会保存设置。`,
+          `${tested.mode === 'proxy' ? '代理' : tested.mode === 'ech' ? 'ECH' : '直连'}测试成功 · HTTP ${tested.status} · ${tested.elapsedMs} ms。测试不会保存设置。`,
         );
       }
     } catch (error) {
@@ -54,18 +60,18 @@ export function NetworkSettings({ request, notify }) {
     }
   };
   return (
-    <section id="network-settings" className="settings-card" aria-label="网络代理">
+    <section id="network-settings" className="settings-card" aria-label="网络设置">
       <div className="settings-card-heading">
         <Network size={19} />
         <div>
-          <h2>网络代理</h2>
+          <h2>网络设置</h2>
           <p>服务器共享设置，适用于所有连接此服务器的设备</p>
         </div>
       </div>
       {request.error ? (
         <Notice onRetry={request.retry}>{request.error}</Notice>
       ) : !form ? (
-        <p className="muted small">正在读取代理设置…</p>
+        <p className="muted small">正在读取网络设置…</p>
       ) : (
         <form
           className="network-form"
@@ -135,6 +141,43 @@ export function NetworkSettings({ request, notify }) {
                 {passwordChanged && !form.password ? '保存后清除密码' : '清除已保存密码'}
               </button>
             )}
+          </fieldset>
+          <div className="setting-row">
+            <div>
+              <h3>启用 Bangumi ECH</h3>
+              <p>
+                用于 Bangumi API 和封面图片。启用网络代理时优先使用代理；ECH 连接失败时会报告错误。
+              </p>
+            </div>
+            <button
+              type="button"
+              className={`switch ${form.bangumiEch ? 'on' : ''}`}
+              role="switch"
+              aria-checked={form.bangumiEch}
+              aria-label="启用 Bangumi ECH"
+              disabled={disabled}
+              onClick={() => change('bangumiEch', !form.bangumiEch)}
+            >
+              <span />
+            </button>
+          </div>
+          <fieldset disabled={disabled} className="network-fields">
+            <label>
+              <span>ECH DNS 地址</span>
+              <input
+                type="url"
+                value={form.echDohUrl}
+                placeholder="https://1.1.1.1/dns-query"
+                autoCapitalize="none"
+                spellCheck={false}
+                onChange={(event) => change('echDohUrl', event.target.value)}
+                aria-describedby="ech-dns-help"
+              />
+            </label>
+            <p id="ech-dns-help" className="muted small">
+              使用 HTTPS DNS JSON 服务查询 ECH 配置和目标地址。Docker 已内置 ECH
+              工具；本地开发需先运行 npm run build:ech。
+            </p>
             <label>
               <span>测试地址</span>
               <input
@@ -148,13 +191,13 @@ export function NetworkSettings({ request, notify }) {
             </label>
           </fieldset>
           <p className="muted small">
-            保存后新请求即时生效，无需重启。已有连接可能继续使用原设置。启用时优先使用代理；关闭后恢复原有直连及
-            ECH 配置。
+            保存后新请求即时生效，无需重启。已有连接可能继续使用原设置。代理关闭时，指定 Bangumi
+            请求按 ECH 开关连接，其他请求直连。
           </p>
           <div className="button-group">
             <button type="submit" className="button primary" disabled={disabled}>
               <Save size={15} />
-              {busy === 'save' ? '正在保存…' : '保存代理设置'}
+              {busy === 'save' ? '正在保存…' : '保存网络设置'}
             </button>
             <button
               type="button"
@@ -171,7 +214,9 @@ export function NetworkSettings({ request, notify }) {
               {result === 'saved'
                 ? request.data.enabled
                   ? '网络代理已启用，新请求将通过代理连接。'
-                  : '网络代理已关闭，新请求将直接连接。'
+                  : request.data.bangumiEch
+                    ? 'Bangumi ECH 已启用，指定 Bangumi 请求将通过 ECH 连接。'
+                    : '网络代理和 Bangumi ECH 已关闭，新请求将直接连接。'
                 : result}
             </p>
           )}

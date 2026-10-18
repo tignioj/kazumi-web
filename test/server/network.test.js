@@ -6,7 +6,7 @@ import net from 'node:net';
 import tls from 'node:tls';
 import ipaddr from 'ipaddr.js';
 import { once } from 'node:events';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../../server/app.js';
@@ -293,22 +293,32 @@ test('network settings API persists secrets, supports draft tests and keeps save
     return { response, data: await response.json() };
   }
   assert.equal((await request()).data.enabled, false);
-  const saved = await request('', 'PUT', proxy.settings);
+  assert.equal((await request()).data.bangumiEch, false);
+  const saved = await request('', 'PUT', {
+    ...proxy.settings,
+    bangumiEch: true,
+    echDohUrl: 'https://dns.example/dns-query',
+  });
   assert.equal(saved.data.enabled, true);
   assert.equal(saved.data.hasPassword, true);
   assert.equal(saved.data.password, undefined);
   assert.equal((await stat(join(directory, 'network-settings.json'))).mode & 0o777, 0o600);
   const reloaded = await new NetworkStore(directory).init();
   assert.equal(reloaded.data.password, credentials.password);
+  assert.equal(reloaded.data.bangumiEch, true);
+  assert.equal(reloaded.data.echDohUrl, 'https://dns.example/dns-query');
   const retained = await request('', 'PUT', { enabled: false, url: proxy.settings.url });
   assert.equal(retained.data.hasPassword, true);
+  assert.equal(retained.data.bangumiEch, true);
+  assert.equal(retained.data.echDohUrl, 'https://dns.example/dns-query');
   const tested = await request('/test', 'POST', {
-    settings: { enabled: true, url: proxy.settings.url },
+    settings: { enabled: true, url: proxy.settings.url, bangumiEch: false },
     url: origin.url,
   });
   assert.equal(tested.data.mode, 'proxy');
   assert.equal(proxy.calls.length, 1);
   assert.equal((await request()).data.enabled, false, 'draft tests never save');
+  assert.equal((await request()).data.bangumiEch, true, 'draft tests preserve saved ECH');
   const bad = await fetch(base, {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
@@ -316,8 +326,24 @@ test('network settings API persists secrets, supports draft tests and keeps save
   });
   assert.equal(bad.status, 400);
   assert.equal((await request()).data.enabled, false);
+  const badEch = await request('', 'PUT', { enabled: false, echDohUrl: 'http://dns.example' });
+  assert.equal(badEch.response.status, 400);
+  assert.equal((await request()).data.echDohUrl, 'https://dns.example/dns-query');
   const cleared = await request('', 'PUT', { enabled: false, username: '', password: '' });
   assert.equal(cleared.data.hasPassword, false);
+});
+
+test('legacy network files load with ECH disabled', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'kazumi-network-legacy-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(
+    join(directory, 'network-settings.json'),
+    JSON.stringify({ enabled: false, url: '', username: '', password: '' }),
+  );
+  const network = await new NetworkStore(directory).init();
+  assert.equal(network.data.bangumiEch, false);
+  await network.save({ enabled: false, bangumiEch: true });
+  assert.equal((await new NetworkStore(directory).init()).data.bangumiEch, true);
 });
 
 test('closing proxy tunnels cancels a pending SOCKS handshake', { timeout: 1000 }, async (t) => {

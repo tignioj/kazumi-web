@@ -3,6 +3,7 @@ import { Agent, buildConnector, fetch } from 'undici';
 import ipaddr from 'ipaddr.js';
 import { createEchTransport, isEchTarget } from './ech.js';
 import { createProxyTunnels } from './proxy-tunnel.js';
+import { DEFAULT_NETWORK_SETTINGS } from '../../shared/network-settings.js';
 
 export class HttpError extends Error {
   constructor(message, status = 400) {
@@ -146,9 +147,9 @@ export function createHttpClient({
   allowPrivate = process.env.ALLOW_PRIVATE_NETWORK === 'true',
   timeout = 20000,
   dnsOverHttpsUrl = process.env.DNS_OVER_HTTPS_URL,
-  bangumiEch = process.env.BANGUMI_ECH === 'true',
-  echDohUrl = process.env.ECH_DOH_URL || 'https://1.1.1.1/dns-query',
-  echHelperPath = process.env.ECH_HELPER_PATH,
+  bangumiEch = DEFAULT_NETWORK_SETTINGS.bangumiEch,
+  echDohUrl = DEFAULT_NETWORK_SETTINGS.echDohUrl,
+  echHelperPath,
   echTransport,
   getProxySettings = () => null,
   resolver,
@@ -159,19 +160,47 @@ export function createHttpClient({
     headersTimeout: timeout,
     bodyTimeout: 60000,
   });
-  const echLookup = bangumiEch ? createSafeLookup({ dnsOverHttpsUrl: echDohUrl }) : null;
-  const echBootstrap = bangumiEch
-    ? new Agent({ connect: { lookup: safeLookup(false), timeout: 8000 } })
-    : null;
-  const ech = bangumiEch
-    ? echTransport ||
-      createEchTransport({
-        lookup: echLookup.lookup,
-        binary: echHelperPath,
-        queryConfig: () =>
-          queryDnsOverHttps(echDohUrl, echBootstrap, 'crypto.cloudflare.com', 'HTTPS'),
-      })
-    : null;
+  let ech;
+  const echChannels = new Set();
+  function closeEch(channel) {
+    channel.closing ||= (async () => {
+      channel.transport.close();
+      await Promise.all([channel.lookup?.close(), channel.bootstrap?.close()]);
+    })().finally(() => echChannels.delete(channel));
+    return channel.closing;
+  }
+  async function requestEch(url, options, settings) {
+    if (echTransport) return echTransport.request(url, options);
+    const endpoint = settings?.echDohUrl ?? echDohUrl;
+    if (!ech || ech.endpoint !== endpoint) {
+      const previous = ech;
+      const lookup = createSafeLookup({ dnsOverHttpsUrl: endpoint });
+      const bootstrap = new Agent({ connect: { lookup: safeLookup(false), timeout: 8000 } });
+      ech = {
+        endpoint,
+        lookup,
+        bootstrap,
+        active: 0,
+        transport: createEchTransport({
+          lookup: lookup.lookup,
+          binary: echHelperPath,
+          queryConfig: () =>
+            queryDnsOverHttps(endpoint, bootstrap, 'crypto.cloudflare.com', 'HTTPS'),
+        }),
+      };
+      echChannels.add(ech);
+      // A DNS setting change must let requests on the previous channel finish.
+      if (previous && !previous.active) void closeEch(previous).catch(() => {});
+    }
+    const channel = ech;
+    channel.active++;
+    try {
+      return await channel.transport.request(url, options);
+    } finally {
+      channel.active--;
+      if (channel !== ech && !channel.active) void closeEch(channel).catch(() => {});
+    }
+  }
   const tunnels = createProxyTunnels({ lookup: dnsLookup.lookup });
   const tlsConnector = buildConnector({ timeout: 15000 });
   let proxyDispatcher;
@@ -230,16 +259,20 @@ export function createHttpClient({
       if (options.headersForUrl) headers = cleanHeaders(await options.headersForUrl(url.href));
       if (dropContentType) delete headers['content-type'];
       let response;
-      const usingEch = !proxy?.enabled && !!ech && isEchTarget(url);
+      const usingEch = !proxy?.enabled && (proxy?.bangumiEch ?? bangumiEch) && isEchTarget(url);
       try {
         response = await (usingEch
-          ? ech.request(url, {
-              method,
-              body,
-              headers,
-              timeout: options.timeout || timeout,
-              signal: options.signal || AbortSignal.timeout(options.timeout || timeout),
-            })
+          ? requestEch(
+              url,
+              {
+                method,
+                body,
+                headers,
+                timeout: options.timeout || timeout,
+                signal: options.signal || AbortSignal.timeout(options.timeout || timeout),
+              },
+              proxy,
+            )
           : fetch(url, {
               dispatcher: activeDispatcher,
               method,
@@ -312,14 +345,13 @@ export function createHttpClient({
     text,
     json,
     close: async () => {
-      ech?.close();
+      echTransport?.close();
       await Promise.all([
         dispatcher.close(),
         proxyDispatcher?.close(),
         ...retiring,
         dnsLookup.close(),
-        echLookup?.close(),
-        echBootstrap?.close(),
+        ...[...echChannels].map(closeEch),
       ]);
       await tunnels.close();
     },

@@ -60,7 +60,7 @@ function execute(binary, input, signal, children) {
     child.on('error', (error) => {
       failure = new Error(
         error.code === 'ENOENT'
-          ? '找不到 ECH 工具，请先运行 npm run build:ech，或设置 ECH_HELPER_PATH'
+          ? '找不到 ECH 工具，请先运行 npm run build:ech'
           : `无法启动 ECH 工具：${error.message}`,
       );
     });

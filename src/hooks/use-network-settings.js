@@ -23,7 +23,7 @@ export function useNetworkSettings() {
   }, [attempt]);
 
   const save = useCallback(async (settings) => {
-    if (savingRef.current) throw new Error('正在保存代理设置，请稍候');
+    if (savingRef.current) throw new Error('正在保存网络设置，请稍候');
     savingRef.current = true;
     setSaving(true);
     try {

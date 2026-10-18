@@ -16,13 +16,12 @@ export function registerNetworkRoutes(app, { network, http }) {
     const target = checkedUrl(req.body?.url, { allowPrivate: http.allowPrivate });
     const client = createHttpClient({
       allowPrivate: http.allowPrivate,
-      bangumiEch: false,
       getProxySettings: () => settings,
       timeout: 10000,
     });
     const started = Date.now();
     try {
-      const { response } = await client.request(target.href, {
+      const { response, echAccepted } = await client.request(target.href, {
         signal: AbortSignal.timeout(10000),
       });
       await response.body?.cancel();
@@ -31,7 +30,7 @@ export function registerNetworkRoutes(app, { network, http }) {
         ok: true,
         elapsedMs: Date.now() - started,
         status: response.status,
-        mode: settings.enabled ? 'proxy' : 'direct',
+        mode: settings.enabled ? 'proxy' : echAccepted ? 'ech' : 'direct',
       });
     } finally {
       await client.close();

@@ -127,13 +127,13 @@ API 规则的 JSONPath 支持字段访问、数组索引与通配符，不执行
 - 此功能需要启用动态解析并安装 Chromium。它是人工验证入口，不会自动识别答案，也不保证所有来源可用。Cloudflare 明确不支持 Playwright 等自动化浏览器完成生产环境挑战，部分滑块或特殊组件也可能不兼容。参见 [Cloudflare 支持的浏览器环境](https://developers.cloudflare.com/cloudflare-challenges/reference/supported-browsers/)。
 - 携带显式 `Authorization`、`Cookie` 或 `Proxy-Authorization` 请求头的 API 规则仍可正常请求，但暂不进入浏览器验证恢复，避免重定向携带这些凭据。浏览器验证过程中由源站设置的 Cookie 不受此限制。
 
-### 网络代理设置
+### 网络设置
 
-在「偏好设置 → 网络代理」启用代理，填写完整的 HTTP、HTTPS 或 SOCKS5 地址，例如 `http://127.0.0.1:7890` 或 `socks5://127.0.0.1:1080`；需要认证时，单独填写用户名和密码。点击「保存代理设置」后新请求立即生效，无需重启，已有连接可能继续使用原设置。关闭开关并保存即可恢复直连。代理不可用时会报错，不会自动切换到直连。
+在「偏好设置 → 网络设置」启用代理，填写完整的 HTTP、HTTPS 或 SOCKS5 地址，例如 `http://127.0.0.1:7890` 或 `socks5://127.0.0.1:1080`；需要认证时，单独填写用户名和密码。点击「保存网络设置」后新请求立即生效，无需重启，已有连接可能继续使用原设置。关闭代理开关并保存后，指定 Bangumi 请求按 ECH 开关连接，其他请求恢复直连。代理不可用时会报错，不会自动切换到直连。
 
 「测试连接」使用当前表单与测试地址发送实际请求，显示 HTTP 状态和耗时，不会保存或启用尚未保存的配置。密码不会通过设置接口回传，修改其他选项时留空可保留原密码，也可点击「清除已保存密码」后保存。
 
-代理设置由所有设备共享，保存在 `DATA_DIR/network-settings.json`，服务重启后保留；不包含在浏览器 JSON 数据备份中。代理用于服务端片源请求、动态解析及人工验证浏览器、图片、媒体流、视频缓存、规则和资料更新，`npm run metadata:update` 也读取已保存的配置。浏览器直接打开的原站链接、iframe 播放器及外部图片仍使用访问者自身网络。启用代理后优先使用代理通道，关闭后恢复原有 ECH 配置。
+代理和 ECH 设置由所有设备共享，保存在 `DATA_DIR/network-settings.json`，服务重启后保留；不包含在浏览器 JSON 数据备份中。代理用于服务端片源请求、动态解析及人工验证浏览器、图片、媒体流、视频缓存、规则和资料更新，`npm run metadata:update` 也读取已保存的配置。浏览器直接打开的原站链接、iframe 播放器及外部图片仍使用访问者自身网络。启用代理后优先使用代理通道，关闭后按已保存的 ECH 开关连接。
 
 代理地址从应用服务器访问：Docker 内的 `127.0.0.1` 指向容器自身。Docker Desktop 访问宿主机代理可填写 `host.docker.internal`；Linux Docker 需在 Compose 服务中添加 `extra_hosts: ["host.docker.internal:host-gateway"]`，并确保宿主机代理监听容器可达的地址。容器之间也可通过同一 Docker 网络中的服务名连接代理。
 
@@ -246,8 +246,6 @@ npm run test:e2e
 | `METADATA_AUTO_UPDATE`           | `true`                      | 本地模式下首次后台初始化并定期检查归档；`false` 关闭自动更新，仍允许手动更新                    |
 | `METADATA_UPDATE_INTERVAL_HOURS` | `24`                        | 自动检查间隔（小时，1–720）；更新失败后 15 分钟重试                                             |
 | `DNS_OVER_HTTPS_URL`             | 空                          | 可选 DNS JSON 查询端点，例如 `https://1.1.1.1/dns-query`；留空使用系统 DNS，仍校验并绑定公网 IP |
-| `BANGUMI_ECH`                    | `false`                     | 为指定 Bangumi API 和图片域名启用 ECH；Docker 已内置辅助程序                                    |
-| `ECH_DOH_URL`                    | `https://1.1.1.1/dns-query` | ECH 专用 DNS JSON 端点，用于查询目标公网 IP 和 HTTPS 记录中的 ECH 配置                          |
 | `DYNAMIC_RESOLVER`               | `true`                      | 服务端浏览器解析及人工验证；`false` 保留快速解析与网页播放器回退                                |
 | `DYNAMIC_RESOLVER_TIMEOUT_MS`    | `20000`                     | 单次浏览器解析超时（毫秒，正数，最大 30000）；人工验证等待时间另计                              |
 | `DYNAMIC_RESOLVER_CONCURRENCY`   | `2`                         | 浏览器任务并发上限（整数，1–4）；等待人工验证的任务也占用名额                                   |
@@ -266,7 +264,6 @@ npm run test:e2e
 | `BANGUMI_USER_AGENT`            | 内置 `KazumiWeb/1.0` 标识，完整值见 `.env.example`                                                 | 元数据服务请求 Bangumi 时使用的 User-Agent；不影响片源请求或封面地址查询                                                                |
 | `RULES_REPOSITORY`              | [KazumiRules 原始文件目录](https://raw.githubusercontent.com/Predidit/KazumiRules/main/)           | 规则目录及 JSON 文件的基址，需提供 `index.json` 和对应规则文件                                                                          |
 | `ALLOW_PRIVATE_NETWORK`         | `false`                                                                                            | 允许服务端请求本机、私网和保留地址，仅可信内网源或隔离测试环境按需开启；Compose 固定为 `false`                                          |
-| `ECH_HELPER_PATH`               | 项目内 `bin/kazumi-ech`，Windows 带 `.exe`                                                         | 预先构建的 ECH 辅助程序路径；Docker 已内置 `/app/bin/kazumi-ech`，通常无需修改                                                          |
 | `MEDIA_SECRET`                  | 每次启动随机生成                                                                                   | 媒体代理 URL 签名密钥，留空即可；如需固定值，应自行生成随机密钥。固定密钥不会持久化动态媒体会话，重启后仍需重新打开剧集；它不是登录密码 |
 
 例如，要在 Docker 中修改 Bangumi API 基址，先在 `.env` 中取消注释并修改 `BANGUMI_API_URL`，再新建 `compose.override.yaml`：
@@ -294,11 +291,11 @@ services:
 
 若开启了 TUN/Fake-IP DNS，域名可能解析为 `198.18.x.x`，页面会提示「域名解析到私有或保留网络地址」。在 `.env` 设置 `DNS_OVER_HTTPS_URL=https://1.1.1.1/dns-query` 后重新运行 `docker compose up -d`，不必关闭内网访问保护。DNS 查询将由所配置的解析服务处理。
 
-ECH 默认关闭。需要试用时，在部署用的 `.env` 中设置 `BANGUMI_ECH=true`，然后运行 `docker compose up -d --build`。本地开发先运行 `npm run build:ech`（需要 Go 1.23 或更新版本），再用 `BANGUMI_ECH=true npm run dev` 启动；开发模式的设置仍通过进程环境变量传入。
+ECH 默认关闭。在「偏好设置 → 网络设置」打开「启用 Bangumi ECH」，按需修改「ECH DNS 地址」（默认 `https://1.1.1.1/dns-query`），点击「保存网络设置」后即时生效，无需重启。ECH 设置不再读取环境变量。Docker 已内置辅助程序；本地开发先运行 `npm run build:ech`（需要 Go 1.23 或更新版本），工具固定放在项目的 `bin/kazumi-ech`（Windows 为 `bin/kazumi-ech.exe`）。
 
 ECH 辅助程序使用 Go 标准库 TLS，只有 `api.bgm.tv`、`next.bgm.tv`、`lain.bgm.tv` 的 HTTPS 默认端口请求会进入此通道。和原版一样，从 `crypto.cloudflare.com` 的 HTTPS DNS 记录取得 Cloudflare 的共享 ECH 配置；目标地址通过 DoH 解析、校验后绑定到连接，不关闭证书验证。每次响应必须确认 ECH 被服务端接受；失败时报告错误，不自动退回普通 TLS。重定向仍交给 Node 逐跳校验和移除跨域凭据。请求体上限为 1 MiB，响应上限为 8 MiB，不处理视频流。
 
-运行 `npm run check:ech` 可对同一组默认分类参数比较直连与 ECH，输出 HTTP 状态、耗时、条目数量和 `echAccepted`；本地会读取部署用的 `.env`。Docker 中可运行 `docker compose exec kazumi npm run check:ech`。这是实时网络诊断，不属于离线测试；ECH 分类请求失败时退出码为 1。ECH 成功协商不代表上游一定及时响应，分类超时仍可能出现在握手完成之后。
+运行 `npm run check:ech` 可对同一组默认分类参数比较直连与 ECH，输出 HTTP 状态、耗时、条目数量和 `echAccepted`；使用已保存的 ECH DNS 地址，诊断时忽略代理和 ECH 开关，不修改设置。本地会读取部署用的 `.env` 以确定数据目录等服务端配置。Docker 中可运行 `docker compose exec kazumi npm run check:ech`。这是实时网络诊断，不属于离线测试；ECH 分类请求失败时退出码为 1。ECH 成功协商不代表上游一定及时响应，分类超时仍可能出现在握手完成之后。
 
 ## 常见问题
 

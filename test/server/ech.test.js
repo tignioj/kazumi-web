@@ -172,3 +172,54 @@ test('ECH failures never silently fall back and unrelated requests retain their 
   assert.equal(await response.text(), 'ordinary HTTP');
   assert.equal(calls, 1);
 });
+
+test('ECH follows live network settings and yields to the proxy without recreating the client', async (t) => {
+  const proxy = createServer();
+  let proxyCalls = 0;
+  proxy.on('connect', (req, socket) => {
+    proxyCalls++;
+    socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n');
+  });
+  proxy.listen(0, '127.0.0.1');
+  await once(proxy, 'listening');
+  t.after(() => new Promise((resolve) => proxy.close(resolve)));
+  let settings = { enabled: false, bangumiEch: false };
+  let echCalls = 0;
+  let directLookups = 0;
+  const http = createHttpClient({
+    dnsOverHttpsUrl: '',
+    getProxySettings: () => settings,
+    resolver: async () => {
+      if (settings.enabled) return [{ address: '8.8.8.8', family: 4 }];
+      directLookups++;
+      throw Object.assign(new Error('direct transport selected'), { code: 'DIRECT_SELECTED' });
+    },
+    echTransport: {
+      request: async () => {
+        echCalls++;
+        return new Response('via ECH');
+      },
+      close() {},
+    },
+  });
+  t.after(() => http.close());
+  const target = 'https://api.bgm.tv/';
+  await assert.rejects(http.request(target), /DIRECT_SELECTED/);
+  settings = { ...settings, bangumiEch: true };
+  assert.equal((await http.text(target)).text, 'via ECH');
+  settings = { ...settings, bangumiEch: false };
+  await assert.rejects(http.request(target), /DIRECT_SELECTED/);
+  assert.equal(directLookups, 2);
+  assert.equal(echCalls, 1);
+  settings = {
+    enabled: true,
+    bangumiEch: true,
+    url: `http://127.0.0.1:${proxy.address().port}`,
+  };
+  await assert.rejects(http.request(target), /代理连接失败/);
+  assert.equal(proxyCalls, 1);
+  assert.equal(echCalls, 1, 'failed proxy requests do not fall back to ECH');
+  settings = { ...settings, enabled: false };
+  assert.equal((await http.text(target)).text, 'via ECH');
+  assert.equal(echCalls, 2);
+});
