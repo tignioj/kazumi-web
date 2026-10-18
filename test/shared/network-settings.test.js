@@ -32,6 +32,7 @@ test('ECH settings default off for existing files and survive proxy-only changes
   assert.deepEqual(normalizeNetworkSettings(legacy), {
     ...legacy,
     bangumiEch: false,
+    imageAcceleration: 'direct',
     echDohUrl: DEFAULT_NETWORK_SETTINGS.echDohUrl,
   });
   const configured = normalizeNetworkSettings({
@@ -54,4 +55,21 @@ test('ECH settings default off for existing files and survive proxy-only changes
     'https://dns.example/\nquery',
   ])
     assert.throws(() => normalizeNetworkSettings({ ...legacy, echDohUrl }), /ECH DNS/);
+});
+
+test('image modes are validated and remain independent of API ECH and proxy updates', () => {
+  for (const imageAcceleration of ['mirror', 'ech', 'direct']) {
+    const configured = normalizeNetworkSettings({ enabled: false, imageAcceleration });
+    assert.equal(configured.imageAcceleration, imageAcceleration);
+    assert.equal(configured.bangumiEch, false);
+    assert.equal(
+      normalizeNetworkSettings({ enabled: false, bangumiEch: true }, configured).imageAcceleration,
+      imageAcceleration,
+    );
+  }
+  for (const imageAcceleration of ['proxy', '', null, false, 1, {}, ['ech']])
+    assert.throws(
+      () => normalizeNetworkSettings({ enabled: false, imageAcceleration }),
+      /封面请求方式/,
+    );
 });

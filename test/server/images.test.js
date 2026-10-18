@@ -6,9 +6,10 @@ import { mkdtemp, readdir, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ImageCache } from '../../server/modules/images/cache.js';
+import { createCoverResolver } from '../../server/modules/images/cover-resolver.js';
 import { createApp } from '../../server/index.js';
 import { createHttpClient, HttpError } from '../../server/lib/http.js';
-import { imageSource } from '../../shared/images.js';
+import { bangumiImageMirrorUrl, imageSource } from '../../shared/images.js';
 
 const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=',
@@ -93,6 +94,102 @@ test('archive cover URLs are resolved only on cache misses, including after rest
     calls.map((call) => call.url),
     [image],
   );
+});
+
+test('mirror covers bypass Bangumi lookups and cannot redirect to another URL or source', async (t) => {
+  const { cache, calls, http } = await fixture(t, {
+    getNetworkSettings: () => ({ imageAcceleration: 'mirror', bangumiEch: true }),
+    resolveUrl: () => assert.fail('mirror requests must not query Bangumi first'),
+  });
+  const placeholder = 'https://api.bgm.tv/v0/subjects/10440/image?type=large';
+  assert.deepEqual((await cache.get(placeholder)).bytes, png);
+  assert.equal(calls[0].url, bangumiImageMirrorUrl(placeholder));
+  assert.equal(calls[0].options.ech, false);
+  for (const target of [
+    image,
+    'https://wsrv.nl/?url=localhost',
+    'https://wsrv.nl/other?url=lain.bgm.tv',
+    'https://wsrv.nl.evil/?url=lain.bgm.tv',
+    'http://wsrv.nl/?url=lain.bgm.tv',
+    'https://user:pass@wsrv.nl/?url=lain.bgm.tv',
+  ])
+    assert.throws(() => calls[0].options.validateUrl(target), { status: 403 });
+  await assert.rejects(cache.get(bangumiImageMirrorUrl(image)), { status: 403 });
+  http.request = async () => ({
+    url: 'https://wsrv.nl/?url=localhost',
+    response: new Response(png, { headers: { 'content-type': 'image/png' } }),
+  });
+  await assert.rejects(cache.get(image), { status: 403 });
+});
+
+test('mode changes keep cached covers and use the new route without reusing mirror validators', async (t) => {
+  let settings = { imageAcceleration: 'direct', bangumiEch: true };
+  const { cache, calls, http, directory } = await fixture(t, {
+    getNetworkSettings: () => settings,
+    responseHeaders: { etag: '"direct"' },
+  });
+  await cache.get(image);
+  assert.equal(calls[0].options.ech, false, 'API ECH must not enable image ECH');
+  settings = { imageAcceleration: 'mirror', bangumiEch: false };
+  await cache.get(image);
+  assert.equal(calls.length, 1, 'switching modes preserves fresh cached covers');
+  cache.entries.values().next().value.expires = 0;
+  await cache.get(image, { waitForRefresh: true });
+  assert.equal(calls[1].url, bangumiImageMirrorUrl(image));
+  assert.equal(calls[1].options.headers['if-none-match'], undefined);
+  settings = { imageAcceleration: 'ech', bangumiEch: false };
+  cache.entries.values().next().value.expires = 0;
+  await cache.get(image, { waitForRefresh: true });
+  assert.equal(calls[2].url, image);
+  assert.equal(calls[2].options.ech, true);
+  assert.equal(calls[2].options.headers['if-none-match'], undefined);
+  const reopened = await new ImageCache({
+    directory,
+    http,
+    getNetworkSettings: () => settings,
+  }).init();
+  t.after(() => reopened.close());
+  assert.deepEqual((await reopened.get(image)).bytes, png);
+  assert.equal(calls.length, 3);
+});
+
+test('API and image ECH use independent transports, including cover URL discovery', async (t) => {
+  let settings = { enabled: false, bangumiEch: false, imageAcceleration: 'ech' };
+  const requests = [];
+  const http = createHttpClient({
+    dnsOverHttpsUrl: '',
+    getProxySettings: () => settings,
+    resolver: async () => {
+      throw Object.assign(new Error('direct transport selected'), { code: 'DIRECT_SELECTED' });
+    },
+    echTransport: {
+      request: async (url) => {
+        requests.push(String(url));
+        return url.hostname === 'lain.bgm.tv'
+          ? new Response(png, { headers: { 'content-type': 'image/png' } })
+          : Response.json({ images: { large: image } });
+      },
+      close() {},
+    },
+  });
+  const { cache } = await fixture(t, {
+    http,
+    maxBytes: 0,
+    getNetworkSettings: () => settings,
+    resolveUrl: createCoverResolver(http),
+  });
+  t.after(() => http.close());
+  const placeholder = 'https://api.bgm.tv/v0/subjects/10440/image?type=large';
+  assert.deepEqual((await cache.get(placeholder)).bytes, png);
+  assert.deepEqual(requests, ['https://next.bgm.tv/p1/subjects/10440', image]);
+  await assert.rejects(http.json('https://api.bgm.tv/v0/subjects/10440'), /DIRECT_SELECTED/);
+  settings = { ...settings, bangumiEch: true, imageAcceleration: 'direct' };
+  assert.deepEqual(await http.json('https://api.bgm.tv/v0/subjects/10440'), {
+    images: { large: image },
+  });
+  await assert.rejects(cache.get(placeholder), /DIRECT_SELECTED/);
+  await assert.rejects(cache.get(image), /DIRECT_SELECTED/);
+  assert.equal(requests.length, 3, 'image direct requests must never use API ECH');
 });
 
 test('a full poster grid queues image misses while bounding upstream concurrency', async (t) => {
@@ -441,6 +538,24 @@ test('real image route returns cache headers, ETag/304, HEAD and no-store errors
   assert.equal(head.headers.get('content-length'), String(png.length));
   assert.equal((await head.arrayBuffer()).byteLength, 0);
   assert.equal(calls.length, 1);
+  for (const mode of ['mirror', 'ech', 'direct']) {
+    const saved = await fetch(`${base}/api/network-settings`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        enabled: false,
+        bangumiEch: mode !== 'ech',
+        imageAcceleration: mode,
+      }),
+    });
+    assert.equal(saved.status, 200);
+    const original = `${image}?mode=${mode}`;
+    const loaded = await fetch(base + imageSource(original));
+    assert.equal(loaded.status, 200);
+    assert.deepEqual(Buffer.from(await loaded.arrayBuffer()), png);
+    assert.equal(calls.at(-1).url, mode === 'mirror' ? bangumiImageMirrorUrl(original) : original);
+    assert.equal(calls.at(-1).options.ech, mode === 'ech');
+  }
   const blocked = await fetch(`${base}/api/image?url=http://127.0.0.1/private`);
   assert.equal(blocked.status, 403);
   assert.equal(blocked.headers.get('cache-control'), 'no-store');

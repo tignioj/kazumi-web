@@ -216,7 +216,7 @@ test('ECH follows live network settings and yields to the proxy without recreati
     bangumiEch: true,
     url: `http://127.0.0.1:${proxy.address().port}`,
   };
-  await assert.rejects(http.request(target), /代理连接失败/);
+  await assert.rejects(http.request(target, { ech: true }), /代理连接失败/);
   assert.equal(proxyCalls, 1);
   assert.equal(echCalls, 1, 'failed proxy requests do not fall back to ECH');
   settings = { ...settings, enabled: false };

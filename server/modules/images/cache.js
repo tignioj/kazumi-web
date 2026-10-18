@@ -10,7 +10,8 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { join } from 'node:path';
-import { bangumiImageUrl } from '../../../shared/images.js';
+import { bangumiImageUrl, bangumiImageMirrorUrl } from '../../../shared/images.js';
+import { DEFAULT_NETWORK_SETTINGS } from '../../../shared/network-settings.js';
 import { HttpError } from '../../lib/http.js';
 
 const MAX_IMAGE_BYTES = 5 * 1024 ** 2;
@@ -102,6 +103,7 @@ export class ImageCache {
     stalePeriod = STALE_PERIOD,
     now = Date.now,
     resolveUrl,
+    getNetworkSettings = () => DEFAULT_NETWORK_SETTINGS,
   }) {
     if (!Number.isSafeInteger(maxBytes) || maxBytes < 0)
       throw new Error('IMAGE_CACHE_MAX_BYTES 必须为非负安全整数');
@@ -110,6 +112,7 @@ export class ImageCache {
     this.directory = directory;
     this.http = http;
     this.resolveUrl = resolveUrl;
+    this.getNetworkSettings = getNetworkSettings;
     this.maxBytes = maxBytes;
     this.maxEntries = maxEntries;
     this.stalePeriod = stalePeriod;
@@ -239,8 +242,22 @@ export class ImageCache {
 
   async download(url, key, cached) {
     const signal = AbortSignal.timeout(15000);
-    const target = this.resolveUrl ? await this.resolveUrl(url, signal) : url;
-    validateImageUrl(target);
+    const mode = this.getNetworkSettings().imageAcceleration;
+    const ech = mode === 'ech';
+    const target =
+      mode === 'mirror'
+        ? bangumiImageMirrorUrl(url)
+        : this.resolveUrl
+          ? await this.resolveUrl(url, signal, { ech })
+          : url;
+    const validateUrl =
+      mode === 'mirror'
+        ? (value) => {
+            // Only the URL generated for this Bangumi image is allowed.
+            if (value !== target) throw new HttpError('图片镜像重定向地址无效', 403);
+          }
+        : validateImageUrl;
+    validateUrl(target);
     const headersForUrl = (value) => ({
       accept: 'image/avif,image/webp,image/png,image/jpeg,image/gif',
       ...(value === cached?.target && cached.upstreamEtag
@@ -252,12 +269,13 @@ export class ImageCache {
     });
     const result = await this.http.request(target, {
       // The HTTP client invokes this before EVERY redirect hop, before opening its socket.
-      validateUrl: validateImageUrl,
+      validateUrl,
+      ech,
       signal,
       headers: headersForUrl(target),
       headersForUrl,
     });
-    validateImageUrl(result.url);
+    validateUrl(result.url);
     const unchanged = result.response.status === 304 && cached?.target === result.url;
     if (!result.response.ok && !unchanged) {
       await result.response.body?.cancel();

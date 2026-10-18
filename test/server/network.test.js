@@ -294,9 +294,11 @@ test('network settings API persists secrets, supports draft tests and keeps save
   }
   assert.equal((await request()).data.enabled, false);
   assert.equal((await request()).data.bangumiEch, false);
+  assert.equal((await request()).data.imageAcceleration, 'direct');
   const saved = await request('', 'PUT', {
     ...proxy.settings,
     bangumiEch: true,
+    imageAcceleration: 'mirror',
     echDohUrl: 'https://dns.example/dns-query',
   });
   assert.equal(saved.data.enabled, true);
@@ -306,10 +308,12 @@ test('network settings API persists secrets, supports draft tests and keeps save
   const reloaded = await new NetworkStore(directory).init();
   assert.equal(reloaded.data.password, credentials.password);
   assert.equal(reloaded.data.bangumiEch, true);
+  assert.equal(reloaded.data.imageAcceleration, 'mirror');
   assert.equal(reloaded.data.echDohUrl, 'https://dns.example/dns-query');
   const retained = await request('', 'PUT', { enabled: false, url: proxy.settings.url });
   assert.equal(retained.data.hasPassword, true);
   assert.equal(retained.data.bangumiEch, true);
+  assert.equal(retained.data.imageAcceleration, 'mirror');
   assert.equal(retained.data.echDohUrl, 'https://dns.example/dns-query');
   const tested = await request('/test', 'POST', {
     settings: { enabled: true, url: proxy.settings.url, bangumiEch: false },
@@ -319,6 +323,11 @@ test('network settings API persists secrets, supports draft tests and keeps save
   assert.equal(proxy.calls.length, 1);
   assert.equal((await request()).data.enabled, false, 'draft tests never save');
   assert.equal((await request()).data.bangumiEch, true, 'draft tests preserve saved ECH');
+  assert.equal(
+    (await request()).data.imageAcceleration,
+    'mirror',
+    'draft tests preserve image mode',
+  );
   const bad = await fetch(base, {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
@@ -329,6 +338,9 @@ test('network settings API persists secrets, supports draft tests and keeps save
   const badEch = await request('', 'PUT', { enabled: false, echDohUrl: 'http://dns.example' });
   assert.equal(badEch.response.status, 400);
   assert.equal((await request()).data.echDohUrl, 'https://dns.example/dns-query');
+  const badImage = await request('', 'PUT', { enabled: false, imageAcceleration: 'invalid' });
+  assert.equal(badImage.response.status, 400);
+  assert.equal((await request()).data.imageAcceleration, 'mirror');
   const cleared = await request('', 'PUT', { enabled: false, username: '', password: '' });
   assert.equal(cleared.data.hasPassword, false);
 });
@@ -342,8 +354,30 @@ test('legacy network files load with ECH disabled', async (t) => {
   );
   const network = await new NetworkStore(directory).init();
   assert.equal(network.data.bangumiEch, false);
+  assert.equal(network.data.imageAcceleration, 'direct');
   await network.save({ enabled: false, bangumiEch: true });
-  assert.equal((await new NetworkStore(directory).init()).data.bangumiEch, true);
+  const reloaded = await new NetworkStore(directory).init();
+  assert.equal(reloaded.data.bangumiEch, true);
+  assert.equal(
+    reloaded.data.imageAcceleration,
+    'direct',
+    'changing API ECH leaves images unchanged',
+  );
+});
+
+test('legacy combined ECH settings migrate images once and persist independent choices', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'kazumi-network-images-legacy-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(
+    join(directory, 'network-settings.json'),
+    JSON.stringify({ enabled: false, url: '', username: '', password: '', bangumiEch: true }),
+  );
+  const network = await new NetworkStore(directory).init();
+  assert.equal(network.data.imageAcceleration, 'ech');
+  await network.save({ enabled: false, imageAcceleration: 'direct' });
+  const reloaded = await new NetworkStore(directory).init();
+  assert.equal(reloaded.data.bangumiEch, true);
+  assert.equal(reloaded.data.imageAcceleration, 'direct');
 });
 
 test('closing proxy tunnels cancels a pending SOCKS handshake', { timeout: 1000 }, async (t) => {

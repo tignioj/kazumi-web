@@ -17,7 +17,11 @@ export class NetworkStore {
   async init() {
     await mkdir(this.directory, { recursive: true });
     try {
-      this.data = normalizeNetworkSettings(JSON.parse(await readFile(this.file, 'utf8')));
+      const saved = JSON.parse(await readFile(this.file, 'utf8'));
+      // Older versions used the API ECH switch for images as well.
+      if (saved.imageAcceleration === undefined)
+        saved.imageAcceleration = saved.bangumiEch === true ? 'ech' : 'direct';
+      this.data = normalizeNetworkSettings(saved);
     } catch (error) {
       if (error.code !== 'ENOENT')
         throw new Error('无法读取网络设置，请检查 network-settings.json');

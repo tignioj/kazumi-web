@@ -20,6 +20,16 @@ export function bangumiImageUrl(value) {
   }
 }
 
+export function bangumiImageMirrorUrl(value) {
+  const source = bangumiImageUrl(value);
+  if (!source) return null;
+  const url = new URL(source);
+  const mirror = new URL('https://wsrv.nl/');
+  mirror.searchParams.set('url', url.host + url.pathname + url.search);
+  if (url.pathname.toLowerCase().endsWith('.gif')) mirror.searchParams.set('n', '-1');
+  return mirror.href;
+}
+
 // Keep original URLs in watch data/backups; route every rendering surface through here.
 export function imageSource(value) {
   const url = bangumiImageUrl(value);

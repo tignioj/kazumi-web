@@ -259,7 +259,8 @@ export function createHttpClient({
       if (options.headersForUrl) headers = cleanHeaders(await options.headersForUrl(url.href));
       if (dropContentType) delete headers['content-type'];
       let response;
-      const usingEch = !proxy?.enabled && (proxy?.bangumiEch ?? bangumiEch) && isEchTarget(url);
+      const usingEch =
+        !proxy?.enabled && (options.ech ?? proxy?.bangumiEch ?? bangumiEch) && isEchTarget(url);
       try {
         response = await (usingEch
           ? requestEch(

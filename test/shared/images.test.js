@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bangumiImageUrl, imageSource } from '../../shared/images.js';
+import { bangumiImageUrl, bangumiImageMirrorUrl, imageSource } from '../../shared/images.js';
 
 test('all Bangumi image URL forms use the same-origin endpoint, with no open proxy', () => {
   assert.equal(
@@ -25,4 +25,29 @@ test('all Bangumi image URL forms use the same-origin endpoint, with no open pro
     assert.equal(bangumiImageUrl(url), null);
     assert.equal(imageSource(url), url);
   }
+});
+
+test('wsrv mirrors only Bangumi images and preserves paths, queries and animated GIFs', () => {
+  assert.equal(
+    bangumiImageMirrorUrl('https://lain.bgm.tv/pic/cover/l/cover.jpg'),
+    'https://wsrv.nl/?url=lain.bgm.tv%2Fpic%2Fcover%2Fl%2Fcover.jpg',
+  );
+  assert.equal(
+    bangumiImageMirrorUrl('http://lain.bgm.tv/pic/animated.GIF#fragment'),
+    'https://wsrv.nl/?url=lain.bgm.tv%2Fpic%2Fanimated.GIF&n=-1',
+  );
+  for (const kind of ['subjects', 'characters', 'persons']) {
+    const mirror = new URL(
+      bangumiImageMirrorUrl(`https://api.bgm.tv/v0/${kind}/253/image?type=large`),
+    );
+    assert.equal(mirror.searchParams.get('url'), `api.bgm.tv/v0/${kind}/253/image?type=large`);
+  }
+  for (const url of [
+    'https://wsrv.nl/?url=localhost',
+    'https://lain.bgm.tv.evil/image.jpg',
+    'https://user:pass@lain.bgm.tv/image.jpg',
+    'https://example.com/image.jpg',
+    'https://api.bgm.tv/v0/subjects/253',
+  ])
+    assert.equal(bangumiImageMirrorUrl(url), null);
 });

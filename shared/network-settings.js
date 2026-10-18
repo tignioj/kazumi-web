@@ -4,6 +4,7 @@ export const DEFAULT_NETWORK_SETTINGS = {
   username: '',
   password: '',
   bangumiEch: false,
+  imageAcceleration: 'direct',
   echDohUrl: 'https://1.1.1.1/dns-query',
 };
 
@@ -48,6 +49,12 @@ export function normalizeNetworkSettings(input, previous = DEFAULT_NETWORK_SETTI
       ? (previous.bangumiEch ?? DEFAULT_NETWORK_SETTINGS.bangumiEch)
       : input.bangumiEch;
   if (typeof result.bangumiEch !== 'boolean') throw new Error('请选择是否启用 Bangumi ECH');
+  result.imageAcceleration = input.imageAcceleration ?? previous.imageAcceleration;
+  if (
+    input.imageAcceleration === null ||
+    !['mirror', 'ech', 'direct'].includes(result.imageAcceleration)
+  )
+    throw new Error('封面请求方式仅支持镜像、ECH 或直连');
   const echDohUrl =
     input.echDohUrl === undefined
       ? (previous.echDohUrl ?? DEFAULT_NETWORK_SETTINGS.echDohUrl)

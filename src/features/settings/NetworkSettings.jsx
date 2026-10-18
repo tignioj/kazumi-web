@@ -3,6 +3,8 @@ import { Network, Save, Wifi } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { Notice } from '../../components/feedback.jsx';
 
+const imageModes = { mirror: '镜像', ech: 'ECH', direct: '直连' };
+
 export function NetworkSettings({ request, notify }) {
   const [form, setForm] = useState(null);
   const [passwordChanged, setPasswordChanged] = useState(false);
@@ -34,6 +36,7 @@ export function NetworkSettings({ request, notify }) {
       url: form.url,
       username: form.username,
       bangumiEch: form.bangumiEch,
+      imageAcceleration: form.imageAcceleration,
       echDohUrl: form.echDohUrl,
     };
     if (passwordChanged) settings.password = form.password;
@@ -144,22 +147,41 @@ export function NetworkSettings({ request, notify }) {
           </fieldset>
           <div className="setting-row">
             <div>
-              <h3>启用 Bangumi ECH</h3>
-              <p>
-                用于 Bangumi API 和封面图片。启用网络代理时优先使用代理；ECH 连接失败时会报告错误。
-              </p>
+              <h3>启用 Bangumi API ECH</h3>
+              <p>用于 Bangumi API，封面请求单独设置。ECH 连接失败时会报告错误。</p>
             </div>
             <button
               type="button"
               className={`switch ${form.bangumiEch ? 'on' : ''}`}
               role="switch"
               aria-checked={form.bangumiEch}
-              aria-label="启用 Bangumi ECH"
+              aria-label="启用 Bangumi API ECH"
               disabled={disabled}
               onClick={() => change('bangumiEch', !form.bangumiEch)}
             >
               <span />
             </button>
+          </div>
+          <div className="setting-row">
+            <div>
+              <h3 id="image-acceleration-label">封面请求方式</h3>
+              <p id="image-acceleration-help">
+                镜像通过 wsrv.nl 加载，ECH 加密握手，直连加载原图。与 Bangumi API 设置独立。
+              </p>
+            </div>
+            <select
+              aria-labelledby="image-acceleration-label"
+              aria-describedby="image-acceleration-help"
+              value={form.imageAcceleration}
+              disabled={disabled}
+              onChange={(event) => change('imageAcceleration', event.target.value)}
+            >
+              {Object.entries(imageModes).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
           </div>
           <fieldset disabled={disabled} className="network-fields">
             <label>
@@ -175,11 +197,11 @@ export function NetworkSettings({ request, notify }) {
               />
             </label>
             <p id="ech-dns-help" className="muted small">
-              使用 HTTPS DNS JSON 服务查询 ECH 配置和目标地址。Docker 已内置 ECH
-              工具；本地开发需先运行 npm run build:ech。
+              API 和封面 ECH 共用此 DNS 地址。Docker 已内置 ECH 工具；本地开发需先运行 npm run
+              build:ech。
             </p>
             <label>
-              <span>测试地址</span>
+              <span>API 测试地址</span>
               <input
                 type="url"
                 value={testUrl}
@@ -191,8 +213,8 @@ export function NetworkSettings({ request, notify }) {
             </label>
           </fieldset>
           <p className="muted small">
-            保存后新请求即时生效，无需重启。已有连接可能继续使用原设置。代理关闭时，指定 Bangumi
-            请求按 ECH 开关连接，其他请求直连。
+            保存后新请求即时生效，无需重启，已有封面缓存继续复用。启用网络代理时优先使用代理。
+            连接测试按 API 设置进行，不测试封面请求方式。
           </p>
           <div className="button-group">
             <button type="submit" className="button primary" disabled={disabled}>
@@ -212,11 +234,7 @@ export function NetworkSettings({ request, notify }) {
           {result && (
             <p className="network-result muted small" role="status">
               {result === 'saved'
-                ? request.data.enabled
-                  ? '网络代理已启用，新请求将通过代理连接。'
-                  : request.data.bangumiEch
-                    ? 'Bangumi ECH 已启用，指定 Bangumi 请求将通过 ECH 连接。'
-                    : '网络代理和 Bangumi ECH 已关闭，新请求将直接连接。'
+                ? `已保存。Bangumi API：${request.data.bangumiEch ? 'ECH' : '直连'}；封面：${imageModes[request.data.imageAcceleration]}。${request.data.enabled ? '网络代理已启用，优先通过代理连接。' : ''}`
                 : result}
             </p>
           )}

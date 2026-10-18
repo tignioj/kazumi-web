@@ -7,13 +7,14 @@ export function createCoverResolver(
   http,
   nextUrl = process.env.BANGUMI_NEXT_URL || 'https://next.bgm.tv',
 ) {
-  return async (value, signal) => {
+  return async (value, signal, options = {}) => {
     const url = new URL(value);
     const match =
       url.hostname === 'api.bgm.tv' && /^\/v0\/subjects\/([1-9]\d*)\/image$/.exec(url.pathname);
     if (!match) return value;
     const data = await http.json(`${nextUrl.replace(/\/$/, '')}/p1/subjects/${match[1]}`, {
       signal,
+      ...options,
     });
     const images = (data.subject || data).images;
     const target = bangumiImageUrl(images?.large || images?.common || images?.medium || '');
