@@ -56,9 +56,15 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
   color: var(--muted);
   font-size: 9px;
   margin-top: 23px;
+}
+.rule-card > .rule-compatibility {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
 }
 .rule-card-actions {
   display: flex;

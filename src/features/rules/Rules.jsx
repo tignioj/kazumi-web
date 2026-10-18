@@ -19,7 +19,15 @@ import { Notice, Empty, Spinner } from '../../components/feedback.jsx';
 import { PageHeading } from '../../components/PageHeading.jsx';
 import { Modal } from '../../components/Modal.jsx';
 
-export function Rules({ rules, error, reload, notify, availableUpdates }) {
+export function Rules({
+  rules,
+  error,
+  reload,
+  notify,
+  availableUpdates,
+  compatibility = [],
+  blockedUpdates = [],
+}) {
   const [tab, setTab] = useState('installed');
   const [modal, setModal] = useState(null);
   const [content, setContent] = useState('');
@@ -31,6 +39,8 @@ export function Rules({ rules, error, reload, notify, availableUpdates }) {
   const [installing, setInstalling] = useState('');
   const [updateResults, setUpdateResults] = useState([]);
   const [catalogFilter, setCatalogFilter] = useState('');
+  const compatibilityByName = new Map(compatibility.map((rule) => [rule.name.toLowerCase(), rule]));
+  const blockedByName = new Map(blockedUpdates.map((rule) => [rule.name.toLowerCase(), rule]));
   const openImport = () => {
     setModal({ type: 'import' });
     setContent('');
@@ -52,6 +62,18 @@ export function Rules({ rules, error, reload, notify, availableUpdates }) {
       notify(modal.type === 'edit' ? '规则已更新' : '规则已导入');
     } catch (e) {
       setFormError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const validate = async () => {
+    setBusy(true);
+    setFormError('');
+    try {
+      await api('/rules/validate', { method: 'POST', body: JSON.stringify({ content }) });
+      notify('规则配置与兼容性检查通过');
+    } catch (error) {
+      setFormError(error.message);
     } finally {
       setBusy(false);
     }
@@ -78,7 +100,7 @@ export function Rules({ rules, error, reload, notify, availableUpdates }) {
       });
       await reload();
       if (tab === 'catalog') catalog.retry();
-      setUpdateResults(results.filter((result) => ['failed', 'unlisted'].includes(result.status)));
+      setUpdateResults(results.filter((result) => !['updated', 'latest'].includes(result.status)));
       const updated = results.filter((result) => result.status === 'updated').length;
       const latest = results.filter((result) => result.status === 'latest').length;
       notify(
@@ -162,67 +184,81 @@ export function Rules({ rules, error, reload, notify, availableUpdates }) {
       {tab === 'installed' &&
         (rules.length ? (
           <div className="rule-grid">
-            {rules.map((rule) => (
-              <article className="rule-card" key={rule.name}>
-                <div className="rule-card-top">
-                  <span className="rule-symbol">{rule.name?.slice(0, 1)}</span>
-                  {availableUpdates.has(rule.name.toLowerCase()) ? (
-                    <span
-                      className="rule-badge rule-update-badge"
-                      title={`可更新至 ${availableUpdates.get(rule.name.toLowerCase())}`}
-                    >
-                      可更新
-                    </span>
-                  ) : (
-                    <span className="rule-badge">已安装</span>
-                  )}
-                </div>
-                <h3>{rule.name}</h3>
-                <p>{rule.baseURL || rule.baseUrl || '自定义站点规则'}</p>
-                <div className="rule-details">
-                  <span>版本 {rule.version || '—'}</span>
-                  <span>{rule.author || '社区规则'}</span>
-                </div>
-                <div className="rule-card-actions">
-                  <button
-                    className="text-button"
-                    onClick={() => {
-                      setModal({ type: 'edit', rule });
-                      setContent(JSON.stringify(rule, null, 2));
-                      setFormError('');
-                    }}
-                  >
-                    <SlidersHorizontal size={14} />
-                    编辑规则
-                  </button>
-                  <div>
-                    <button
-                      className="icon-button"
-                      aria-label={`更新 ${rule.name}`}
-                      title="从官方目录更新规则"
-                      disabled={!!installing}
-                      onClick={() => update(rule.name)}
-                    >
-                      <RefreshCw size={16} className={installing === rule.name ? 'spin' : ''} />
-                    </button>
-                    <button
-                      className="icon-button"
-                      aria-label={`导出 ${rule.name}`}
-                      onClick={() => downloadJSON(rule, `${rule.name}.json`)}
-                    >
-                      <Download size={16} />
-                    </button>
-                    <button
-                      className="icon-button"
-                      aria-label={`删除 ${rule.name}`}
-                      onClick={() => setDeleteRule(rule)}
-                    >
-                      <Trash2 size={16} />
-                    </button>
+            {rules.map((rule) => {
+              const compatibility = compatibilityByName.get(rule.name.toLowerCase());
+              const blocked = blockedByName.get(rule.name.toLowerCase());
+              return (
+                <article className="rule-card" key={rule.name}>
+                  <div className="rule-card-top">
+                    <span className="rule-symbol">{rule.name?.slice(0, 1)}</span>
+                    {blocked ? (
+                      <span className="rule-badge rule-update-badge">更新受阻</span>
+                    ) : availableUpdates.has(rule.name.toLowerCase()) ? (
+                      <span
+                        className="rule-badge rule-update-badge"
+                        title={`可更新至 ${availableUpdates.get(rule.name.toLowerCase())}`}
+                      >
+                        可更新
+                      </span>
+                    ) : (
+                      <span className="rule-badge">已安装</span>
+                    )}
                   </div>
-                </div>
-              </article>
-            ))}
+                  <h3>{rule.name}</h3>
+                  <p>{rule.baseURL || rule.baseUrl || '自定义站点规则'}</p>
+                  <div className="rule-details">
+                    <span>版本 {rule.version || '—'}</span>
+                    <span>API {rule.api || '1'}</span>
+                    <span>{rule.author || '社区规则'}</span>
+                  </div>
+                  {(blocked || compatibility?.compatible === false) && (
+                    <p className="rule-compatibility" role="status">
+                      {blocked
+                        ? `已保留当前规则：${blocked.message}`
+                        : compatibility.issues.map((issue) => issue.message).join('；')}
+                    </p>
+                  )}
+                  <div className="rule-card-actions">
+                    <button
+                      className="text-button"
+                      onClick={() => {
+                        setModal({ type: 'edit', rule });
+                        setContent(JSON.stringify(rule, null, 2));
+                        setFormError('');
+                      }}
+                    >
+                      <SlidersHorizontal size={14} />
+                      编辑规则
+                    </button>
+                    <div>
+                      <button
+                        className="icon-button"
+                        aria-label={`更新 ${rule.name}`}
+                        title="从官方目录更新规则"
+                        disabled={!!installing}
+                        onClick={() => update(rule.name)}
+                      >
+                        <RefreshCw size={16} className={installing === rule.name ? 'spin' : ''} />
+                      </button>
+                      <button
+                        className="icon-button"
+                        aria-label={`导出 ${rule.name}`}
+                        onClick={() => downloadJSON(rule, `${rule.name}.json`)}
+                      >
+                        <Download size={16} />
+                      </button>
+                      <button
+                        className="icon-button"
+                        aria-label={`删除 ${rule.name}`}
+                        onClick={() => setDeleteRule(rule)}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
           </div>
         ) : (
           <Empty
@@ -319,7 +355,7 @@ export function Rules({ rules, error, reload, notify, availableUpdates }) {
           <p className="muted">
             {modal.type === 'edit'
               ? '编辑完整的规则 JSON，保存后立即生效。'
-              : '粘贴单条规则、规则数组或 kazumi:// 分享链接，也可以选择本地 JSON 文件。'}
+              : '粘贴完整规则、规则数组或 kazumi:// 分享链接，也可以选择本地 JSON 文件。保存前可检查兼容性。'}
           </p>
           {modal.type === 'import' && (
             <>
@@ -349,6 +385,9 @@ export function Rules({ rules, error, reload, notify, availableUpdates }) {
           />
           {formError && <Notice>{formError}</Notice>}
           <div className="modal-actions">
+            <button className="button quiet" disabled={busy || !content.trim()} onClick={validate}>
+              检查兼容性
+            </button>
             <button className="button quiet" disabled={busy} onClick={() => setModal(null)}>
               取消
             </button>

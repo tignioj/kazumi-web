@@ -60,6 +60,7 @@ export default function App() {
     autoNext: false,
   });
   const [rules, setRules] = useState([]);
+  const [ruleCompatibility, setRuleCompatibility] = useState([]);
   const [rulesError, setRulesError] = useState('');
   const { data: ruleUpdates, retry: checkRuleUpdates } = useRequest(
     rules.length ? '/rules/updates' : null,
@@ -82,6 +83,7 @@ export default function App() {
     try {
       const data = await api('/rules');
       setRules(data.rules || []);
+      setRuleCompatibility(data.compatibility || []);
       setRulesError('');
     } catch (e) {
       setRulesError(e.message);
@@ -452,6 +454,8 @@ export default function App() {
                   reload={reloadRules}
                   notify={notify}
                   availableUpdates={availableUpdates}
+                  compatibility={ruleCompatibility}
+                  blockedUpdates={ruleUpdates?.blocked || []}
                 />
               )}
               {section === 'settings' && (

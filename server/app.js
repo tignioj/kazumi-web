@@ -59,15 +59,6 @@ export async function createApp(options = {}) {
         JSON.parse(await readFile(resolve(directory, 'defaults', `${name}.json`), 'utf8')),
       ),
     ));
-  const store = await new RuleStore(dataDir, initialRules).init();
-  const watchStore = await new WatchStore(dataDir).init();
-  const images = await new ImageCache({
-    directory: resolve(dataDir, 'images'),
-    http: imageHttp,
-    resolveUrl: createCoverResolver(imageHttp),
-    getNetworkSettings: () => network.data,
-    maxBytes: Number(process.env.IMAGE_CACHE_MAX_BYTES ?? 5 * 1024 ** 3),
-  }).init();
   const browserResolver =
     options.browserResolver === false || process.env.DYNAMIC_RESOLVER === 'false'
       ? null
@@ -76,6 +67,18 @@ export async function createApp(options = {}) {
           timeout: Number(process.env.DYNAMIC_RESOLVER_TIMEOUT_MS || 20000),
           maxConcurrency: Number(process.env.DYNAMIC_RESOLVER_CONCURRENCY || 2),
         });
+  const store = await new RuleStore(dataDir, initialRules, {
+    dynamicResolver:
+      typeof browserResolver?.read === 'function' && browserResolver.available !== false,
+  }).init();
+  const watchStore = await new WatchStore(dataDir).init();
+  const images = await new ImageCache({
+    directory: resolve(dataDir, 'images'),
+    http: imageHttp,
+    resolveUrl: createCoverResolver(imageHttp),
+    getNetworkSettings: () => network.data,
+    maxBytes: Number(process.env.IMAGE_CACHE_MAX_BYTES ?? 5 * 1024 ** 3),
+  }).init();
   const engine = new RuleEngine(videoHttp, { browserResolver });
   const media = new MediaService(videoHttp, undefined, { browserResolver });
   const downloads = await new DownloadManager({

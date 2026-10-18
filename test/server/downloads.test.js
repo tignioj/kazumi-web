@@ -275,9 +275,16 @@ async function fixture(t, { downloadOptions, session = false } = {}) {
   await once(upstream, 'listening');
   const upstreamUrl = `http://127.0.0.1:${upstream.address().port}`;
   const rule = {
+    api: '5',
     name: 'Download fixture',
     baseURL: upstreamUrl,
     referer: `${upstreamUrl}/watch`,
+    searchURL: `${upstreamUrl}/search?wd=@keyword`,
+    searchList: '//article',
+    searchName: '//a',
+    searchResult: '//a',
+    chapterRoads: '//ul',
+    chapterResult: '//a',
   };
   let application;
   let server;

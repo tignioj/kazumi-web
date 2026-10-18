@@ -1,64 +1,9 @@
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { HttpError, checkedUrl } from '../../lib/http.js';
-
-export const RULE_API_VERSION = 9;
-
-export function normalizeRule(input) {
-  if (!input || typeof input !== 'object' || Array.isArray(input))
-    throw new HttpError('每条规则必须是 JSON 对象');
-  if (typeof input.name !== 'string' || !input.name.trim() || input.name.length > 100)
-    throw new HttpError('规则名称不能为空且不能超过 100 个字符');
-  if (
-    !['string', 'number'].includes(typeof (input.api ?? 1)) ||
-    !Number.isInteger(Number(input.api ?? 1)) ||
-    Number(input.api ?? 1) < 1 ||
-    Number(input.api ?? 1) > RULE_API_VERSION
-  )
-    throw new HttpError(`规则 API 版本不受支持（最高 ${RULE_API_VERSION}）`);
-  const rule = {
-    api: '1',
-    type: 'anime',
-    version: '',
-    searchMode: 'xpath',
-    chapterMode: 'xpath',
-    ...input,
-    name: input.name.trim(),
-    enabled: input.enabled !== false,
-  };
-  rule.api = String(input.api ?? 1);
-  if (rule.version == null) rule.version = '';
-  else if (typeof rule.version === 'number' && Number.isFinite(rule.version))
-    rule.version = String(rule.version);
-  if (typeof rule.version !== 'string' || rule.version.length > 100)
-    throw new HttpError('version 必须是文本或有限数字，长度不能超过 100 个字符');
-  for (const field of ['type', 'author']) {
-    if (rule[field] != null && typeof rule[field] !== 'string')
-      throw new HttpError(`${field} 必须是文本`);
-  }
-  rule.type ??= 'anime';
-  rule.author ??= '';
-  if (typeof rule.baseURL !== 'string') throw new HttpError('规则缺少 baseURL');
-  checkedUrl(rule.baseURL, { allowPrivate: true });
-  for (const field of ['searchMode', 'chapterMode'])
-    if (!['xpath', 'api'].includes(rule[field]))
-      throw new HttpError(`${field} 必须是 xpath 或 api`);
-  for (const field of [
-    'searchURL',
-    'searchList',
-    'searchName',
-    'searchResult',
-    'chapterRoads',
-    'chapterResult',
-    'referer',
-    'userAgent',
-  ]) {
-    if (rule[field] !== undefined && typeof rule[field] !== 'string')
-      throw new HttpError(`${field} 必须是文本`);
-  }
-  return rule;
-}
+import { HttpError } from '../../lib/http.js';
+import { normalizeRule } from './validation.js';
+export { normalizeRule, RULE_API_VERSION } from './validation.js';
 
 function decodeShare(value) {
   const payload = decodeURIComponent(value.replace(/^kazumi:(?:\/\/)?/i, '')).replace(/\s/g, '');
@@ -70,7 +15,7 @@ function decodeShare(value) {
   }
 }
 
-export function parseImport(content) {
+export function parseImport(content, options) {
   let value = content;
   if (typeof content === 'string') {
     if (Buffer.byteLength(content) > 2 * 1024 * 1024) throw new HttpError('导入内容过大');
@@ -100,29 +45,36 @@ export function parseImport(content) {
   if (!items.length || items.length > 500) throw new HttpError('一次导入 1 至 500 条规则');
   const rules = new Map();
   for (const item of items) {
-    const rule = normalizeRule(typeof item === 'string' ? decodeShare(item) : item);
+    const rule = normalizeRule(typeof item === 'string' ? decodeShare(item) : item, options);
     rules.set(rule.name.toLowerCase(), rule);
   }
   return [...rules.values()];
 }
 
 export class RuleStore {
-  constructor(directory, initialRules = []) {
+  constructor(directory, initialRules = [], validationOptions = {}) {
     this.directory = directory;
     this.file = join(directory, 'rules.json');
     this.rules = [];
     this.initialRules = initialRules;
+    this.validationOptions = validationOptions;
     this.pending = Promise.resolve();
   }
   async init() {
     await mkdir(this.directory, { recursive: true });
     try {
       const value = JSON.parse(await readFile(this.file, 'utf8'));
-      this.rules = Array.isArray(value) && value.length === 0 ? [] : parseImport(value);
+      // Existing installations can contain rules accepted by older validators.
+      // Keep them readable and report their compatibility through the API.
+      this.rules =
+        Array.isArray(value) && value.length === 0 ? [] : parseImport(value, { validate: false });
     } catch (error) {
       if (error.code !== 'ENOENT')
         throw new Error(`无法读取规则数据文件 ${this.file}: ${error.message}`);
-      if (this.initialRules.length) await this.import(this.initialRules);
+      if (this.initialRules.length) {
+        const initial = parseImport(this.initialRules, { validate: false });
+        await this.update(() => initial);
+      }
     }
     return this;
   }
@@ -148,7 +100,7 @@ export class RuleStore {
     return operation;
   }
   import(content) {
-    const incoming = parseImport(content);
+    const incoming = parseImport(content, this.validationOptions);
     return this.update((existing) => {
       const map = new Map(existing.map((rule) => [rule.name.toLowerCase(), rule]));
       for (const rule of incoming) map.set(rule.name.toLowerCase(), rule);
@@ -156,7 +108,7 @@ export class RuleStore {
     });
   }
   replace(name, input) {
-    const replacement = normalizeRule(input);
+    const replacement = normalizeRule(input, this.validationOptions);
     return this.update((rules) => {
       const index = rules.findIndex((rule) => rule.name.toLowerCase() === name.toLowerCase());
       if (index < 0) throw new HttpError('找不到指定规则', 404);

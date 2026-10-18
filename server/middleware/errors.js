@@ -6,6 +6,7 @@ export const handleError = (error, req, res, next) => {
   const status = error.status >= 400 && error.status <= 599 ? error.status : 500;
   if (status === 500) console.error('[kazumi-web]', error);
   res.status(status).json({
+    ...(error.compatibility ? { code: error.code, compatibility: error.compatibility } : {}),
     error:
       error.type === 'entity.parse.failed'
         ? '请求 JSON 格式无效'

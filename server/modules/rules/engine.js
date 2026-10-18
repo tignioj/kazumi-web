@@ -17,17 +17,27 @@ export function absoluteUrl(value, base) {
   }
 }
 
-export function readPath(document, expression) {
+export function normalizeJsonPath(expression) {
   // Match Kazumi's deliberately small JSONPath grammar. Filters/scripts and
   // recursive descent are excluded, even though jsonpath-plus supports them.
-  if (
-    typeof expression !== 'string' ||
-    !/^\$(?:(?:\.[A-Za-z0-9_$-]+)|(?:\[(?:\d+|\*|'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")\]))*$/.test(
-      expression,
-    )
-  )
+  if (typeof expression !== 'string' || !expression.startsWith('$'))
     throw new HttpError(`不支持的 JSONPath: ${expression}`);
-  return JSONPath({ path: expression, json: document, eval: false });
+  let remaining = expression.slice(1);
+  let path = '$';
+  while (remaining) {
+    const token =
+      /^(\.[A-Za-z0-9_$-]+|\[\s*(\d+|\*|'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")\s*\])/.exec(remaining);
+    if (!token) throw new HttpError(`不支持的 JSONPath: ${expression}`);
+    path += token[2] === undefined ? token[1] : `[${token[2]}]`;
+    remaining = remaining.slice(token[0].length);
+  }
+  return path;
+}
+
+export function readPath(document, expression) {
+  const path = normalizeJsonPath(expression);
+  if (document == null) return [];
+  return JSONPath({ path, json: document, eval: false }) ?? [];
 }
 const first = (document, expression) => readPath(document, expression)[0];
 
@@ -64,18 +74,18 @@ export function prepareApiRequest(config, variables) {
     url.searchParams.set(renderTemplate(key, variables), String(renderValue(value, variables)));
   const headers = Object.fromEntries(
     Object.entries(config.headers || {}).map(([key, value]) => [
-      renderTemplate(key, variables),
+      renderTemplate(key, variables).toLowerCase(),
       String(renderValue(value, variables)),
     ]),
   );
   let body;
   if (method === 'POST' && config.bodyType === 'json') {
     body = JSON.stringify(renderValue(config.body, variables));
-    headers['content-type'] = 'application/json';
+    headers['content-type'] ??= 'application/json';
   }
   if (method === 'POST' && config.bodyType === 'form') {
     body = new URLSearchParams(renderValue(config.body || {}, variables)).toString();
-    headers['content-type'] = 'application/x-www-form-urlencoded';
+    headers['content-type'] ??= 'application/x-www-form-urlencoded';
   }
   return { url: url.href, method, headers, body };
 }
@@ -102,8 +112,8 @@ const nodeText = (node) => scalar(typeof node === 'string' ? node : node?.textCo
 const nodeUrl = (node) =>
   scalar(node?.getAttribute?.('href') ?? (node?.nodeType === 2 ? node.nodeValue : ''));
 
-function detectChallenge(document, rule) {
-  if (inspectChallengeDocument({ config: rule.antiCrawlerConfig }, document).detected)
+function detectChallenge(document, rule, raw) {
+  if (inspectChallengeDocument({ config: rule.antiCrawlerConfig, raw }, document).detected)
     throw verificationRequired();
 }
 
@@ -146,6 +156,12 @@ export function parseXPathChapters(raw, rule) {
 }
 
 export function parseApiSearch(data, config = {}) {
+  for (const path of [
+    config.listPath ?? '$.data[*]',
+    config.namePath ?? '$.name',
+    config.sourcePath ?? '$.url',
+  ])
+    normalizeJsonPath(path);
   if (config.sourceTemplate != null && typeof config.sourceTemplate !== 'string')
     throw new HttpError('详情页地址模板必须是文本');
   const template = (config.sourceTemplate || '').trim();
@@ -217,21 +233,21 @@ export function parseApiChapters(data, config = {}, source, baseURL) {
       }))
       .filter((road) => road.episodes.length);
   }
-  const roadsPath = config.roadsPath ?? '$.data.roads[*]';
+  const roadsPath = (config.roadsPath ?? '$.data.roads[*]').trim();
+  const roadNamePath = (config.roadNamePath ?? '$.name').trim();
+  const episodeUrlPath = (config.episodeUrlPath ?? '$.url').trim();
   const nodes = roadsPath ? readPath(data, roadsPath) : [data];
   return nodes
     .map((road, roadIndex) => ({
       name:
-        (config.roadNamePath !== '' ? scalar(first(road, config.roadNamePath ?? '$.name')) : '') ||
+        (roadsPath && roadNamePath ? scalar(first(road, roadNamePath)) : '') ||
         `播放线路${roadIndex + 1}`,
       episodes: readPath(road, config.episodesPath ?? '$.episodes[*]')
         .map((episode, episodeIndex) => ({
           name:
             scalar(first(episode, config.episodeNamePath ?? '$.name')) || `第${episodeIndex + 1}集`,
           url: episodeUrl(
-            config.episodeUrlPath === ''
-              ? ''
-              : scalar(first(episode, config.episodeUrlPath ?? '$.url')),
+            !episodeUrlPath ? '' : scalar(first(episode, episodeUrlPath)),
             roadIndex,
             episodeIndex,
           ),

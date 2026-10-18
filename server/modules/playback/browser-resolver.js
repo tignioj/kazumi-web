@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { existsSync } from 'node:fs';
 import { HttpError, checkedUrl, readLimited } from '../../lib/http.js';
 import { createBrowserEgress } from '../../lib/browser-egress.js';
 import { headersForSession } from './session-store.js';
@@ -293,6 +294,14 @@ export class BrowserResolver {
 
   requestOptions(rule, url, headers, owner) {
     return this.ruleSessions.requestOptions(rule, url, headers, owner);
+  }
+
+  get available() {
+    return (
+      !this.closed &&
+      (Boolean(this.options.browserFactory) ||
+        existsSync(this.options.launchOptions?.executablePath || chromium.executablePath()))
+    );
   }
 
   mediaSession(rule, url, headers, owner) {

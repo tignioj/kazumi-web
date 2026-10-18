@@ -9,7 +9,7 @@ export function verificationRequired() {
 
 // This fixed function also runs inside Chromium. Rule values are data only:
 // XPath and literal text are supported; rule JavaScript and regex are never run.
-export function inspectChallengeDocument({ config, live = false }, sourceDocument) {
+export function inspectChallengeDocument({ config, live = false, raw }, sourceDocument) {
   const document = sourceDocument || globalThis.document;
   const visible = (node) => {
     if (!node || node.nodeType !== 1) return false;
@@ -44,8 +44,10 @@ export function inspectChallengeDocument({ config, live = false }, sourceDocumen
     if ([2, 'text'].includes(config.captchaDetectType)) {
       detected =
         typeof config.captchaDetectValue === 'string' &&
-        !!config.captchaDetectValue &&
-        text.includes(config.captchaDetectValue);
+        !!config.captchaDetectValue.trim() &&
+        (raw ?? document.documentElement?.outerHTML ?? '').includes(
+          config.captchaDetectValue.trim(),
+        );
     } else if (![3, 'regex'].includes(config.captchaDetectType)) {
       const selectors = config.captchaDetectValue
         ? [config.captchaDetectValue]
@@ -87,7 +89,7 @@ export function inspectChallengeDocument({ config, live = false }, sourceDocumen
 export function hasChallenge(raw, rule) {
   const dom = new JSDOM(raw);
   try {
-    return inspectChallengeDocument({ config: rule.antiCrawlerConfig }, dom.window.document)
+    return inspectChallengeDocument({ config: rule.antiCrawlerConfig, raw }, dom.window.document)
       .detected;
   } finally {
     dom.window.close();

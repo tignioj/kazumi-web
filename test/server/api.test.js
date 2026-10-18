@@ -176,6 +176,7 @@ test('real HTTP API, rule execution, metadata and media proxy integration', asyn
   await once(server, 'listening');
   const base = `http://127.0.0.1:${server.address().port}`;
   const rule = {
+    api: '3',
     name: 'Local fixture',
     baseURL: upstreamUrl,
     referer: `${upstreamUrl}/expected-ref`,

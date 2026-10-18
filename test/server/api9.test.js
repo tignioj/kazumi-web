@@ -12,12 +12,17 @@ import {
   RULE_API_VERSION,
 } from '../../server/modules/rules/store.js';
 
-// https://github.com/Predidit/KazumiRules snapshots from 2026-10-17.
+// https://github.com/Predidit/KazumiRules snapshots from 2026-10-17 (LMM: 2026-10-18).
 // No public site is required by tests.
 const rules = JSON.parse(
   await readFile(new URL('./fixtures/api9-rules.json', import.meta.url), 'utf8'),
 );
 const examples = {
+  LMM: {
+    id: 123,
+    detail: 'https://www.lmm85.com/index.php/vod/detail/id/123.html',
+    html: '<div class="module-player-list"><a href="/play/1">第 1 集</a></div>',
+  },
   giriGiriLove: {
     id: 27119,
     detail: 'https://ani.girigirilove.com/GV27119/',
@@ -44,7 +49,7 @@ test('current API 9 rules import as JSON and share links while future API levels
   assert.equal(RULE_API_VERSION, 9);
   assert.deepEqual(
     parseImport(JSON.stringify(rules)).map((rule) => rule.api),
-    ['9', '9', '9', '9'],
+    Array(rules.length).fill('9'),
   );
   for (const rule of rules) {
     const share = `kazumi://${Buffer.from(JSON.stringify(rule)).toString('base64')}`;
@@ -54,10 +59,10 @@ test('current API 9 rules import as JSON and share links while future API levels
   for (const api of [10, '10', 0, -1, 9.5, false, {}, []]) {
     assert.throws(() => normalizeRule({ ...rules[0], api }), /最高 9/);
   }
-  assert.equal(normalizeRule({ ...rules[0], api: null }).api, '1');
+  assert.throws(() => normalizeRule({ ...rules[0], api: null }), /至少要求 API 9/);
 });
 
-test('all four API 9 rules update, install, persist, search, and read XPath chapters through REST', async (t) => {
+test('all five API 9 rules update, install, persist, search, and read XPath chapters through REST', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'kazumi-api9-'));
   const requests = [];
   const http = {
@@ -125,7 +130,7 @@ test('all four API 9 rules update, install, persist, search, and read XPath chap
     return data;
   };
   const updated = await post('/rules/update', {});
-  assert.equal(updated.results.length, 4);
+  assert.equal(updated.results.length, rules.length);
   assert.ok(updated.results.every((result) => result.status === 'updated'));
   assert.equal(updated.rules[0].enabled, false);
   assert.ok((await new RuleStore(directory).init()).list().every((rule) => rule.api === '9'));

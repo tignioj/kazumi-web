@@ -76,6 +76,7 @@ test('catalogue search, calendar and collection survive a browser reload', async
 
 test('rules can be imported, edited, exported and removed using the interface', async ({
   page,
+  request,
 }) => {
   const rule = { ...fixtureRule, name: '可编辑测试源' };
   await page.goto('/#/rules');
@@ -87,21 +88,56 @@ test('rules can be imported, edited, exported and removed using the interface', 
   await dialog
     .getByLabel('规则 JSON 或分享链接')
     .fill(`kazumi://${Buffer.from(JSON.stringify(rule)).toString('base64')}`);
+  const checked = page.waitForResponse((response) =>
+    response.url().endsWith('/api/rules/validate'),
+  );
+  await dialog.getByRole('button', { name: '检查兼容性', exact: true }).click();
+  expect((await checked).ok()).toBeTruthy();
+  expect(
+    (await (await request.get('/api/rules')).json()).rules.some((item) => item.name === rule.name),
+  ).toBeFalsy();
   await dialog.getByRole('button', { name: '导入规则', exact: true }).click();
   await expect(dialog).toBeHidden();
   const card = page
     .locator('article')
     .filter({ has: page.getByRole('heading', { name: rule.name, exact: true }) });
   await expect(card).toBeVisible();
+  await expect(card.getByText('API 8', { exact: true })).toBeVisible();
   await card.getByRole('button', { name: '编辑规则', exact: true }).click();
   const editor = page.getByRole('dialog', { name: `编辑规则 · ${rule.name}`, exact: true });
+  await editor.getByLabel('规则 JSON 或分享链接').fill(
+    JSON.stringify({
+      ...rule,
+      version: '2.0',
+      antiCrawlerConfig: { enabled: true, captchaType: 3, captchaScript: 'window.verify()' },
+    }),
+  );
+  await editor.getByRole('button', { name: '保存规则', exact: true }).click();
+  await expect(editor.getByRole('alert')).toContainText('不支持执行规则自定义验证脚本');
+  const preserved = (await (await request.get('/api/rules')).json()).rules.find(
+    (item) => item.name === rule.name,
+  );
+  expect(preserved.version).toBe('1.0');
+  expect(preserved.antiCrawlerConfig).toBeUndefined();
   await editor
     .getByLabel('规则 JSON 或分享链接')
     .fill(JSON.stringify({ ...rule, version: '2.0' }, null, 2));
   await editor.getByRole('button', { name: '保存规则', exact: true }).click();
   await expect(editor).toBeHidden();
+  await page.route('**/api/rules/updates', (route) =>
+    route.fulfill({
+      json: {
+        updates: [],
+        blocked: [
+          { name: rule.name, status: 'incompatible', message: 'Web 不支持执行规则自定义验证脚本' },
+        ],
+      },
+    }),
+  );
   await page.reload();
   await expect(card.getByText('版本 2.0', { exact: true })).toBeVisible();
+  await expect(card.getByText('更新受阻', { exact: true })).toBeVisible();
+  await expect(card.getByRole('status')).toContainText('已保留当前规则');
   const downloadEvent = page.waitForEvent('download');
   await card.getByRole('button', { name: `导出 ${rule.name}`, exact: true }).click();
   const download = await downloadEvent;

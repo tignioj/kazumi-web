@@ -128,7 +128,11 @@ test('API limits stay per application and exempt streaming, images and health ch
   }
   const independent = await second.request('/api/rules');
   assert.equal(independent.status, 200);
-  assert.deepEqual(await independent.json(), { rules: [] });
+  assert.deepEqual(await independent.json(), {
+    rules: [],
+    compatibility: [],
+    capabilities: { apiLevel: 9, dynamicResolver: false },
+  });
 });
 
 test('official rule catalog caching stays local to each application', async (t) => {

@@ -20,11 +20,13 @@ import {
   MediaService,
 } from '../../server/modules/playback/media.js';
 import { normalizeSubject } from '../../server/modules/metadata/service.js';
+import { hasChallenge } from '../../server/modules/verification/challenge.js';
 
 const rule = {
   name: 'Fixture',
   api: '8',
   baseURL: 'https://example.com',
+  searchURL: 'https://example.com/search?wd=@keyword',
   searchList: '//article',
   searchName: '//h2/a/text()',
   searchResult: '//h2/a',
@@ -231,6 +233,69 @@ test('delimited chapters use first field delimiter and preserve dollars in URLs'
 test('JSONPath scripts, filters and recursive descent cannot execute', () => {
   for (const path of ['$..url', '$.data[?(@.id>0)]', '$[(process.exit())]'])
     assert.throws(() => readPath({}, path), /JSONPath/);
+});
+
+test('API parsing tolerates null nodes and accepts bracket whitespace without executing JSONPath scripts', () => {
+  assert.deepEqual(readPath({ data: [{ 'a b': 4 }] }, "$.data[ 0 ][ 'a b' ]"), [4]);
+  assert.deepEqual(parseApiSearch({ data: [null, { name: 'Valid', url: 'id' }] }), [
+    { name: 'Valid', url: 'id' },
+  ]);
+  assert.deepEqual(parseApiSearch(null), []);
+  const roads = parseApiChapters(
+    { data: { roads: [null, { name: 'A', episodes: [null, { name: 'Valid', url: '/play' }] }] } },
+    {},
+    'id',
+    rule.baseURL,
+  );
+  assert.equal(roads.length, 1);
+  assert.deepEqual(roads[0].episodes, [{ name: 'Valid', url: 'https://example.com/play' }]);
+  assert.throws(() => parseApiSearch({ data: [] }, { namePath: '$..name' }), /JSONPath/);
+  assert.throws(() => readPath({}, '$[ ?(globalThis.compromised = true) ]'), /JSONPath/);
+  assert.equal(globalThis.compromised, undefined);
+});
+
+test('chapter optional paths trim whitespace and omit root road names without a roads path', () => {
+  const roads = parseApiChapters(
+    { name: 'Root name', episodes: [{ name: 'One' }] },
+    {
+      roadsPath: '  ',
+      roadNamePath: '  ',
+      episodeUrlPath: ' ',
+      episodePage: { url: '/@source/@episodeNumber' },
+    },
+    'id',
+    rule.baseURL,
+  );
+  assert.deepEqual(roads, [
+    { name: '播放线路1', episodes: [{ name: 'One', url: 'https://example.com/id/1' }] },
+  ]);
+});
+
+test('API JSON and form requests preserve explicitly configured content types regardless of header case', () => {
+  for (const bodyType of ['json', 'form']) {
+    for (const key of ['content-type', 'Content-Type', 'CONTENT-TYPE']) {
+      const request = prepareApiRequest(
+        {
+          url: 'https://example.com',
+          method: 'POST',
+          bodyType,
+          body: { id: 1 },
+          headers: { [key]: 'application/vnd.api+json' },
+        },
+        {},
+      );
+      assert.equal(request.headers['content-type'], 'application/vnd.api+json');
+      assert.equal(Object.keys(request.headers).length, 1);
+    }
+  }
+});
+
+test('configured text captcha detection reads raw HTML while generic markers exclude scripts', () => {
+  const source = '<div data-verify="custom-marker"></div>';
+  const config = { enabled: true, captchaDetectType: 2, captchaDetectValue: 'custom-marker' };
+  assert.equal(hasChallenge(source, { antiCrawlerConfig: config }), true);
+  assert.throws(() => parseXPathSearch(source, { ...rule, antiCrawlerConfig: config }), /人机验证/);
+  assert.equal(hasChallenge('<script>"请输入验证码"</script><p>Results</p>', {}), false);
 });
 
 test('share import supports URL-safe, percent-encoded, wrapped links and case-insensitive duplicate names', () => {
