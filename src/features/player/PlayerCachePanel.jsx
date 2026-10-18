@@ -14,6 +14,7 @@ import { useDownloads } from '../downloads/use-downloads.js';
 import { CacheProgress } from '../downloads/CacheProgress.jsx';
 import { CacheRemoval } from '../downloads/CacheRemoval.jsx';
 import { CacheSelection } from '../downloads/CacheSelection.jsx';
+import { CacheRetry } from '../downloads/CacheRetry.jsx';
 
 export function PlayerCachePanel({
   context,
@@ -83,14 +84,17 @@ export function PlayerCachePanel({
       )}
       {error && <Notice>{error}</Notice>}
       <div className="player-cache-actions">
-        {(!item || item.status === 'error') && !resolved?.cached && (
+        {item?.status === 'error' && (
+          <CacheRetry key={item.id} item={item} onRetried={downloads.accept} notify={notify} />
+        )}
+        {!item && !resolved?.cached && (
           <button className="button quiet" disabled={!canCache || busy} onClick={create}>
             {busy === 'current' ? (
               <LoaderCircle size={15} className="spin" />
             ) : (
               <ArrowDownToLine size={15} />
             )}
-            {item?.status === 'error' ? '重新缓存当前集' : '缓存当前集'}
+            缓存当前集
           </button>
         )}
         {!context.cacheOnly && (

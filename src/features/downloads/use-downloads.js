@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api.js';
-import { cacheActive } from './utils.js';
+import { cacheActive, sameCacheEpisode } from './utils.js';
 
 export function useDownloads(identity) {
   const [data, setData] = useState(null);
@@ -56,10 +56,18 @@ export function useDownloads(identity) {
   }, [identity, attempt, reload, stop]);
   const accept = (incoming) => {
     const items = Array.isArray(incoming) ? incoming : [incoming];
-    const ids = new Set(items.map((item) => item.id));
     setData((previous) => ({
       ...previous,
-      items: [...items, ...(previous?.items || []).filter((entry) => !ids.has(entry.id))],
+      items: [
+        ...items,
+        ...(previous?.items || []).filter(
+          (entry) =>
+            !items.some(
+              (item) =>
+                entry.id === item.id || sameCacheEpisode(entry, item.ruleName, item.episodeUrl),
+            ),
+        ),
+      ],
     }));
     reload();
   };

@@ -18,8 +18,9 @@ import { cacheActive, groupDownloads } from './utils.js';
 import { useDownloads } from './use-downloads.js';
 import { CacheProgress } from './CacheProgress.jsx';
 import { CacheRemoval } from './CacheRemoval.jsx';
+import { CacheRetry } from './CacheRetry.jsx';
 
-function DownloadGroup({ items, onPlay, onRemove }) {
+function DownloadGroup({ items, onPlay, onRemove, onRetried, notify }) {
   const item = items[0];
   const image = items.find((entry) => entry.image)?.image;
   const complete = items.filter((entry) => entry.status === 'complete').length;
@@ -78,6 +79,9 @@ function DownloadGroup({ items, onPlay, onRemove }) {
               <CacheProgress item={episode} />
             </div>
             <div className="cache-actions">
+              {episode.status === 'error' && (
+                <CacheRetry item={episode} onRetried={onRetried} notify={notify} />
+              )}
               {episode.status === 'complete' && (
                 <>
                   <button
@@ -187,6 +191,8 @@ export function Downloads({ onPlay, notify }) {
               items={group.items}
               onPlay={onPlay}
               onRemove={setRemoving}
+              onRetried={downloads.accept}
+              notify={notify}
             />
           ))}
         </div>
