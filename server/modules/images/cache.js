@@ -97,8 +97,8 @@ export class ImageCache {
   constructor({
     directory,
     http,
-    maxBytes = 256 * 1024 ** 2,
-    maxEntries = 200,
+    maxBytes = 5 * 1024 ** 3,
+    maxEntries = 5000,
     stalePeriod = STALE_PERIOD,
     now = Date.now,
     resolveUrl,

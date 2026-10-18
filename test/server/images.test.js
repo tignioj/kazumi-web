@@ -260,11 +260,11 @@ test('failed background refreshes keep stale covers available, including after r
   assert.equal(reopened.entries.size, 1);
 });
 
-test('thirty days of inactivity and the 200-image default bound retained files', async (t) => {
+test('thirty days of inactivity and the 5000-image default bound retained files', async (t) => {
   let clock = Date.now();
   const day = 24 * 3600 * 1000;
   const { cache, http, directory } = await fixture(t, { now: () => clock });
-  assert.equal(cache.maxEntries, 200);
+  assert.equal(cache.maxEntries, 5000);
   await cache.get(`${image}?used`);
   await cache.get(`${image}?unused`);
   clock += 29 * day;

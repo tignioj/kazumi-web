@@ -54,7 +54,7 @@ export async function createApp(options = {}) {
     directory: resolve(dataDir, 'images'),
     http,
     resolveUrl: createCoverResolver(http),
-    maxBytes: Number(process.env.IMAGE_CACHE_MAX_BYTES ?? 256 * 1024 ** 2),
+    maxBytes: Number(process.env.IMAGE_CACHE_MAX_BYTES ?? 5 * 1024 ** 3),
   }).init();
   const browserResolver =
     options.browserResolver === false || process.env.DYNAMIC_RESOLVER === 'false'
