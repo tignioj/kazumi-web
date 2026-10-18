@@ -69,6 +69,9 @@ export async function createUpstream() {
       response.setHeader('Content-Type', 'text/html; charset=utf-8');
       response.end(value);
     };
+    if (url.pathname === '/rules/index.json') return json([fixtureRule]);
+    if (url.pathname === `/rules/${encodeURIComponent(fixtureRule.name)}.json`)
+      return json(fixtureRule);
     if (url.pathname === '/calendar')
       return json(
         Array.from({ length: 7 }, (_, index) => ({

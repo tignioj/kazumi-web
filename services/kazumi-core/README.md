@@ -15,3 +15,11 @@ user's browser. A headless WebKit smoke check verifies those capabilities in
 the final runtime during the image build.
 For a dependency update, change the Git ref, resolve and commit `pubspec.lock`,
 then run the Dart tests and complete HTTP/browser checks.
+
+`flutter-sdk.json` pins the Flutter revision and the version required by Kazumi.
+The `toolchain` Docker stage exposes that SDK without resolving application
+dependencies, so the release-update workflow can regenerate the lockfile. Normal
+image builds enforce the committed lockfile. The daily `Check Kazumi releases`
+workflow proposes newer stable releases as pinned PRs; `Verify` builds this image,
+starts a fresh core container, checks its revision/API, and runs browser tests
+against its real rule engine and WebView resolver before a maintainer merges.

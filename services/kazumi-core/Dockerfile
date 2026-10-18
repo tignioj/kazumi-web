@@ -1,18 +1,24 @@
-FROM ghcr.io/cirruslabs/flutter:3.44.0 AS sdk
+FROM ghcr.io/cirruslabs/flutter:3.44.0 AS toolchain
 # Match the SDK required by the pinned Kazumi commit; no upstream files are patched.
-RUN git -C /sdks/flutter fetch --depth 1 origin abaf9c523780a608bd46686fd5e53740a07077f8 \
-    && git -C /sdks/flutter checkout abaf9c523780a608bd46686fd5e53740a07077f8 \
+COPY flutter-sdk.json /tmp/kazumi-flutter-sdk.json
+RUN KAZUMI_FLUTTER_REVISION="$(sed -n 's/.*"revision": "\([0-9a-f]*\)".*/\1/p' /tmp/kazumi-flutter-sdk.json)" \
+    && KAZUMI_FLUTTER_VERSION="$(sed -n 's/.*"version": "\([0-9.]*\)".*/\1/p' /tmp/kazumi-flutter-sdk.json)" \
+    && test "${#KAZUMI_FLUTTER_REVISION}" -eq 40 \
+    && test -n "$KAZUMI_FLUTTER_VERSION" \
+    && git -C /sdks/flutter fetch --depth 1 origin "$KAZUMI_FLUTTER_REVISION" \
+    && git -C /sdks/flutter checkout "$KAZUMI_FLUTTER_REVISION" \
+    && git -C /sdks/flutter tag --force "$KAZUMI_FLUTTER_VERSION" "$KAZUMI_FLUTTER_REVISION" \
+    && rm -f /sdks/flutter/bin/cache/flutter.version.json \
+    && flutter --version \
     && flutter precache --linux
 RUN apt-get update && apt-get install -y --no-install-recommends \
     clang cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev \
     libayatana-appindicator3-dev libmpv-dev libsecret-1-dev \
     && rm -rf /var/lib/apt/lists/*
-RUN git -C /sdks/flutter tag --force 3.47.7 abaf9c523780a608bd46686fd5e53740a07077f8 \
-    && rm -f /sdks/flutter/bin/cache/flutter.version.json \
-    && flutter --version
+FROM toolchain AS sdk
 WORKDIR /service
 COPY pubspec.yaml pubspec.lock ./
-RUN flutter pub get
+RUN flutter pub get --enforce-lockfile
 
 FROM sdk AS build
 COPY . .

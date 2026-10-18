@@ -23,7 +23,13 @@ ffmpeg -i test/fixtures/media/sample.mp4 -c copy -hls_time 5 -hls_list_size 0 \
 Episode 1 uses MP4; episode 2 uses the derived HLS playlist and segments. The browser
 suite therefore exercises both native MP4 and hls.js playback through the proxy.
 
-The runner at `test/e2e/run-app.mjs` uses a disposable data directory and enables
+The runner at `test/e2e/run-app.mjs` requires a running real core whose health
+revision and API match the committed pins. CI builds and starts an isolated core
+container on the Linux host network; fixtures and the Node egress proxy share
+loopback addresses with it. The fixture server also supplies the rules catalog,
+so browser tests do not need the public rules repository.
+
+The runner uses a disposable data directory and enables
 private upstream addresses only in its child process so the application can reach
 these loopback fixtures.
 

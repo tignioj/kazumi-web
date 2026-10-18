@@ -1,0 +1,86 @@
+name: Check Kazumi releases
+on:
+  schedule:
+    # Daily at 09:17 Asia/Shanghai.
+    - cron: '17 1 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: kazumi-release-update
+  cancel-in-progress: false
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Check the latest official stable release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/update-kazumi.mjs --write
+      - name: Avoid duplicate or previously closed upgrade PRs
+        id: existing
+        if: steps.release.outputs.available == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPDATE_BRANCH: ${{ steps.release.outputs.branch }}
+        run: |
+          existing_url="$(gh pr list --head "$UPDATE_BRANCH" --state all --json url --jq '.[0].url // empty')"
+          if [ -n "$existing_url" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Upgrade already proposed: $existing_url" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Resolve the lockfile with the pinned Flutter SDK
+        if: steps.release.outputs.available == 'true' && steps.existing.outputs.exists != 'true'
+        run: |
+          docker build --target toolchain --tag kazumi-core-toolchain:update services/kazumi-core
+          docker run --rm --volume "$PWD/services/kazumi-core:/service" --workdir /service \
+            kazumi-core-toolchain:update flutter pub get
+          node scripts/update-kazumi.mjs --verify
+      - name: Publish the pinned upgrade PR and dispatch Verify
+        if: steps.release.outputs.available == 'true' && steps.existing.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPDATE_BRANCH: ${{ steps.release.outputs.branch }}
+          UPDATE_VERSION: ${{ steps.release.outputs.version }}
+          UPDATE_COMMIT: ${{ steps.release.outputs.commit }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          remote_sha="$(git ls-remote origin "refs/heads/$UPDATE_BRANCH" | cut -f1)"
+          if [ -n "$remote_sha" ]; then
+            # Recover if a previous run pushed successfully but could not create the PR.
+            # Reuse the remote branch, including any maintainer changes; never force push.
+            git fetch origin "$UPDATE_BRANCH"
+            git switch --discard-changes --create "$UPDATE_BRANCH" FETCH_HEAD
+            node scripts/update-kazumi.mjs --verify --expected-commit "$UPDATE_COMMIT"
+          else
+            git switch --create "$UPDATE_BRANCH"
+            git add services/kazumi-core/pubspec.yaml services/kazumi-core/pubspec.lock \
+              services/kazumi-core/lib/core.dart services/kazumi-core/flutter-sdk.json \
+              services/kazumi-core/linux/flutter/generated* server/modules/rules/validation.js
+            git commit --message "chore(core): upgrade Kazumi to $UPDATE_VERSION"
+            git push origin "HEAD:refs/heads/$UPDATE_BRANCH"
+          fi
+          pr_url="$(gh pr create --base "$DEFAULT_BRANCH" --head "$UPDATE_BRANCH" \
+            --title "chore(core): upgrade Kazumi to $UPDATE_VERSION" \
+            --body-file "$RUNNER_TEMP/kazumi-upgrade-body.md")"
+          echo "Upgrade PR: $pr_url" >> "$GITHUB_STEP_SUMMARY"
+          # GITHUB_TOKEN pushes do not start push CI. Explicit dispatch needs no PAT.
+          gh workflow run ci.yml --ref "$UPDATE_BRANCH"
+          echo 'Verify dispatched on the pinned upgrade commit; merge only after it passes.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Report no update
+        if: steps.release.outputs.available != 'true'
+        run: echo 'No newer official stable Kazumi release; current commit pin is unchanged.' >> "$GITHUB_STEP_SUMMARY"
