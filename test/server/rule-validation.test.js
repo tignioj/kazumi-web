@@ -69,6 +69,18 @@ test('one validator checks active requests, selectors, templates, nested shapes 
     { ...rule, searchList: '//*[(' },
     { ...rule, chapterRoads: 'count(//ul)' },
     { ...rule, chapterResult: '' },
+    { ...rule, api: '9', antiCrawlerConfig: { enabled: true, captchaType: 2, captchaButton: '' } },
+    { ...rule, api: '9', antiCrawlerConfig: { enabled: true, captchaType: 3, captchaScript: '' } },
+    {
+      ...rule,
+      api: '9',
+      antiCrawlerConfig: { enabled: true, captchaType: 3, captchaScript: 'return (' },
+    },
+    {
+      ...rule,
+      api: '9',
+      antiCrawlerConfig: { ...captcha, captchaDetectType: 3, captchaDetectValue: '[' },
+    },
     { ...rule, searchURL: 'javascript:alert(1)' },
     { ...api, searchApiConfig: null },
     { ...api, searchApiConfig: { request: { url: 'https://source.example', method: 'PUT' } } },
@@ -108,7 +120,7 @@ test('one validator checks active requests, selectors, templates, nested shapes 
   assert.equal(normalizeRule({ ...rule, api: '01' }).api, '1');
 });
 
-test('compatibility checks minimum levels and active unsupported features without rejecting inactive settings', () => {
+test('compatibility checks minimum levels and all captcha strategies without rejecting inactive settings', () => {
   for (const [fields, minimum] of [
     [{ usePost: true }, 2],
     [{ referer: 'https://source.example/' }, 3],
@@ -136,8 +148,15 @@ test('compatibility checks minimum levels and active unsupported features withou
     { ...captcha, captchaDetectType: 3, captchaDetectValue: 'challenge-\\d+' },
   ]) {
     const report = ruleCompatibility({ ...rule, api: '9', antiCrawlerConfig: config });
-    assert.equal(report.compatible, false);
-    assert.ok(report.issues.some(({ code }) => code === 'UNSUPPORTED_CAPABILITY'));
+    assert.equal(report.compatible, true);
+    assert.deepEqual(report.requirements, ['dynamicResolver']);
+    assert.equal(
+      ruleCompatibility(
+        { ...rule, api: '9', antiCrawlerConfig: config },
+        { dynamicResolver: false },
+      ).compatible,
+      false,
+    );
     assert.equal(
       ruleCompatibility({ ...rule, api: '9', antiCrawlerConfig: { ...config, enabled: false } })
         .compatible,
@@ -152,18 +171,86 @@ test('compatibility checks minimum levels and active unsupported features withou
   assert.ok(environment.issues.some(({ code }) => code === 'DYNAMIC_RESOLVER_REQUIRED'));
 });
 
-test('stored legacy rules remain readable after validation tightens, while writes are atomic and strict', async (t) => {
+test('all automatic verification strategies pass REST validation, install and update preflight when Chromium is available', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'kazumi-automatic-preflight-'));
+  const configs = [
+    { enabled: true, captchaType: 2, captchaButton: '//button' },
+    {
+      enabled: true,
+      captchaType: 3,
+      captchaScript: 'globalThis.__kazumiServerCompileOnly = true; return true;',
+    },
+    { ...captcha, captchaDetectType: 3, captchaDetectValue: 'challenge.*pending' },
+  ];
+  const candidates = configs.map((antiCrawlerConfig, index) => ({
+    ...rule,
+    name: `Strategy ${index}`,
+    api: '7',
+    version: '2.0',
+    antiCrawlerConfig,
+  }));
+  const app = await createApp({
+    dataDir: directory,
+    seedRules: candidates.map(({ name }) => ({ ...rule, name, enabled: false })),
+    browserResolver: { available: true, read() {}, async close() {} },
+    httpClient: {
+      async json(url) {
+        if (url.endsWith('/index.json'))
+          return candidates.map(({ name, version }) => ({ name, version }));
+        return structuredClone(
+          candidates.find(({ name }) =>
+            decodeURIComponent(new URL(url).pathname).endsWith(`/${name}.json`),
+          ),
+        );
+      },
+      async close() {},
+    },
+  });
+  const server = app.app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const base = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => {
+    await app.close();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  });
+  const post = async (path, body) => {
+    const response = await fetch(`${base}/api/rules/${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  const validated = await post('validate', { content: candidates });
+  assert.ok(validated.compatibility.every(({ compatible }) => compatible));
+  const preview = await (await fetch(`${base}/api/rules/updates`)).json();
+  assert.equal(preview.updates.length, 3);
+  assert.deepEqual(preview.blocked, []);
+  const updated = await post('update', {});
+  assert.ok(updated.results.every(({ status }) => status === 'updated'));
+  assert.ok(updated.rules.every(({ version, enabled }) => version === '2.0' && enabled === false));
+  await post('install', { name: candidates[1].name });
+  assert.equal(
+    globalThis.__kazumiServerCompileOnly,
+    undefined,
+    'validation compiles syntax without executing the script in Node',
+  );
+});
+
+test('stored malformed legacy scripts remain readable, while writes are atomic and strict', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'kazumi-validation-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const legacy = {
     ...rule,
     api: '7',
-    antiCrawlerConfig: { enabled: true, captchaType: 3, captchaScript: 'window.verify()' },
+    antiCrawlerConfig: { enabled: true, captchaType: 3, captchaScript: 'return (' },
   };
   const original = JSON.stringify([legacy]);
   await writeFile(join(directory, 'rules.json'), original);
   const store = await new RuleStore(directory).init();
-  assert.equal(store.get(rule.name).antiCrawlerConfig.captchaScript, 'window.verify()');
+  assert.equal(store.get(rule.name).antiCrawlerConfig.captchaScript, 'return (');
   assert.equal(ruleCompatibility(store.get(rule.name)).compatible, false);
   await assert.rejects(
     async () =>

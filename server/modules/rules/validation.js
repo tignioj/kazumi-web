@@ -1,4 +1,5 @@
 import { JSDOM } from 'jsdom';
+import { Script } from 'node:vm';
 import { HttpError, checkedUrl } from '../../lib/http.js';
 import { normalizeJsonPath, prepareApiRequest, renderTemplate } from './engine.js';
 
@@ -289,28 +290,22 @@ export function ruleCompatibility(input, { dynamicResolver = true } = {}) {
         if (!dynamicResolver)
           issue(
             'antiCrawlerConfig',
-            '该规则需要 Chromium 人工验证，请启用动态解析并安装 Chromium',
+            '该规则需要 Chromium 验证，请启用动态解析并安装 Chromium',
             'DYNAMIC_RESOLVER_REQUIRED',
           );
-        if (type === 2)
-          issue(
-            'antiCrawlerConfig.captchaType',
-            'Web 暂不支持自动点击验证，请改用人工验证规则',
-            'UNSUPPORTED_CAPABILITY',
-          );
-        if (type === 3)
-          issue(
-            'antiCrawlerConfig.captchaScript',
-            'Web 不支持执行规则自定义验证脚本',
-            'UNSUPPORTED_CAPABILITY',
-          );
+        if (type === 2) xpath(config.captchaButton, 'antiCrawlerConfig.captchaButton', true);
+        if (type === 3) {
+          const script = string(config.captchaScript, 'antiCrawlerConfig.captchaScript').trim();
+          if (!script) issue('antiCrawlerConfig.captchaScript', 'captchaScript 不能为空');
+          else
+            check(
+              'antiCrawlerConfig.captchaScript',
+              () => new Script(`(function () {\n${script}\n})`),
+            );
+        }
         if (type === 3 || detectValue) level(7);
         if (detectValue && [3, 'regex'].includes(detect))
-          issue(
-            'antiCrawlerConfig.captchaDetectType',
-            'Web 不支持规则正则验证码检测',
-            'UNSUPPORTED_CAPABILITY',
-          );
+          check('antiCrawlerConfig.captchaDetectValue', () => new RegExp(detectValue, 'is'));
         if (type === 1)
           for (const field of ['captchaImage', 'captchaInput', 'captchaButton'])
             xpath(config[field], `antiCrawlerConfig.${field}`, true);

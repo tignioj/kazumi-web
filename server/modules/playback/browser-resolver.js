@@ -7,6 +7,7 @@ import { legacyIframeMedia } from './legacy-parser.js';
 import { filterHlsAds } from './hls-ad-filter.js';
 import { RuleSessionStore } from '../verification/session-store.js';
 import { inspectBrowserChallenge, verificationRequired } from '../verification/challenge.js';
+import { automateRuleCaptcha, hasAutomaticCaptcha } from '../verification/automation.js';
 
 const MAX_PLAYLIST_BYTES = 1024 * 1024;
 const HEADER_NAMES = new Set([
@@ -491,6 +492,30 @@ export class BrowserResolver {
             parseError = error;
           }
         }
+        if (hasAutomaticCaptcha(rule) && attempts < 5) {
+          attempts++;
+          clearTimeout(deadline);
+          try {
+            await waitForVerification(
+              page,
+              () =>
+                automateRuleCaptcha(page, rule, {
+                  signal,
+                  timeout: this.options.timeout,
+                  frame: challenge.frame,
+                }),
+              {},
+              signal,
+            );
+          } finally {
+            if (!signal.aborted) arm();
+          }
+          if ((await inspectBrowserChallenge(page, rule)).detected) {
+            replayed = true;
+            await this.navigateRequest(page, request, rule);
+          }
+          continue;
+        }
         if (!onVerification || attempts >= 5) throw parseError || verificationRequired();
         attempts++;
         clearTimeout(deadline);
@@ -654,11 +679,13 @@ export class BrowserResolver {
     let manualOffered = false;
     let manualPending = false;
     let candidateSeen = false;
+    let automaticVerification = false;
     let validationError;
     const armDeadline = () => {
       clearTimeout(deadline);
       deadline = setTimeout(() => {
-        if (onVerification && !manualOffered && !candidateSeen) manualPending = true;
+        if (onVerification && !manualOffered && !candidateSeen && !automaticVerification)
+          manualPending = true;
         else
           controller.abort(
             new HttpError(
@@ -681,7 +708,12 @@ export class BrowserResolver {
     try {
       signal.throwIfAborted();
       const browser = await abortable(this.getBrowser(), signal);
-      context = await this.createContext(browser, rule, !!onVerification, sessionOwner);
+      context = await this.createContext(
+        browser,
+        rule,
+        !!onVerification || hasAutomaticCaptcha(rule),
+        sessionOwner,
+      );
       signal.throwIfAborted();
       const candidates = new Map();
       const observed = new Map();
@@ -842,7 +874,10 @@ export class BrowserResolver {
             });
         }
         const pages = playbackPage ? [page, playbackPage] : [page];
-        if (onVerification && (manualPending || Date.now() - lastChallengeCheck > 700)) {
+        if (
+          (onVerification || hasAutomaticCaptcha(rule)) &&
+          (manualPending || Date.now() - lastChallengeCheck > 700)
+        ) {
           lastChallengeCheck = Date.now();
           const inspected = await Promise.all(
             pages.map(async (target) => ({
@@ -852,6 +887,41 @@ export class BrowserResolver {
           );
           const active = inspected.find((item) => item.challenge.detected) || inspected.at(-1);
           const { challenge } = active;
+          if (challenge.detected && hasAutomaticCaptcha(rule)) {
+            if (verificationAttempts >= 5) throw verificationRequired();
+            verificationAttempts++;
+            automaticVerification = true;
+            manualPending = false;
+            try {
+              clearTimeout(deadline);
+              try {
+                await waitForVerification(
+                  active.page,
+                  () =>
+                    automateRuleCaptcha(active.page, rule, {
+                      signal,
+                      timeout: this.options.timeout,
+                      frame: challenge.frame,
+                    }),
+                  {},
+                  signal,
+                );
+              } finally {
+                if (!signal.aborted) armDeadline();
+              }
+              if ((await inspectBrowserChallenge(active.page, rule)).detected)
+                await active.page.reload({
+                  waitUntil: 'domcontentloaded',
+                  timeout: this.options.timeout,
+                });
+            } finally {
+              automaticVerification = false;
+            }
+            rejected.clear();
+            validationError = undefined;
+            navigationError = undefined;
+            continue;
+          }
           if (challenge.detected || manualPending) {
             if (verificationAttempts >= 5) throw verificationRequired();
             verificationAttempts++;

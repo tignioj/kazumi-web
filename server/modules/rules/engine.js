@@ -3,9 +3,10 @@ import { JSONPath } from 'jsonpath-plus';
 import { HttpError, checkedUrl, readLimited } from '../../lib/http.js';
 import {
   hasChallenge,
-  inspectChallengeDocument,
+  inspectStaticChallenge,
   verificationRequired,
 } from '../verification/challenge.js';
+import { hasAutomaticCaptcha } from '../verification/automation.js';
 
 const scalar = (value) => (value == null ? '' : String(value).trim());
 export function absoluteUrl(value, base) {
@@ -113,8 +114,7 @@ const nodeUrl = (node) =>
   scalar(node?.getAttribute?.('href') ?? (node?.nodeType === 2 ? node.nodeValue : ''));
 
 function detectChallenge(document, rule, raw) {
-  if (inspectChallengeDocument({ config: rule.antiCrawlerConfig, raw }, document).detected)
-    throw verificationRequired();
+  if (inspectStaticChallenge(document, rule, raw).detected) throw verificationRequired();
 }
 
 export function parseXPathSearch(raw, rule) {
@@ -281,7 +281,7 @@ export class RuleEngine {
     };
     // Challenge pages commonly use 403 or 429. Read their bounded body before
     // deciding whether an interactive retry is warranted.
-    if (onVerification && this.http.request) {
+    if ((onVerification || hasAutomaticCaptcha(rule)) && this.http.request) {
       const { response } = await this.http.request(request.url, options);
       const raw = await readLimited(response);
       signal?.throwIfAborted();
@@ -302,7 +302,7 @@ export class RuleEngine {
       options?.signal?.throwIfAborted();
       if (
         error.code !== 'VERIFICATION_REQUIRED' ||
-        !options?.onVerification ||
+        (!options?.onVerification && !hasAutomaticCaptcha(rule)) ||
         !this.browserResolver
       )
         throw error;

@@ -1,5 +1,6 @@
 import { JSDOM } from 'jsdom';
 import { HttpError } from '../../lib/http.js';
+import { matchChallengeRegex } from './regex.js';
 
 export function verificationRequired() {
   const error = new HttpError('来源要求人机验证，请完成验证后继续，或更换来源', 422);
@@ -7,9 +8,12 @@ export function verificationRequired() {
   return error;
 }
 
-// This fixed function also runs inside Chromium. Rule values are data only:
-// XPath and literal text are supported; rule JavaScript and regex are never run.
-export function inspectChallengeDocument({ config, live = false, raw }, sourceDocument) {
+// This function also runs inside Chromium. Regex results are supplied by the
+// bounded server matcher, and verification scripts run in a separate step.
+export function inspectChallengeDocument(
+  { config, live = false, raw, regexMatch = false },
+  sourceDocument,
+) {
   const document = sourceDocument || globalThis.document;
   const visible = (node) => {
     if (!node || node.nodeType !== 1) return false;
@@ -19,7 +23,7 @@ export function inspectChallengeDocument({ config, live = false, raw }, sourceDo
       style.visibility !== 'hidden' && style.display !== 'none' && node.getClientRects().length > 0
     );
   };
-  const select = (expression) => {
+  const select = (expression, visibleOnly = true) => {
     if (typeof expression !== 'string' || !expression.trim() || expression.length > 1000)
       return null;
     try {
@@ -27,7 +31,7 @@ export function inspectChallengeDocument({ config, live = false, raw }, sourceDo
       for (let index = 0; index < result.snapshotLength; index++) {
         const node = result.snapshotItem(index);
         const element = node.nodeType === 1 ? node : node.parentElement;
-        if (visible(element)) return element;
+        if (element && (!visibleOnly || visible(element))) return element;
       }
     } catch {
       // A malformed optional verification selector must not break an otherwise
@@ -41,18 +45,22 @@ export function inspectChallengeDocument({ config, live = false, raw }, sourceDo
   let detected = false;
   let captcha;
   if (config?.enabled) {
-    if ([2, 'text'].includes(config.captchaDetectType)) {
+    const detectValue =
+      typeof config.captchaDetectValue === 'string' ? config.captchaDetectValue.trim() : '';
+    if (detectValue && [3, 'regex'].includes(config.captchaDetectType)) {
+      detected = regexMatch;
+    } else if (detectValue && [2, 'text'].includes(config.captchaDetectType)) {
       detected =
         typeof config.captchaDetectValue === 'string' &&
         !!config.captchaDetectValue.trim() &&
         (raw ?? document.documentElement?.outerHTML ?? '').includes(
           config.captchaDetectValue.trim(),
         );
-    } else if (![3, 'regex'].includes(config.captchaDetectType)) {
-      const selectors = config.captchaDetectValue
-        ? [config.captchaDetectValue]
-        : [config.captchaImage, config.captchaButton];
-      detected = selectors.some((selector) => !!select(selector));
+    } else {
+      const selectors = detectValue ? [detectValue] : [config.captchaImage, config.captchaButton];
+      // Explicit native detection uses XPath presence, including hidden nodes.
+      // Manual image/input shortcuts below still require visible controls.
+      detected = selectors.some((selector) => !!select(selector, false));
     }
     const image = select(config.captchaImage);
     const input = select(config.captchaInput);
@@ -86,11 +94,24 @@ export function inspectChallengeDocument({ config, live = false, raw }, sourceDo
   return { detected, ...(captcha ? { captcha } : {}) };
 }
 
+function regexResult(raw, config) {
+  return config?.enabled &&
+    [3, 'regex'].includes(config.captchaDetectType) &&
+    typeof config.captchaDetectValue === 'string' &&
+    config.captchaDetectValue.trim()
+    ? matchChallengeRegex(raw, config.captchaDetectValue.trim())
+    : false;
+}
+
+export function inspectStaticChallenge(document, rule, raw) {
+  const config = rule.antiCrawlerConfig;
+  return inspectChallengeDocument({ config, raw, regexMatch: regexResult(raw, config) }, document);
+}
+
 export function hasChallenge(raw, rule) {
   const dom = new JSDOM(raw);
   try {
-    return inspectChallengeDocument({ config: rule.antiCrawlerConfig, raw }, dom.window.document)
-      .detected;
+    return inspectStaticChallenge(dom.window.document, rule, raw).detected;
   } finally {
     dom.window.close();
   }
@@ -99,16 +120,23 @@ export function hasChallenge(raw, rule) {
 export async function inspectBrowserChallenge(page, rule) {
   for (const frame of page.frames()) {
     try {
+      const config = rule.antiCrawlerConfig;
+      const raw =
+        config?.enabled && [3, 'regex'].includes(config.captchaDetectType)
+          ? await frame.content()
+          : '';
       const result = await frame.evaluate(inspectChallengeDocument, {
-        config: rule.antiCrawlerConfig,
+        config,
         live: true,
+        regexMatch: regexResult(raw, config),
       });
       if (result.detected) {
         // Image-answer shortcuts operate on the top-level page. Challenges in
         // nested frames remain usable through the screenshot and pointer UI.
-        return frame === page.mainFrame() ? result : { detected: true };
+        return frame === page.mainFrame() ? { ...result, frame } : { detected: true, frame };
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
       // Frames can navigate while challenge widgets load or finish.
     }
   }

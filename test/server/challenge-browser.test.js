@@ -4,7 +4,7 @@ import http from 'node:http';
 import { once } from 'node:events';
 import { chromium } from 'playwright';
 import { BrowserResolver } from '../../server/modules/playback/browser-resolver.js';
-import { RuleEngine } from '../../server/modules/rules/engine.js';
+import { RuleEngine, parseXPathSearch } from '../../server/modules/rules/engine.js';
 import { hasChallenge } from '../../server/modules/verification/challenge.js';
 import { createHttpClient } from '../../server/lib/http.js';
 import { MediaService } from '../../server/modules/playback/media.js';
@@ -86,7 +86,7 @@ async function captchaRoutes(request, response) {
   return false;
 }
 
-test('challenge detection uses fixed markers and ignores rule regex and script text', () => {
+test('challenge detection supports explicit regex while generic markers ignore script text', () => {
   assert.equal(hasChallenge('<script>"请输入验证码"</script><p>Results</p>', {}), false);
   assert.equal(hasChallenge('<p>Plain upstream error</p>', {}), false);
   assert.equal(hasChallenge('<div id="challenge-stage">Checking</div>', {}), true);
@@ -94,7 +94,7 @@ test('challenge detection uses fixed markers and ignores rule regex and script t
     hasChallenge('<p>Results</p>', {
       antiCrawlerConfig: { enabled: true, captchaDetectType: 'regex', captchaDetectValue: '.*' },
     }),
-    false,
+    true,
   );
   assert.equal(
     hasChallenge('<p>Results</p>', {
@@ -103,6 +103,374 @@ test('challenge detection uses fixed markers and ignores rule regex and script t
     false,
   );
 });
+
+browserTest(
+  'playback still aborts a script that reports completion before blocking its document',
+  async (t) => {
+    const { baseURL, resolver } = await fixture(
+      t,
+      (_request, response) => html(response, '<p>gate pending</p>'),
+      { timeout: 1500 },
+    );
+    const rule = automaticRule(baseURL, {
+      captchaType: 3,
+      captchaScript: 'setTimeout(() => { while (true) {} }, 25); return true;',
+    });
+    const controller = new AbortController();
+    const limit = setTimeout(() => controller.abort(), 6000);
+    try {
+      await assert.rejects(
+        resolver.resolve(rule, baseURL, {
+          signal: controller.signal,
+          onVerification() {
+            assert.fail('an active automatic verification must stay bounded');
+          },
+        }),
+        { status: 504 },
+      );
+      assert.equal(resolver.active.size, 0);
+      assert.equal(resolver.browser.contexts().length, 0);
+    } finally {
+      clearTimeout(limit);
+    }
+  },
+);
+
+test('regex detection matches raw HTML case-insensitively across lines and bounds backtracking', () => {
+  const rule = {
+    antiCrawlerConfig: {
+      enabled: true,
+      captchaDetectType: 3,
+      captchaDetectValue: 'TOKEN.*PENDING',
+    },
+  };
+  assert.equal(hasChallenge('<div data-value="token\npending"></div>', rule), true);
+  assert.equal(hasChallenge('<p>Results</p>', rule), false);
+  assert.equal(
+    hasChallenge('<p>token pending</p>', {
+      antiCrawlerConfig: { ...rule.antiCrawlerConfig, enabled: false },
+    }),
+    false,
+  );
+  assert.equal(
+    hasChallenge('<p>Results</p>', {
+      antiCrawlerConfig: { ...rule.antiCrawlerConfig, captchaDetectValue: '[' },
+    }),
+    false,
+  );
+  const started = performance.now();
+  assert.throws(
+    () =>
+      hasChallenge(`<p>${'a'.repeat(30000)}!</p>`, {
+        antiCrawlerConfig: { ...rule.antiCrawlerConfig, captchaDetectValue: '(a+)+$' },
+      }),
+    { status: 422, message: /正则检测超时/ },
+  );
+  assert.ok(performance.now() - started < 2000);
+});
+
+const automaticRule = (baseURL, config) => ({
+  name: 'Automatic fixture',
+  api: '7',
+  baseURL,
+  searchURL: `${baseURL}/source?wd=@keyword`,
+  searchList: '//article',
+  searchName: '//a',
+  searchResult: '//a',
+  chapterRoads: '//ul',
+  chapterResult: '//a',
+  antiCrawlerConfig: {
+    enabled: true,
+    captchaDetectType: 3,
+    captchaDetectValue: 'GATE.*PENDING',
+    ...config,
+  },
+});
+
+browserTest(
+  'automatic verification detects and clicks hidden XPath controls with an empty detector',
+  async (t) => {
+    let grants = 0;
+    const gate = `<button id="verify" hidden onclick="fetch('/grant', {method:'POST'}).then(() => this.remove())">Continue</button>`;
+    const { baseURL, engine, resolver } = await fixture(t, (request, response) => {
+      if (request.url === '/grant') {
+        grants++;
+        response.setHeader('set-cookie', 'verified=1; Path=/; HttpOnly');
+        return response.end('ok');
+      }
+      if (request.headers.cookie?.includes('verified=1'))
+        return html(response, '<article><a href="/show">Found</a></article>');
+      return html(response, gate, 403);
+    });
+    const rule = automaticRule(baseURL, {
+      captchaType: 2,
+      captchaButton: '//button[@id="verify"]',
+      captchaDetectValue: '',
+    });
+    assert.equal(hasChallenge(gate, rule), true);
+    assert.deepEqual(await engine.search(rule, 'test'), [
+      { name: 'Found', url: `${baseURL}/show` },
+    ]);
+    assert.equal(grants, 1);
+    assert.equal(resolver.browser.contexts().length, 0);
+  },
+);
+
+browserTest(
+  'automatic verification runs in the challenged iframe and survives its removal',
+  async (t) => {
+    const { baseURL, resolver } = await fixture(
+      t,
+      (request, response) => {
+        if (request.url === '/frame')
+          return html(
+            response,
+            '<p>gate pending</p><button id="verify" onclick="parent.location.href=\'/results\'">Continue</button>',
+          );
+        if (request.url === '/results')
+          return html(response, '<article><a href="/show">Found</a></article>');
+        return html(response, '<iframe src="/frame"></iframe>');
+      },
+      { timeout: 4000 },
+    );
+    const rule = automaticRule(baseURL, {
+      captchaType: 2,
+      captchaButton: '//button[@id="verify"]',
+    });
+    const results = await resolver.read(
+      rule,
+      { url: baseURL },
+      { parse: (raw) => parseXPathSearch(raw, rule) },
+    );
+    assert.deepEqual(results, [{ name: 'Found', url: `${baseURL}/show` }]);
+    assert.equal(resolver.browser.contexts().length, 0);
+  },
+);
+
+browserTest(
+  'automatic button verification waits for delayed controls, clicks once, and reuses clearance without human input',
+  async (t) => {
+    for (const mode of ['remove', 'navigate']) {
+      let grants = 0;
+      const { baseURL, engine, resolver } = await fixture(
+        t,
+        (request, response) => {
+          if (request.url === '/grant') {
+            grants++;
+            response.setHeader('set-cookie', 'verified=1; Path=/; HttpOnly');
+            return response.end('ok');
+          }
+          if (request.url === '/landing') return html(response, '<p>Verified</p>');
+          if (request.headers.cookie?.includes('verified=1'))
+            return html(response, '<article><a href="/show">Found</a></article>');
+          return html(
+            response,
+            `<p>gate\npending</p><script>
+        setTimeout(() => {
+          const button = document.createElement('button'); button.id = 'verify'; button.textContent = 'Continue';
+          button.onclick = async () => { ${mode === 'remove' ? 'button.remove();' : ''} await fetch('/grant', {method:'POST'}); ${mode === 'navigate' ? "location.href='/landing';" : ''} };
+          document.body.append(button);
+        }, 150);
+      </script>`,
+            403,
+          );
+        },
+        { timeout: 4000 },
+      );
+      const rule = automaticRule(baseURL, {
+        captchaType: 2,
+        captchaButton: '//button[@id="verify"]',
+      });
+      let manual = 0;
+      const options = {
+        sessionOwner: mode,
+        onVerification() {
+          manual++;
+          assert.fail('automatic verification must not ask for input');
+        },
+      };
+      assert.equal((await engine.search(rule, 'first', options))[0].name, 'Found');
+      assert.equal(grants, 1);
+      assert.equal(manual, 0);
+      assert.equal((await engine.search(rule, 'again', { sessionOwner: mode }))[0].name, 'Found');
+      assert.equal(grants, 1, 'subsequent HTTP searches reuse verified cookies and UA');
+      assert.equal(resolver.browser.contexts().length, 0);
+    }
+  },
+);
+
+browserTest(
+  'custom verification supports the native bridge, true returns, navigation reinjection and browser-only execution',
+  async (t) => {
+    const scripts = {
+      callback: `globalThis.__kazumiBrowserScript = true; KazumiCaptcha.log('test'); KazumiCaptcha.clicked();
+      fetch('/grant', {method:'POST'}).then(() => {localStorage.setItem('verified','yes'); KazumiCaptcha.done();});`,
+      returnTrue: `globalThis.__kazumiBrowserScript = true; document.cookie='verified=1; Path=/'; return true;`,
+      returnBeforeAjax: `fetch('/grant', {method:'POST'}); return true;`,
+      recover: `KazumiCaptcha.fail('recoverable diagnostic'); document.cookie='verified=1; Path=/'; return true;`,
+      navigation: `if (location.pathname === '/source') { location.href='/landing'; }
+      else { document.cookie='verified=1; Path=/'; return true; }`,
+    };
+    for (const [name, captchaScript] of Object.entries(scripts)) {
+      const { baseURL, engine, resolver } = await fixture(
+        t,
+        (request, response) => {
+          if (request.url === '/grant') {
+            response.setHeader('set-cookie', 'verified=1; Path=/; HttpOnly');
+            return response.end('ok');
+          }
+          if (request.url === '/landing') return html(response, '<p>Landing</p>');
+          if (request.headers.cookie?.includes('verified=1'))
+            return html(response, '<article><a href="/show">Found</a></article>');
+          return html(response, '<p>gate\npending</p>', 403);
+        },
+        { timeout: 4000 },
+      );
+      const rule = automaticRule(baseURL, { captchaType: 3, captchaScript });
+      assert.deepEqual(await engine.search(rule, name, { sessionOwner: name }), [
+        { name: 'Found', url: `${baseURL}/show` },
+      ]);
+      assert.equal(globalThis.__kazumiBrowserScript, undefined);
+      assert.ok(
+        resolver.ruleSessions
+          .get(rule, name)
+          .storageState.cookies.some((cookie) => cookie.name === 'verified'),
+      );
+      assert.equal(resolver.browser.contexts().length, 0);
+    }
+  },
+);
+
+browserTest(
+  'automatic verification preserves API POST bodies and replays after a delayed grant',
+  async (t) => {
+    const bodies = [];
+    const { baseURL, engine } = await fixture(
+      t,
+      async (request, response) => {
+        if (request.url === '/grant') {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          response.setHeader('set-cookie', 'verified=1; Path=/; HttpOnly');
+          return response.end('ok');
+        }
+        bodies.push({
+          method: request.method,
+          body: await body(request),
+          header: request.headers['x-fixture'],
+        });
+        if (request.headers.cookie?.includes('verified=1'))
+          return response
+            .writeHead(200, { 'content-type': 'application/json' })
+            .end(JSON.stringify({ data: [{ name: 'API', url: 'id' }] }));
+        return html(response, '<p>gate\npending</p>', 403);
+      },
+      { timeout: 4000 },
+    );
+    const rule = {
+      ...automaticRule(baseURL, {
+        captchaType: 3,
+        captchaScript: "fetch('/grant',{method:'POST'}).then(() => KazumiCaptcha.done());",
+      }),
+      searchMode: 'api',
+      searchApiConfig: {
+        request: {
+          url: `${baseURL}/api`,
+          method: 'POST',
+          headers: { 'x-fixture': 'original' },
+          bodyType: 'json',
+          body: { q: '@keyword' },
+        },
+      },
+    };
+    assert.deepEqual(await engine.search(rule, '猫'), [{ name: 'API', url: 'id' }]);
+    assert.equal(bodies.length, 3);
+    assert.ok(
+      bodies.every(
+        (item) =>
+          item.method === 'POST' && item.header === 'original' && JSON.parse(item.body).q === '猫',
+      ),
+    );
+  },
+);
+
+browserTest(
+  'playback performs automatic verification without an interactive callback',
+  async (t) => {
+    const { baseURL, resolver } = await fixture(
+      t,
+      (request, response) => {
+        if (request.url === '/movie.mp4')
+          return response.writeHead(206, { 'content-type': 'video/mp4' }).end(mp4);
+        if (request.headers.cookie?.includes('verified=1'))
+          return html(response, '<video src="/movie.mp4"></video>');
+        return html(response, '<p>gate\npending</p>');
+      },
+      { timeout: 4000 },
+    );
+    const rule = automaticRule(baseURL, {
+      captchaType: 3,
+      captchaScript: "document.cookie='verified=1; Path=/'; return true;",
+    });
+    const result = await resolver.resolve(rule, `${baseURL}/watch`, { sessionOwner: 'viewer' });
+    assert.equal(result.type, 'video');
+    assert.equal(result.url, `${baseURL}/movie.mp4`);
+    assert.equal(resolver.browser.contexts().length, 0);
+  },
+);
+
+browserTest(
+  'automatic verification reports bridge and script failures and releases its contexts',
+  async (t) => {
+    const { baseURL, engine, resolver } = await fixture(
+      t,
+      (_request, response) => html(response, '<p>gate pending</p>'),
+      { timeout: 3000 },
+    );
+    for (const captchaScript of [
+      "throw new Error('fixture failed');",
+      "return Promise.reject(new Error('fixture failed'));",
+    ]) {
+      await assert.rejects(
+        engine.search(automaticRule(baseURL, { captchaType: 3, captchaScript }), 'fail'),
+        { status: 422, message: /fixture failed/ },
+      );
+      assert.equal(resolver.active.size, 0);
+      assert.equal(resolver.browser.contexts().length, 0);
+    }
+  },
+);
+
+browserTest(
+  'infinite verification scripts time out and cancellation releases browser capacity',
+  async (t) => {
+    const { baseURL, engine, resolver } = await fixture(
+      t,
+      (_request, response) => html(response, '<p>gate pending</p>'),
+      { timeout: 1500, maxConcurrency: 1 },
+    );
+    await assert.rejects(
+      engine.search(
+        automaticRule(baseURL, { captchaType: 3, captchaScript: 'while (true) {}' }),
+        'timeout',
+      ),
+      { status: 504 },
+    );
+    assert.equal(resolver.active.size, 0);
+    assert.equal(resolver.browser.contexts().length, 0);
+    const controller = new AbortController();
+    const pending = engine.search(
+      automaticRule(baseURL, { captchaType: 3, captchaScript: 'setInterval(() => {}, 100);' }),
+      'cancel',
+      { signal: controller.signal },
+    );
+    const rejected = assert.rejects(pending, { status: 499 });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    controller.abort();
+    await rejected;
+    assert.equal(resolver.active.size, 0);
+    assert.equal(resolver.browser.contexts().length, 0);
+  },
+);
 
 browserTest(
   'search keeps POST body, captcha image and cookies, pauses timeout and retries an incorrect answer',

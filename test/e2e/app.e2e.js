@@ -109,11 +109,11 @@ test('rules can be imported, edited, exported and removed using the interface', 
     JSON.stringify({
       ...rule,
       version: '2.0',
-      antiCrawlerConfig: { enabled: true, captchaType: 3, captchaScript: 'window.verify()' },
+      antiCrawlerConfig: { enabled: true, captchaType: 3, captchaScript: 'return (' },
     }),
   );
   await editor.getByRole('button', { name: '保存规则', exact: true }).click();
-  await expect(editor.getByRole('alert')).toContainText('不支持执行规则自定义验证脚本');
+  await expect(editor.getByRole('alert')).toContainText('captchaScript');
   const preserved = (await (await request.get('/api/rules')).json()).rules.find(
     (item) => item.name === rule.name,
   );
@@ -128,9 +128,7 @@ test('rules can be imported, edited, exported and removed using the interface', 
     route.fulfill({
       json: {
         updates: [],
-        blocked: [
-          { name: rule.name, status: 'incompatible', message: 'Web 不支持执行规则自定义验证脚本' },
-        ],
+        blocked: [{ name: rule.name, status: 'incompatible', message: 'captchaScript 语法错误' }],
       },
     }),
   );
