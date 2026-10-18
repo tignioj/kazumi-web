@@ -1,19 +1,23 @@
 import React, { useEffect, useState } from 'react';
 import { Network, Save, Wifi } from 'lucide-react';
 import { api } from '../../lib/api.js';
-import { useRequest } from '../../hooks/use-request.js';
 import { Notice } from '../../components/feedback.jsx';
 
-export function NetworkSettings({ notify }) {
-  const request = useRequest('/network-settings');
+export function NetworkSettings({ request, notify }) {
   const [form, setForm] = useState(null);
   const [passwordChanged, setPasswordChanged] = useState(false);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [result, setResult] = useState('');
   const [testUrl, setTestUrl] = useState('https://api.bgm.tv/v0/subjects/253');
+  const disabled = Boolean(busy) || request.saving || request.loading;
   useEffect(() => {
-    if (request.data) setForm({ ...request.data, password: '' });
+    if (request.data)
+      setForm((previous) =>
+        previous
+          ? { ...previous, enabled: request.data.enabled }
+          : { ...request.data, password: '' },
+      );
   }, [request.data]);
   const change = (key, value) => {
     setForm((previous) => ({ ...previous, [key]: value }));
@@ -29,17 +33,10 @@ export function NetworkSettings({ notify }) {
     if (passwordChanged) settings.password = form.password;
     try {
       if (action === 'save') {
-        const saved = await api('/network-settings', {
-          method: 'PUT',
-          body: JSON.stringify(settings),
-        });
+        const saved = await request.save(settings);
         setForm({ ...saved, password: '' });
         setPasswordChanged(false);
-        setResult(
-          saved.enabled
-            ? '网络代理已启用，新请求将通过代理连接。'
-            : '网络代理已关闭，新请求将直接连接。',
-        );
+        setResult('saved');
         notify('网络代理设置已保存');
       } else {
         const tested = await api('/network-settings/test', {
@@ -57,7 +54,7 @@ export function NetworkSettings({ notify }) {
     }
   };
   return (
-    <section className="settings-card" aria-label="网络代理">
+    <section id="network-settings" className="settings-card" aria-label="网络代理">
       <div className="settings-card-heading">
         <Network size={19} />
         <div>
@@ -88,13 +85,13 @@ export function NetworkSettings({ notify }) {
               role="switch"
               aria-checked={form.enabled}
               aria-label="启用网络代理"
-              disabled={Boolean(busy)}
+              disabled={disabled}
               onClick={() => change('enabled', !form.enabled)}
             >
               <span />
             </button>
           </div>
-          <fieldset disabled={Boolean(busy)} className="network-fields">
+          <fieldset disabled={disabled} className="network-fields">
             <label>
               <span>代理地址</span>
               <input
@@ -155,14 +152,14 @@ export function NetworkSettings({ notify }) {
             ECH 配置。
           </p>
           <div className="button-group">
-            <button type="submit" className="button primary" disabled={Boolean(busy)}>
+            <button type="submit" className="button primary" disabled={disabled}>
               <Save size={15} />
               {busy === 'save' ? '正在保存…' : '保存代理设置'}
             </button>
             <button
               type="button"
               className="button quiet"
-              disabled={Boolean(busy)}
+              disabled={disabled}
               onClick={() => submit('test')}
             >
               <Wifi size={15} />
@@ -171,7 +168,11 @@ export function NetworkSettings({ notify }) {
           </div>
           {result && (
             <p className="network-result muted small" role="status">
-              {result}
+              {result === 'saved'
+                ? request.data.enabled
+                  ? '网络代理已启用，新请求将通过代理连接。'
+                  : '网络代理已关闭，新请求将直接连接。'
+                : result}
             </p>
           )}
           {error && <Notice>{error}</Notice>}

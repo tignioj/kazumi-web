@@ -184,6 +184,7 @@
   background: var(--surface);
   height: 36px;
   width: 303px;
+  min-width: 0;
   padding: 0 11px;
   margin-left: auto;
   color: var(--muted);
@@ -207,6 +208,64 @@
 }
 .theme-toggle {
   margin-right: -8px;
+}
+.proxy-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-shrink: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.proxy-toggle:hover:not(:disabled) {
+  background: var(--surface-soft);
+  color: var(--ink);
+}
+.proxy-toggle.on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.proxy-toggle-track {
+  width: 26px;
+  height: 16px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--line);
+}
+.proxy-toggle-track > span {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--surface);
+  transition: transform 0.15s;
+}
+.proxy-toggle.on .proxy-toggle-track {
+  background: var(--accent);
+}
+.proxy-toggle.on .proxy-toggle-track > span {
+  transform: translateX(10px);
+}
+@media (max-width: 760px) {
+  .proxy-toggle {
+    height: 34px;
+    padding: 0 8px;
+    gap: 6px;
+  }
+  .proxy-toggle-label {
+    display: none;
+  }
 }
 .mobile-menu {
   display: none;

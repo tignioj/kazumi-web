@@ -9,7 +9,16 @@ import { normalizeBackup } from './backup.js';
 import { MetadataSettings } from './MetadataSettings.jsx';
 import { NetworkSettings } from './NetworkSettings.jsx';
 
-export function Settings({ settings, setSettings, library, history, watchData, notify, navigate }) {
+export function Settings({
+  network,
+  settings,
+  setSettings,
+  library,
+  history,
+  watchData,
+  notify,
+  navigate,
+}) {
   const fileRef = useRef();
   const [pending, setPending] = useState(null);
   const [error, setError] = useState('');
@@ -180,7 +189,7 @@ export function Settings({ settings, setSettings, library, history, watchData, n
             </button>
           </div>
         </section>
-        <NetworkSettings notify={notify} />
+        <NetworkSettings request={network} notify={notify} />
         <MetadataSettings notify={notify} />
         <section className="settings-card about-card">
           <div className="about-brand">

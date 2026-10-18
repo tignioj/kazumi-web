@@ -20,6 +20,8 @@ import {
 import { api } from './lib/api.js';
 import { useStored } from './hooks/use-stored.js';
 import { useRequest } from './hooks/use-request.js';
+import { useNetworkSettings } from './hooks/use-network-settings.js';
+import { ProxyToggle } from './components/ProxyToggle.jsx';
 import { Notice, Empty, Spinner } from './components/feedback.jsx';
 import { Discover } from './features/catalog/Discover.jsx';
 import { Categories } from './features/catalog/Categories.jsx';
@@ -51,6 +53,7 @@ export default function App() {
   }));
   const { route, origin } = navigation;
   const watchData = useWatchData(api);
+  const network = useNetworkSettings();
   const { library, history, saveProgress } = watchData;
   const [settings, setSettings] = useStored('kazumi.settings.v1', {
     theme: 'system',
@@ -128,6 +131,13 @@ export default function App() {
     if (navigation.scrollY !== null)
       window.scrollTo({ top: navigation.scrollY, behavior: 'instant' });
   }, [navigation]);
+  useEffect(() => {
+    if (watchData.loading || network.loading || route !== '/settings?section=network') return;
+    const frame = requestAnimationFrame(() => {
+      document.getElementById('network-settings')?.scrollIntoView({ behavior: 'instant' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [route, watchData.loading, network.loading]);
   useEffect(() => {
     const media = matchMedia('(prefers-color-scheme: dark)');
     const update = () =>
@@ -320,6 +330,17 @@ export default function App() {
             />
             <kbd>↵</kbd>
           </form>
+          <ProxyToggle
+            network={network}
+            notify={notify}
+            onConfigure={() => {
+              if (route === '/settings?section=network')
+                document
+                  .getElementById('network-settings')
+                  ?.scrollIntoView({ behavior: 'instant' });
+              else navigate('/settings?section=network');
+            }}
+          />
           <button
             className="theme-toggle icon-button"
             onClick={() =>
@@ -435,6 +456,7 @@ export default function App() {
               )}
               {section === 'settings' && (
                 <Settings
+                  network={network}
                   settings={settings}
                   setSettings={setSettings}
                   library={library}
