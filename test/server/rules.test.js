@@ -15,6 +15,7 @@ import { normalizeRule, parseImport, RuleStore } from '../../server/modules/rule
 import { checkedUrl, isPublicAddress } from '../../server/lib/http.js';
 import {
   extractMedia,
+  mediaType,
   rewritePlaylist,
   MediaService,
 } from '../../server/modules/playback/media.js';
@@ -283,6 +284,27 @@ test('static resolver decodes MacCMS player JSON without evaluating scripts', ()
     type: 'video',
     url: 'https://example.com/a.mp4',
   });
+});
+
+test('media extensions in player query strings and fragments do not classify HTML as media', () => {
+  for (const extension of ['m3u8', 'mp4', 'webm']) {
+    const media = `https://cdn.example.com/movie.${extension}?token=secret`;
+    assert.equal(mediaType(media), extension === 'm3u8' ? 'hls' : 'video');
+    for (const player of [
+      `https://player.example.com/index.html?url=${media}`,
+      `https://player.example.com/index.html?url=${encodeURIComponent(media)}`,
+      `https://player.example.com/index.html#movie.${extension}`,
+    ]) {
+      assert.equal(mediaType(player), null);
+      assert.deepEqual(
+        extractMedia(
+          `<script>var player_aaaa=${JSON.stringify({ encrypt: 0, url: player })}</script>`,
+          rule.baseURL,
+        ),
+        { type: 'iframe', url: player, browserUrl: player },
+      );
+    }
+  }
 });
 
 test('HLS rewrite covers variants, media, keys, maps and segment URLs', () => {

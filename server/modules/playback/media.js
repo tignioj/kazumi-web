@@ -10,8 +10,10 @@ import { resolveSevenSefun } from './adapters/sevensefun.js';
 import { headersForSession, MediaSessionStore } from './session-store.js';
 
 export function mediaType(url) {
-  if (/\.m3u8(?:[?#]|$)/i.test(url)) return 'hls';
-  if (/\.(?:mp4|m4v|webm|mov|mp3|m4a|ogg|ogv)(?:[?#]|$)/i.test(url)) return 'video';
+  // An HTML parser's query or fragment can contain a media URL of its own.
+  const path = url.split(/[?#]/, 1)[0];
+  if (/\.m3u8$/i.test(path)) return 'hls';
+  if (/\.(?:mp4|m4v|webm|mov|mp3|m4a|ogg|ogv)$/i.test(path)) return 'video';
   return null;
 }
 

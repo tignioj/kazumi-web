@@ -184,6 +184,40 @@ browserTest(
 );
 
 browserTest(
+  'a player page with a media URL query waits for its delayed playlist without validating the page as HLS',
+  async (t) => {
+    const player = '/embed.html?url=/master.m3u8';
+    const { resolver, baseURL, rule, requests } = await fixture(
+      t,
+      (request, response) => {
+        if (request.url === '/watch') return html(response, `<iframe src="${player}"></iframe>`);
+        if (request.url === player)
+          return html(
+            response,
+            `<script>setTimeout(() => fetch('/master.m3u8').then(response => response.text()), 4200)</script>`,
+          );
+        if (request.url === '/master.m3u8')
+          return response
+            .writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl' })
+            .end('#EXTM3U\n#EXTINF:5,\nfirst.ts\n#EXT-X-ENDLIST\n');
+        if (request.url === '/first.ts')
+          return response.writeHead(206, { 'content-type': 'video/mp2t' }).end(segment);
+        response.writeHead(404).end();
+      },
+      { timeout: 8000 },
+    );
+    const result = await resolver.resolve(rule, `${baseURL}/watch`);
+    assert.equal(result.type, 'hls');
+    assert.equal(result.url, `${baseURL}/master.m3u8`);
+    assert.equal(
+      requests.filter((request) => request.path === player).length,
+      1,
+      'only the browser loads the player HTML; the server never probes it as a playlist',
+    );
+  },
+);
+
+browserTest(
   'decoded playback fallback shares the source session and keeps the original parser running',
   async (t) => {
     const { resolver, baseURL, rule, requests } = await fixture(t, (request, response) => {
@@ -299,6 +333,63 @@ test('candidate verification rejects HTML claiming to be video and cancels the r
     { status: 422, message: /没有返回可识别/ },
   );
   assert.equal(cancelled, true);
+});
+
+test('HLS segment verification distinguishes CDN region blocks from other upstream failures', async (t) => {
+  for (const [status, body, expected] of [
+    [
+      403,
+      '<html>The region has been denied. Connection: private-client-ip</html>',
+      /HTTP 403.*网络出口地区受限.*代理分流/,
+    ],
+    [403, '<html>Access denied</html>', /HTTP 403$/],
+    [404, '<html>Not found</html>', /HTTP 404$/],
+    [416, '<html>Range not satisfiable</html>', /HTTP 416$/],
+  ]) {
+    await t.test(`${status}: ${body}`, async () => {
+      let cancelled = false;
+      const url = 'https://cdn.example/master.m3u8';
+      const resolver = new BrowserResolver({
+        allowPrivate: false,
+        async request(target) {
+          if (target === url)
+            return {
+              url,
+              response: new Response('#EXTM3U\n#EXTINF:5,\nfirst.ts\n#EXT-X-ENDLIST\n'),
+            };
+          assert.equal(target, 'https://cdn.example/first.ts');
+          return {
+            url: target,
+            response: new Response(
+              new ReadableStream({
+                start(controller) {
+                  controller.enqueue(Buffer.from(body.padEnd(8192, ' ')));
+                },
+                cancel() {
+                  cancelled = true;
+                },
+              }),
+              { status, headers: { 'content-type': 'text/html' } },
+            ),
+          };
+        },
+      });
+      await assert.rejects(
+        resolver.validate(
+          { url, type: 'hls' },
+          { url, headers: {}, cookies: [] },
+          AbortSignal.timeout(1000),
+        ),
+        (error) => {
+          assert.equal(error.status, 502);
+          assert.match(error.message, expected);
+          assert.doesNotMatch(error.message, /private-client-ip|<html>/);
+          return true;
+        },
+      );
+      assert.equal(cancelled, true, 'error bodies are cancelled after a bounded prefix');
+    });
+  }
 });
 
 test('browser startup errors identify missing Chromium and close the egress proxy', async () => {

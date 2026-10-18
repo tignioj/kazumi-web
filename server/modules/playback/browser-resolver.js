@@ -31,10 +31,13 @@ function forwardHeaders(input) {
 }
 
 function mediaKind(url, contentType = '') {
-  if (SEGMENT.test(url)) return null;
-  if (/mpegurl/i.test(contentType) || /\.m3u8(?:[?#]|$)/i.test(url)) return 'hls';
+  // Player HTML often embeds the real media URL in ?url=...; only its own
+  // path can supply an extension hint, otherwise it becomes a false candidate.
+  const path = url.split(/[?#]/, 1)[0];
+  if (SEGMENT.test(path)) return null;
+  if (/mpegurl/i.test(contentType) || /\.m3u8$/i.test(path)) return 'hls';
   if (/^(?:video|audio)\//i.test(contentType) && !/mp2t|aac/i.test(contentType)) return 'video';
-  return /\.(?:mp4|m4v|webm|mov|mp3|ogg|ogv)(?:[?#]|$)/i.test(url) ? 'video' : null;
+  return /\.(?:mp4|m4v|webm|mov|mp3|ogg|ogv)$/i.test(path) ? 'video' : null;
 }
 
 function playableBytes(bytes, contentType) {
@@ -549,8 +552,16 @@ export class BrowserResolver {
           headersForUrl: (next) => ({ ...headersForSession(session, next), range: 'bytes=0-4095' }),
         });
         if (![200, 206].includes(probe.response.status)) {
-          await probe.response.body?.cancel();
-          throw new HttpError('已找到视频，但无法通过服务端读取 HLS 分片', 502);
+          const status = probe.response.status;
+          let reason = `上游返回 HTTP ${status}`;
+          if (status === 403) {
+            // Some CDNs explain a region block only in their HTML error body.
+            // Inspect a bounded prefix without exposing that body or client IP.
+            const body = await prefix(probe.response).catch(() => Buffer.alloc(0));
+            if (/\bthe region has been denied\b/i.test(body.toString('utf8')))
+              reason += '，当前网络出口地区受限，请检查服务器或网关的代理分流';
+          } else await probe.response.body?.cancel();
+          throw new HttpError(`已找到视频，但无法通过服务端读取 HLS 分片：${reason}`, 502);
         }
         const bytes = await prefix(probe.response);
         if (

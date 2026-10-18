@@ -153,7 +153,7 @@ npm run dev
 
 前端：<http://localhost:5173>；后端：<http://localhost:3000>。Vite 将 `/api` 转发至后端。
 
-如果开发机的 3000 端口已被占用，设置 `API_PORT=3100` 后执行 `npm run dev`，前后端代理会一起使用新端口。开发模式不自动读取部署用的 `.env`；需要 DoH 时请将 `DNS_OVER_HTTPS_URL` 设置为进程环境变量。
+如果开发机的 3000 端口已被占用，执行 `API_PORT=3100 npm run dev`，前后端代理会一起使用新端口，前端仍在 5173。开发模式不自动读取部署用的 `.env`；可通过进程环境变量传入配置，例如 `DNS_OVER_HTTPS_URL=https://1.1.1.1/dns-query npm run dev`。也可复制 `.env.example` 为 `.env`，按需取消注释并修改配置，再用 `node --env-file=.env scripts/dev.mjs` 启动。`npm run dev` 使用 `API_PORT` 设置后端端口，会覆盖 `PORT`。
 
 ```bash
 npm test             # 前端、后端和共享逻辑的全部 Node.js 测试
@@ -206,32 +206,78 @@ npm run test:e2e
 
 新增接口放入对应业务目录，通过 `server/routes.js` 接入；限流计数、规则目录缓存和验证任务等状态由各应用实例持有。调整后运行 `npm run check` 和 `npm run test:e2e`。
 
-### 服务端环境变量
+### 环境变量
 
-| 变量                             | 默认值                      | 用途                                                                                                                |
-| -------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `HOST`                           | `0.0.0.0`                   | Node 监听地址                                                                                                       |
-| `PORT`                           | `3000`                      | Node 监听端口；Compose 中 `.env` 的 PORT 只修改宿主机映射                                                           |
-| `DATA_DIR`                       | `./data`                    | 规则和视频缓存数据目录，容器为 `/app/data`                                                                          |
-| `VIDEO_CACHE_MAX_GB`             | `10`                        | 视频缓存总容量上限（G，1 G = 1 GiB，支持小数，默认 10 G），Compose 支持从 `.env` 传入                               |
-| `IMAGE_CACHE_MAX_BYTES`          | `268435456`                 | 图片磁盘缓存上限（字节，默认 256 MiB），设为 `0` 关闭磁盘缓存；Compose 支持从 `.env` 传入                           |
-| `METADATA_MODE`                  | `local`                     | `local` 使用本地归档，`remote` 恢复远程查询；Compose 支持从 `.env` 传入                                             |
-| `METADATA_AUTO_UPDATE`           | `true`                      | 首次后台初始化并定期检查官方归档；Compose 支持从 `.env` 传入                                                        |
-| `METADATA_UPDATE_INTERVAL_HOURS` | `24`                        | 自动检查间隔（1–720 小时）；Compose 支持从 `.env` 传入                                                              |
-| `METADATA_ARCHIVE_MANIFEST_URL`  | 官方 `aux/latest.json`      | 高级配置：归档版本清单地址，包含 ZIP URL、大小、名称及 SHA-256；覆盖时需自行传入容器                                |
-| `BANGUMI_API_URL`                | `https://api.bgm.tv`        | Bangumi API 基址                                                                                                    |
-| `BANGUMI_NEXT_URL`               | `https://next.bgm.tv`       | Bangumi Next API 基址                                                                                               |
-| `RULES_REPOSITORY`               | 上游 KazumiRules 仓库       | 规则目录和规则文件基址                                                                                              |
-| `ALLOW_PRIVATE_NETWORK`          | `false`                     | 仅可信内网源/隔离测试环境可开启；Compose 默认关闭                                                                   |
-| `DNS_OVER_HTTPS_URL`             | 空                          | 可选的 DNS JSON 查询端点，例如 `https://1.1.1.1/dns-query`；仍校验并绑定解析后的公网 IP，Compose 支持从 `.env` 传入 |
-| `BANGUMI_ECH`                    | `false`                     | 为 Bangumi API 和图片启用 ECH；Docker 已内置辅助程序，Compose 支持从 `.env` 传入                                    |
-| `ECH_DOH_URL`                    | `https://1.1.1.1/dns-query` | ECH 专用 DNS JSON 端点，用于查询公网 IP 和 HTTPS 记录中的 ECH 配置                                                  |
-| `ECH_HELPER_PATH`                | 项目内 `bin/kazumi-ech`     | 本地开发可指定预先构建的 ECH 程序路径，Windows 使用 `.exe`                                                          |
-| `DYNAMIC_RESOLVER`               | `true`                      | 是否启用服务端浏览器解析；设为 `false` 时保留快速解析与原有 iframe 回退                                             |
-| `DYNAMIC_RESOLVER_TIMEOUT_MS`    | `20000`                     | 单次浏览器解析超时（毫秒）                                                                                          |
-| `DYNAMIC_RESOLVER_CONCURRENCY`   | `2`                         | 同时运行的浏览器解析任务上限                                                                                        |
+[`.env.example`](.env.example) 列出了服务端、Compose、本地开发和测试使用的配置，并注明用途、默认值、单位和生效方式。普通部署可保留默认值；高级配置和开发测试配置默认注释，按需取消注释后修改。布尔值使用小写 `true` / `false`，带空格的值使用引号。
 
-高级环境变量需要添加到 `compose.yaml` 的 `environment`，仅写入 `.env` 不会自动传入容器。
+不同启动方式读取配置的方式如下：
+
+| 启动方式                                        | `.env` 的读取方式                                                                                                                  |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `docker compose up -d`                          | 自动用于 Compose 变量替换；只有 `compose.yaml` 的端口映射或 `environment` 显式引用的变量才会生效                                   |
+| `npm run dev` / `npm start`                     | 读取进程环境变量，不自动加载 `.env`；可分别用 `node --env-file=.env scripts/dev.mjs` / `node --env-file=.env server/index.js` 加载 |
+| `npm run metadata:update` / `npm run check:ech` | 自动读取 `.env`，已有进程环境变量优先                                                                                              |
+| `npm run smoke` / `npm run test:e2e`            | 读取进程环境变量，不自动加载 `.env`                                                                                                |
+
+#### Compose 常用配置
+
+以下变量已在 `compose.yaml` 中接入，修改 `.env` 后执行 `docker compose up -d` 即可应用。
+
+| 变量                             | 默认值                      | 用途                                                                                            |
+| -------------------------------- | --------------------------- | ----------------------------------------------------------------------------------------------- |
+| `HOST_BIND`                      | `0.0.0.0`                   | 宿主机监听地址；局域网访问保留默认值，仅本机访问设为 `127.0.0.1`；仅用于 Compose                |
+| `PORT`                           | `3000`                      | Compose 的宿主机访问端口，容器内部固定为 `3000`；本地 `npm start` 用作 Node 监听端口            |
+| `VIDEO_CACHE_MAX_GB`             | `10`                        | 视频缓存总容量上限（GiB，1 GiB = 1024³ 字节，支持小数且必须大于 0）；不会自动删除已有缓存       |
+| `IMAGE_CACHE_MAX_BYTES`          | `268435456`                 | 图片磁盘缓存上限（字节，默认 256 MiB）；`0` 关闭图片磁盘缓存                                    |
+| `METADATA_MODE`                  | `local`                     | `local` 使用本地归档，`remote` 使用远程查询；切换模式保留本地数据                               |
+| `METADATA_AUTO_UPDATE`           | `true`                      | 本地模式下首次后台初始化并定期检查归档；`false` 关闭自动更新，仍允许手动更新                    |
+| `METADATA_UPDATE_INTERVAL_HOURS` | `24`                        | 自动检查间隔（小时，1–720）；更新失败后 15 分钟重试                                             |
+| `DNS_OVER_HTTPS_URL`             | 空                          | 可选 DNS JSON 查询端点，例如 `https://1.1.1.1/dns-query`；留空使用系统 DNS，仍校验并绑定公网 IP |
+| `BANGUMI_ECH`                    | `false`                     | 为指定 Bangumi API 和图片域名启用 ECH；Docker 已内置辅助程序                                    |
+| `ECH_DOH_URL`                    | `https://1.1.1.1/dns-query` | ECH 专用 DNS JSON 端点，用于查询目标公网 IP 和 HTTPS 记录中的 ECH 配置                          |
+| `DYNAMIC_RESOLVER`               | `true`                      | 服务端浏览器解析及人工验证；`false` 保留快速解析与网页播放器回退                                |
+| `DYNAMIC_RESOLVER_TIMEOUT_MS`    | `20000`                     | 单次浏览器解析超时（毫秒，正数，最大 30000）；人工验证等待时间另计                              |
+| `DYNAMIC_RESOLVER_CONCURRENCY`   | `2`                         | 浏览器任务并发上限（整数，1–4）；等待人工验证的任务也占用名额                                   |
+
+#### 其他服务端配置
+
+以下变量由 Node 服务读取，但 Compose 不会自动从 `.env` 传入这些值。本地运行时可使用上面的 `--env-file` 命令；Docker 中需显式配置 `environment`。
+
+| 变量                            | 默认值                                                                                             | 用途                                                                                                                                    |
+| ------------------------------- | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `HOST`                          | `0.0.0.0`                                                                                          | Node 监听地址；Compose 固定为 `0.0.0.0`，宿主机监听地址通过 `HOST_BIND` 设置                                                            |
+| `DATA_DIR`                      | 项目根目录下的 `data`                                                                              | 规则、收藏、观看记录、播放进度、图片、视频缓存和元数据库目录；相对路径按进程工作目录解析；Compose 固定为 `/app/data` 并挂载数据卷       |
+| `METADATA_ARCHIVE_MANIFEST_URL` | [官方 `aux/latest.json`](https://raw.githubusercontent.com/bangumi/Archive/master/aux/latest.json) | 归档版本清单地址，需返回官方格式的 ZIP URL、大小、名称和 SHA-256                                                                        |
+| `BANGUMI_API_URL`               | `https://api.bgm.tv`                                                                               | Bangumi API 基址，主要用于远程元数据模式                                                                                                |
+| `BANGUMI_NEXT_URL`              | `https://next.bgm.tv`                                                                              | Bangumi Next API 基址，用于远程元数据模式，也用于本地模式的封面地址查询                                                                 |
+| `BANGUMI_USER_AGENT`            | 内置 `KazumiWeb/1.0` 标识，完整值见 `.env.example`                                                 | 元数据服务请求 Bangumi 时使用的 User-Agent；不影响片源请求或封面地址查询                                                                |
+| `RULES_REPOSITORY`              | [KazumiRules 原始文件目录](https://raw.githubusercontent.com/Predidit/KazumiRules/main/)           | 规则目录及 JSON 文件的基址，需提供 `index.json` 和对应规则文件                                                                          |
+| `ALLOW_PRIVATE_NETWORK`         | `false`                                                                                            | 允许服务端请求本机、私网和保留地址，仅可信内网源或隔离测试环境按需开启；Compose 固定为 `false`                                          |
+| `ECH_HELPER_PATH`               | 项目内 `bin/kazumi-ech`，Windows 带 `.exe`                                                         | 预先构建的 ECH 辅助程序路径；Docker 已内置 `/app/bin/kazumi-ech`，通常无需修改                                                          |
+| `MEDIA_SECRET`                  | 每次启动随机生成                                                                                   | 媒体代理 URL 签名密钥，留空即可；如需固定值，应自行生成随机密钥。固定密钥不会持久化动态媒体会话，重启后仍需重新打开剧集；它不是登录密码 |
+
+例如，要在 Docker 中修改 Bangumi API 基址，先在 `.env` 中取消注释并修改 `BANGUMI_API_URL`，再新建 `compose.override.yaml`：
+
+```yaml
+services:
+  kazumi:
+    environment:
+      BANGUMI_API_URL: '${BANGUMI_API_URL:-https://api.bgm.tv}'
+```
+
+其他高级变量按同样方式添加，也可直接修改 `compose.yaml` 的 `environment`。运行 `docker compose config` 检查最终配置，再执行 `docker compose up -d` 应用。`HOST`、容器内部的 `PORT` 和 `DATA_DIR` 与现有端口映射、健康检查和数据卷配置配套；修改宿主机地址及端口使用 `HOST_BIND` / `PORT`。
+
+#### 本地开发与测试配置
+
+这些变量不传入 Compose 容器，通常直接放在命令前，例如 `API_PORT=3100 npm run dev` 或 `BASE_URL=http://localhost:8080 npm run smoke`。
+
+| 变量               | 默认值                  | 用途                                                                             |
+| ------------------ | ----------------------- | -------------------------------------------------------------------------------- |
+| `API_PORT`         | `3000`                  | `npm run dev` 的后端端口，同时供 Vite 代理使用；覆盖 `PORT`，前端端口仍为 `5173` |
+| `BASE_URL`         | `http://localhost:3000` | `npm run smoke` 检查的运行中实例地址                                             |
+| `SMOKE_LIVE`       | `false`（未设置）       | `true` 让 smoke 额外检查实际番剧资料和规则仓库，需准备好元数据及上游网络         |
+| `E2E_PORT`         | `4173`                  | Playwright 测试应用端口；测试使用临时数据目录                                    |
+| `E2E_FIXTURE_PORT` | `4174`                  | Playwright 模拟上游服务端口，需与 `E2E_PORT` 不同                                |
 
 若开启了 TUN/Fake-IP DNS，域名可能解析为 `198.18.x.x`，页面会提示「域名解析到私有或保留网络地址」。在 `.env` 设置 `DNS_OVER_HTTPS_URL=https://1.1.1.1/dns-query` 后重新运行 `docker compose up -d`，不必关闭内网访问保护。DNS 查询将由所配置的解析服务处理。
 
