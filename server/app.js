@@ -9,11 +9,11 @@ import { WatchStore } from './modules/watch/store.js';
 import { NetworkStore } from './modules/network/store.js';
 import { LocalMetadataStore } from './modules/metadata/local-store.js';
 import { ArchiveManager } from './modules/metadata/archive-manager.js';
-import { RuleEngine } from './modules/rules/engine.js';
+import { KazumiCoreClient } from './modules/core/client.js';
+import { createBrowserEgress } from './lib/browser-egress.js';
 import { MediaService } from './modules/playback/media.js';
 import { ImageCache } from './modules/images/cache.js';
 import { createCoverResolver } from './modules/images/cover-resolver.js';
-import { BrowserResolver } from './modules/playback/browser-resolver.js';
 import { MetadataService } from './modules/metadata/service.js';
 import { VerificationTasks } from './modules/verification/tasks.js';
 import { DownloadManager } from './modules/downloads/manager.js';
@@ -59,18 +59,17 @@ export async function createApp(options = {}) {
         JSON.parse(await readFile(resolve(directory, 'defaults', `${name}.json`), 'utf8')),
       ),
     ));
-  const browserResolver =
-    options.browserResolver === false || process.env.DYNAMIC_RESOLVER === 'false'
+  const core = options.core || new KazumiCoreClient(options.coreOptions);
+  const egress =
+    options.egress === false
       ? null
-      : options.browserResolver ||
-        new BrowserResolver(videoHttp, {
-          timeout: Number(process.env.DYNAMIC_RESOLVER_TIMEOUT_MS || 20000),
-          maxConcurrency: Number(process.env.DYNAMIC_RESOLVER_CONCURRENCY || 2),
+      : await createBrowserEgress({
+          allowPrivate: videoHttp.allowPrivate,
+          host: process.env.KAZUMI_EGRESS_HOST || '127.0.0.1',
+          port: Number(process.env.KAZUMI_EGRESS_PORT || 0),
+          getProxySettings: () => proxySettingsFor(network.data, 'video'),
         });
-  const store = await new RuleStore(dataDir, initialRules, {
-    dynamicResolver:
-      typeof browserResolver?.read === 'function' && browserResolver.available !== false,
-  }).init();
+  const store = await new RuleStore(dataDir, initialRules, { core }).init();
   const watchStore = await new WatchStore(dataDir).init();
   const images = await new ImageCache({
     directory: resolve(dataDir, 'images'),
@@ -79,8 +78,8 @@ export async function createApp(options = {}) {
     getNetworkSettings: () => network.data,
     maxBytes: Number(process.env.IMAGE_CACHE_MAX_BYTES ?? 5 * 1024 ** 3),
   }).init();
-  const engine = new RuleEngine(videoHttp, { browserResolver });
-  const media = new MediaService(videoHttp, undefined, { browserResolver });
+  const engine = core;
+  const media = new MediaService(videoHttp, undefined, { core });
   const downloads = await new DownloadManager({
     directory: resolve(dataDir, 'downloads'),
     http: videoHttp,
@@ -120,6 +119,8 @@ export async function createApp(options = {}) {
     downloads,
     archive,
     localMetadata,
+    core,
+    egress,
     async close() {
       await archive?.close();
       localMetadata?.close();
@@ -128,7 +129,7 @@ export async function createApp(options = {}) {
       await network.pending;
       await downloads.close();
       await images.close();
-      await browserResolver?.close();
+      await egress?.close();
       media.close?.();
       await Promise.all([...clients].map((client) => client.close()));
     },

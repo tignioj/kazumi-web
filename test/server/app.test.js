@@ -131,7 +131,7 @@ test('API limits stay per application and exempt streaming, images and health ch
   assert.deepEqual(await independent.json(), {
     rules: [],
     compatibility: [],
-    capabilities: { apiLevel: 9, dynamicResolver: false },
+    capabilities: { apiLevel: 9, dynamicResolver: true },
   });
 });
 

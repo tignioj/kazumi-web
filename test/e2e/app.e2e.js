@@ -109,16 +109,16 @@ test('rules can be imported, edited, exported and removed using the interface', 
     JSON.stringify({
       ...rule,
       version: '2.0',
-      antiCrawlerConfig: { enabled: true, captchaType: 3, captchaScript: 'return (' },
+      api: '99',
     }),
   );
   await editor.getByRole('button', { name: '保存规则', exact: true }).click();
-  await expect(editor.getByRole('alert')).toContainText('captchaScript');
+  await expect(editor.getByRole('alert')).toContainText('版本');
   const preserved = (await (await request.get('/api/rules')).json()).rules.find(
     (item) => item.name === rule.name,
   );
   expect(preserved.version).toBe('1.0');
-  expect(preserved.antiCrawlerConfig).toBeUndefined();
+  expect(preserved.antiCrawlerConfig.enabled).toBe(false);
   await editor
     .getByLabel('规则 JSON 或分享链接')
     .fill(JSON.stringify({ ...rule, version: '2.0' }, null, 2));
@@ -176,9 +176,9 @@ test('MP4 and HLS really play, record progress and resume the selected episode',
   await expect
     .poll(() => video.evaluate((element) => element.readyState))
     .toBeGreaterThanOrEqual(1);
-  await video.evaluate(async (element) => {
-    await element.play();
+  await video.evaluate((element) => {
     element.currentTime = 7;
+    void element.play();
   });
   await expect.poll(() => video.evaluate((element) => element.currentTime)).toBeGreaterThan(7.3);
   await video.evaluate((element) => element.pause());
@@ -247,7 +247,12 @@ test('playback speed, automatic next episode and sidebar navigation work during 
   await expect
     .poll(() => video.evaluate((element) => element.readyState))
     .toBeGreaterThanOrEqual(1);
-  await page.getByLabel('播放速度').selectOption('1.5');
+  await page.getByLabel('显示设置', { exact: true }).click();
+  await page.getByText('播放速度', { exact: true }).click();
+  await page
+    .locator('.art-setting-item-left-text')
+    .filter({ hasText: /^1\.5$/ })
+    .click();
   await expect.poll(() => video.evaluate((element) => element.playbackRate)).toBe(1.5);
   await video.evaluate(async (element) => {
     element.currentTime = element.duration - 0.15;

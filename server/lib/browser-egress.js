@@ -41,13 +41,14 @@ function errorStatus(error) {
 }
 
 /**
- * A loopback proxy for Chromium. All sockets use checked DNS answers directly;
- * browser DNS resolution never decides the address used by an outbound socket.
- * TLS remains end-to-end through CONNECT. Browser code must block WebSockets
- * itself, since an encrypted Upgrade request is opaque to this proxy.
+ * A DNS-checked proxy for the upstream Kazumi service and its native WebViews. All sockets use checked DNS answers directly;
+ * WebView DNS resolution never decides the address used by an outbound socket.
+ * TLS remains end-to-end through CONNECT. TLS CONNECT remains end-to-end, including encrypted protocol upgrades.
  */
 export async function createBrowserEgress({
   allowPrivate = false,
+  host = '127.0.0.1',
+  port = 0,
   dnsOverHttpsUrl = process.env.DNS_OVER_HTTPS_URL,
   resolver,
   timeout = 30000,
@@ -195,7 +196,7 @@ export async function createBrowserEgress({
   try {
     await new Promise((resolve, reject) => {
       server.once('error', reject);
-      server.listen(0, '127.0.0.1', resolve);
+      server.listen(port, host, resolve);
     });
   } catch (error) {
     agent.destroy();

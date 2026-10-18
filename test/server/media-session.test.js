@@ -35,7 +35,7 @@ const candidate = (extra = {}) => ({
 });
 function fixture({ html = '<html>dynamic player</html>', error, result = candidate() } = {}) {
   const requests = [],
-    browserCalls = [];
+    coreCalls = [];
   const http = {
     allowPrivate: false,
     async request(url, options) {
@@ -44,14 +44,14 @@ function fixture({ html = '<html>dynamic player</html>', error, result = candida
       return { url, response: new Response(html) };
     },
   };
-  const browserResolver = {
+  const core = {
     async resolve(...args) {
-      browserCalls.push(args);
+      coreCalls.push(args);
       return result;
     },
   };
-  const service = new MediaService(http, 'session-test', { browserResolver });
-  return { service, http, requests, browserCalls, browserResolver };
+  const service = new MediaService(http, 'session-test', { core });
+  return { service, http, requests, coreCalls, core };
 }
 function payload(result) {
   return JSON.parse(
@@ -73,13 +73,13 @@ async function serve(service) {
 }
 
 test('browser fallback creates a server session without putting credentials in the signed URL', async () => {
-  const { service, browserCalls, requests } = fixture();
+  const { service, coreCalls, requests } = fixture();
   const controller = new AbortController();
   const result = await service.resolve(rule, '/play/2', { signal: controller.signal });
   assert.equal(result.type, 'video');
   assert.equal(result.originalUrl, 'https://source.example/play/2');
-  assert.deepEqual(browserCalls, [[rule, result.originalUrl, { signal: controller.signal }]]);
-  assert.equal(requests[0].signal, controller.signal);
+  assert.deepEqual(coreCalls, [[rule, result.originalUrl, { signal: controller.signal }]]);
+  assert.equal(requests.length, 0, 'Node does not fetch or parse source HTML');
   const data = payload(result);
   assert.equal(typeof data.sessionId, 'string');
   assert.equal(data.headers, undefined);
@@ -88,154 +88,6 @@ test('browser fallback creates a server session without putting credentials in t
   assert.ok(data.expires > Date.now() / 1000 + 5 * 3600);
   service.close();
   assert.throws(() => service.sessions.get(data.sessionId), { status: 403 });
-});
-
-test('static success avoids the browser and keeps the existing proxy payload format', async () => {
-  const { service, browserCalls } = fixture({ html: '<video src="/movie.mp4"></video>' });
-  const result = await service.resolve(rule, '/play');
-  assert.equal(result.type, 'video');
-  assert.equal(browserCalls.length, 0);
-  assert.equal(payload(result).headers.referer, rule.referer);
-  assert.equal(payload(result).sessionId, undefined);
-});
-
-test('static media that requires a browser cookie session falls back after a bounded preflight', async () => {
-  const { service, browserResolver, browserCalls } = fixture({
-    html: '<video src="/movie.mp4"></video>',
-  });
-  let probed;
-  browserResolver.validate = async (media, session, signal) => {
-    probed = { media, session, signal };
-    throw new HttpError('动态解析的视频验证失败：上游返回 HTTP 403', 502);
-  };
-  const result = await service.resolve(rule, '/play');
-  assert.deepEqual(probed.media, { type: 'video', url: 'https://source.example/movie.mp4' });
-  assert.equal(probed.session.headers.referer, rule.referer);
-  assert.deepEqual(probed.session.cookies, []);
-  assert.equal(probed.signal.aborted, false);
-  assert.equal(browserCalls.length, 1);
-  assert.equal(browserCalls[0][1], 'https://source.example/play');
-  assert.ok(payload(result).sessionId);
-});
-
-test('successful static media preflight keeps the browser closed and respects detected HLS type', async () => {
-  const { service, browserResolver, browserCalls } = fixture({
-    html: '<video src="/stream.mp4"></video>',
-  });
-  browserResolver.validate = async () => 'hls';
-  const result = await service.resolve(rule, '/play');
-  assert.equal(result.type, 'hls');
-  assert.equal(payload(result).kind, 'hls');
-  assert.equal(payload(result).sessionId, undefined);
-  assert.equal(browserCalls.length, 0);
-});
-
-test('preflight network refusals and caller cancellation never start a browser', async () => {
-  const blocked = fixture({ html: '<video src="/movie.mp4"></video>' });
-  blocked.browserResolver.validate = async () => {
-    throw new HttpError('域名解析到私有或保留网络地址', 403);
-  };
-  await assert.rejects(blocked.service.resolve(rule, '/play'), { status: 403 });
-  assert.equal(blocked.browserCalls.length, 0);
-  const cancelled = fixture({ html: '<video src="/movie.mp4"></video>' });
-  const controller = new AbortController();
-  const reason = new HttpError('解析已取消', 499);
-  cancelled.browserResolver.validate = async (media, session, signal) => {
-    controller.abort(reason);
-    signal.throwIfAborted();
-  };
-  await assert.rejects(
-    cancelled.service.resolve(rule, '/play', { signal: controller.signal }),
-    (error) => error === reason,
-  );
-  assert.equal(cancelled.browserCalls.length, 0);
-});
-
-test('unresolved nested pages invoke the browser with the original page', async () => {
-  const { service, browserCalls } = fixture({
-    html: '<iframe src="https://player.example/embed"></iframe>',
-  });
-  await service.resolve(rule, '/play');
-  assert.equal(browserCalls[0][1], 'https://source.example/play');
-});
-
-test('decoded playback pages bypass a broken site wrapper and preserve the original episode', async () => {
-  const target = 'https://next.example/anime/3403/play/121397?source=line1';
-  const { service, browserCalls } = fixture({
-    html: `<script>var player_aaaa=${JSON.stringify({ encrypt: 1, url: encodeURIComponent(target), from: 'X_1' })}</script>`,
-  });
-  const result = await service.resolve(rule, '/play');
-  assert.equal(browserCalls[0][1], 'https://source.example/play');
-  assert.equal(browserCalls[0][2].playbackUrl, target);
-  assert.equal(result.originalUrl, 'https://source.example/play');
-  assert.equal(result.type, 'video');
-  assert.ok(payload(result).sessionId);
-});
-
-test('opaque player identifiers stay on their original page for browser parsing', async () => {
-  for (const token of ['Doki-abcdef1234', 'ali_abcdef', 'opaque_token']) {
-    const { service, requests, browserCalls } = fixture({
-      html: `<script>var player_aaaa=${JSON.stringify({ encrypt: 0, url: token, from: 'custom' })}</script>`,
-    });
-    await service.resolve(rule, '/play');
-    assert.equal(requests.length, 1, 'opaque tokens must not be fetched as relative pages');
-    assert.equal(browserCalls[0][1], 'https://source.example/play');
-  }
-});
-
-test('retryable upstream and adapter errors reach the browser, disabled browser keeps legacy behavior', async () => {
-  for (const error of [
-    new HttpError('upstream failure', 502),
-    new HttpError('adapter failed', 422),
-  ]) {
-    const { service, browserCalls } = fixture({ error });
-    await service.resolve(rule, '/play');
-    assert.equal(browserCalls.length, 1);
-  }
-  const { http } = fixture();
-  assert.equal((await new MediaService(http, 'legacy').resolve(rule, '/play')).type, 'iframe');
-  const broken = fixture({ error: new HttpError('upstream failure', 502) });
-  await assert.rejects(new MediaService(broken.http).resolve(rule, '/play'), { status: 502 });
-});
-
-test('private-network refusals, invalid browser media and cancellation cannot become iframe fallback', async () => {
-  const blocked = fixture({ error: new HttpError('域名解析到私有或保留网络地址', 403) });
-  await assert.rejects(blocked.service.resolve(rule, '/play'), { status: 403 });
-  assert.equal(blocked.browserCalls.length, 0);
-  const preflight = fixture();
-  await assert.rejects(preflight.service.resolve(rule, 'http://127.0.0.1/play'), { status: 403 });
-  assert.equal(preflight.requests.length, 0);
-  for (const url of [
-    'http://127.0.0.1/movie.mp4',
-    'file:///etc/passwd',
-    'https://u:p@cdn.example/movie.mp4',
-  ]) {
-    const { service } = fixture({ result: candidate({ url }) });
-    await assert.rejects(service.resolve(rule, '/play'));
-    assert.equal(service.sessions.sessions.size, 0);
-  }
-  const cancelled = fixture();
-  await assert.rejects(cancelled.service.resolve(rule, '/play', { signal: AbortSignal.abort() }), {
-    name: 'AbortError',
-  });
-  assert.equal(cancelled.browserCalls.length, 0);
-  const interrupted = fixture();
-  const controller = new AbortController();
-  const reason = new HttpError('用户已经退出播放页', 499);
-  interrupted.http.request = async () => {
-    controller.abort(reason);
-    throw new HttpError('wrapped upstream cancellation', 502);
-  };
-  await assert.rejects(
-    interrupted.service.resolve(rule, '/play', { signal: controller.signal }),
-    (error) => error === reason,
-  );
-  assert.equal(interrupted.browserCalls.length, 0);
-  const failed = fixture();
-  failed.browserResolver.resolve = async () => {
-    throw new HttpError('动态解析超时', 504);
-  };
-  await assert.rejects(failed.service.resolve(rule, '/play'), { status: 504 });
 });
 
 test('cookie selection follows domain, path boundary, secure flag and expiration', () => {

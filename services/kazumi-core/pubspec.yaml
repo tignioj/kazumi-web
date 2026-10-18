@@ -1,0 +1,23 @@
+name: kazumi_core
+description: HTTP and platform adapter for the unmodified upstream Kazumi core.
+publish_to: none
+version: 1.0.0
+environment:
+  sdk: '>=3.10.0 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  kazumi:
+    git:
+      url: https://github.com/Predidit/Kazumi.git
+      ref: 4effe14ee78b790a92c23ed86f969093d2ed376d
+  dio: ^5.11.0
+  hive_ce_flutter: ^2.3.3
+  path_provider: ^2.1.5
+  window_manager: ^0.5.1
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+flutter:
+  uses-material-design: true

@@ -1,14 +1,8 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { JSDOM } from 'jsdom';
 import { HttpError, checkedUrl, readLimited } from '../../lib/http.js';
-import { absoluteUrl, ruleHeaders } from '../rules/engine.js';
-import { jsonObjectAt } from './player-json.js';
-import { legacyIframeMedia } from './legacy-parser.js';
 import { filterHlsAds } from './hls-ad-filter.js';
-import { resolveHhjx } from './adapters/hhjx.js';
-import { resolveSevenSefun } from './adapters/sevensefun.js';
 import { headersForSession, MediaSessionStore } from './session-store.js';
 
 export function mediaType(url) {
@@ -17,72 +11,6 @@ export function mediaType(url) {
   if (/\.m3u8$/i.test(path)) return 'hls';
   if (/\.(?:mp4|m4v|webm|mov|mp3|m4a|ogg|ogv)$/i.test(path)) return 'video';
   return null;
-}
-
-export function extractMedia(html, pageUrl, { useLegacyParser = false } = {}) {
-  const dom = new JSDOM(html);
-  try {
-    const document = dom.window.document;
-    if (useLegacyParser) {
-      for (const iframe of document.querySelectorAll('iframe[src]')) {
-        const media = legacyIframeMedia(iframe.getAttribute('src'), pageUrl);
-        if (media) return { ...media, legacy: true };
-      }
-    }
-    for (const node of document.querySelectorAll(
-      'video[src],video source[src],audio[src],audio source[src]',
-    )) {
-      const url = absoluteUrl(node.getAttribute('src'), pageUrl);
-      if (url)
-        return {
-          type: /mpegurl/i.test(node.getAttribute('type') || '')
-            ? 'hls'
-            : mediaType(url) || 'video',
-          url,
-        };
-    }
-    for (const script of document.querySelectorAll('script:not([src])')) {
-      const text = script.textContent;
-      const patterns = /(?:player_[A-Za-z0-9_]+|playerConfig|player_data)\s*=\s*\{/g;
-      for (const match of text.matchAll(patterns)) {
-        const data = jsonObjectAt(text, match.index + match[0].lastIndexOf('{'));
-        if (!data || typeof data.url !== 'string') continue;
-        let raw = data.url;
-        try {
-          if (Number(data.encrypt) === 2) raw = Buffer.from(raw, 'base64').toString('utf8');
-          if ([1, 2].includes(Number(data.encrypt))) raw = decodeURIComponent(raw);
-        } catch {
-          continue;
-        }
-        // Player identifiers (ali_*, Doki-*, etc.) are inputs to the site's
-        // parser, not relative web pages. Keep the original page for sniffing.
-        if (!/^(?:(?:https?:)?\/\/|\/|\.\.?\/)/i.test(raw) && !mediaType(raw)) continue;
-        const url = absoluteUrl(raw, pageUrl);
-        if (url) {
-          const type = mediaType(url) || (/m3u8|hls/i.test(data.from || '') ? 'hls' : 'iframe');
-          return {
-            type,
-            url,
-            ...(type === 'iframe' ? { browserUrl: url } : {}),
-          };
-        }
-      }
-      // Recognize literal media URLs without executing any source JavaScript.
-      const literal =
-        /["']((?:https?:)?(?:\\?\/){2}[^"'\s<>]+?\.(?:m3u8|mp4|webm)(?:\?[^"'\s<>]*)?)["']/i.exec(
-          text,
-        )?.[1];
-      if (literal) {
-        const url = absoluteUrl(literal.replace(/\\\//g, '/').replaceAll('&amp;', '&'), pageUrl);
-        if (url) return { type: mediaType(url), url };
-      }
-    }
-    const iframe = document.querySelector('iframe[src]');
-    const url = iframe && absoluteUrl(iframe.getAttribute('src'), pageUrl);
-    return url ? { type: 'iframe', url } : null;
-  } finally {
-    dom.window.close();
-  }
 }
 
 export function rewritePlaylist(text, playlistUrl, makeUrl) {
@@ -116,11 +44,11 @@ export class MediaService {
   constructor(
     http,
     secret = process.env.MEDIA_SECRET || randomBytes(32).toString('hex'),
-    { browserResolver, sessionOptions } = {},
+    { core, sessionOptions } = {},
   ) {
     this.http = http;
     this.secret = secret;
-    this.browserResolver = browserResolver;
+    this.core = core;
     this.sessions = new MediaSessionStore(sessionOptions);
   }
   signature(value) {
@@ -160,89 +88,57 @@ export class MediaService {
       throw new HttpError('播放链接已过期，请重新打开剧集', 403);
     return data;
   }
-  async resolve(rule, source, { signal, onVerification, sessionOwner } = {}) {
-    const originalUrl = absoluteUrl(source, rule.baseURL);
-    if (!originalUrl) throw new HttpError('播放地址无效');
-    checkedUrl(originalUrl, { allowPrivate: this.http.allowPrivate });
-    signal?.throwIfAborted();
-    let playbackUrl;
-    try {
-      const result = await this.resolveStatic(rule, originalUrl, signal, sessionOwner);
-      if (result.type !== 'iframe') {
-        const restored = this.browserResolver?.mediaSession?.(
-          rule,
-          result.url,
-          result.headers,
-          sessionOwner,
-        );
-        if (this.browserResolver?.validate) {
-          // A literal <video src> can still depend on cookies created by page
-          // scripts. Only keep the fast path when the proxy can fetch its media.
-          const controller = new AbortController();
-          const deadline = setTimeout(() => controller.abort(), 5000);
-          const probeSignal = signal
-            ? AbortSignal.any([signal, controller.signal])
-            : controller.signal;
-          try {
-            const type = await this.browserResolver.validate(
-              { url: result.url, type: result.type },
-              {
-                ...(restored || {
-                  url: result.url,
-                  headers: result.headers,
-                  cookies: [],
-                  requestHeaders: [],
-                }),
-                adBlocker: rule.adBlocker === true,
-              },
-              probeSignal,
-            );
-            if (['hls', 'video'].includes(type)) result.type = type;
-          } catch (error) {
-            signal?.throwIfAborted();
-            if (controller.signal.aborted) throw new HttpError('媒体预检超时', 504);
-            throw error;
-          } finally {
-            clearTimeout(deadline);
-          }
-        }
-        signal?.throwIfAborted();
-        const session = restored ? this.sessions.create(restored) : null;
-        return {
-          type: result.type,
-          url: this.proxyUrl(
-            result.url,
-            session ? undefined : result.headers,
-            session?.expires,
-            result.type,
-            session?.sessionId,
-            rule.adBlocker === true,
-          ),
-          originalUrl,
-        };
-      }
-      if (!this.browserResolver) return result;
-      playbackUrl = result.browserUrl;
-    } catch (error) {
-      // Private-network/URL validation failures are never retried in a browser.
-      // HTTP upstream status codes are wrapped as 502 by the static resolver.
-      signal?.throwIfAborted();
-      if (!this.browserResolver || ![422, 502, 504].includes(error.status)) throw error;
-    }
-    signal?.throwIfAborted();
-    const result = await this.browserResolver.resolve(rule, originalUrl, {
-      signal,
-      ...(playbackUrl && playbackUrl !== originalUrl ? { playbackUrl } : {}),
-      ...(onVerification ? { onVerification } : {}),
-      ...(sessionOwner !== undefined ? { sessionOwner } : {}),
-    });
-    signal?.throwIfAborted();
+  async resolve(rule, originalUrl, options = {}) {
+    originalUrl = checkedUrl(new URL(originalUrl, rule.baseURL).href, {
+      allowPrivate: this.http.allowPrivate,
+    }).href;
+    const result = await this.core.resolve(rule, originalUrl, options);
     if (!result || !['hls', 'video'].includes(result.type))
-      throw new HttpError('动态解析未找到可播放的视频', 422);
+      throw new HttpError('Kazumi 未返回可播放的视频地址', 422);
     checkedUrl(result.url, { allowPrivate: this.http.allowPrivate });
-    for (const entry of result.requestHeaders || [])
-      checkedUrl(entry.url, { allowPrivate: this.http.allowPrivate });
-    const session = this.sessions.create(result);
+    const session = this.sessions.create({ ...result, adBlocker: rule.adBlocker === true });
+    // Native players detect stream formats themselves. Browser playback needs a
+    // transport hint for signed, extensionless media URLs; no source HTML is read.
+    if (result.type === 'video' && !mediaType(result.url)) {
+      const signal = AbortSignal.any([
+        ...(options.signal ? [options.signal] : []),
+        AbortSignal.timeout(12000),
+      ]);
+      const headersForUrl = (target) => ({
+        ...headersForSession(session, target),
+        range: 'bytes=0-511',
+      });
+      const { response } = await this.http.request(result.url, {
+        headers: headersForUrl(result.url),
+        headersForUrl,
+        signal,
+      });
+      if (![200, 206].includes(response.status)) {
+        await response.body?.cancel();
+        throw new HttpError(`媒体服务器返回 HTTP ${response.status}`, 502);
+      }
+      if (/mpegurl/i.test(response.headers.get('content-type') || '')) {
+        result.type = 'hls';
+        await response.body?.cancel();
+      } else if (response.body) {
+        const reader = response.body.getReader();
+        try {
+          const { value } = await reader.read();
+          if (
+            value &&
+            Buffer.from(value)
+              .toString('utf8', 0, 512)
+              .replace(/^\uFEFF/, '')
+              .trimStart()
+              .startsWith('#EXTM3U')
+          )
+            result.type = 'hls';
+        } finally {
+          await reader.cancel();
+          reader.releaseLock();
+        }
+      }
+    }
     return {
       type: result.type,
       url: this.proxyUrl(
@@ -255,94 +151,6 @@ export class MediaService {
       ),
       originalUrl,
     };
-  }
-  async resolveStatic(rule, originalUrl, signal, sessionOwner) {
-    let headers = ruleHeaders(rule);
-    let url = originalUrl;
-    let fallback = originalUrl;
-    let browserUrl;
-    const visited = new Set();
-    for (let depth = 0; depth < 4; depth++) {
-      signal?.throwIfAborted();
-      checkedUrl(url, { allowPrivate: this.http.allowPrivate });
-      const type = mediaType(url);
-      if (type) return { type, url, headers, originalUrl };
-      if (visited.has(url)) break;
-      visited.add(url);
-      let result;
-      try {
-        result = await this.http.request(url, {
-          ...(this.browserResolver?.requestOptions?.(rule, url, headers, sessionOwner) || {
-            headers,
-          }),
-          signal,
-        });
-        signal?.throwIfAborted();
-      } catch (error) {
-        if (signal?.aborted || depth === 0 || error.status === 403) throw error;
-        break;
-      }
-      const response = result.response;
-      if (!response.ok) {
-        await response.body?.cancel();
-        if (depth === 0) throw new HttpError(`来源返回 HTTP ${response.status}`, 502);
-        break;
-      }
-      const contentType = response.headers.get('content-type') || '';
-      if (/mpegurl|^video\/|^audio\//i.test(contentType)) {
-        await response.body?.cancel();
-        const kind = /mpegurl/i.test(contentType) ? 'hls' : 'video';
-        return {
-          type: kind,
-          url: result.url,
-          headers,
-          originalUrl,
-        };
-      }
-      const raw = await readLimited(response);
-      if (raw.trimStart().startsWith('#EXTM3U'))
-        return {
-          type: 'hls',
-          url: result.url,
-          headers,
-          originalUrl,
-        };
-      const dynamic = await resolveHhjx(this.http, raw, result.url, headers, { signal });
-      signal?.throwIfAborted();
-      if (dynamic)
-        return {
-          type: dynamic.type,
-          url: dynamic.url,
-          headers: dynamic.headers,
-          originalUrl,
-        };
-      const playerPage = await resolveSevenSefun(this.http, raw, result.url, headers, { signal });
-      signal?.throwIfAborted();
-      if (playerPage) {
-        checkedUrl(playerPage.url, { allowPrivate: this.http.allowPrivate });
-        url = playerPage.url;
-        headers = playerPage.headers;
-        continue;
-      }
-      const extracted = extractMedia(raw, result.url, rule);
-      if (!extracted) break;
-      checkedUrl(extracted.url, { allowPrivate: this.http.allowPrivate });
-      if (extracted.type !== 'iframe')
-        return {
-          ...extracted,
-          headers:
-            extracted.legacy && !rule.referer
-              ? Object.fromEntries(
-                  Object.entries(headers).filter(([name]) => name.toLowerCase() !== 'referer'),
-                )
-              : headers,
-          originalUrl,
-        };
-      fallback = extracted.url;
-      if (extracted.browserUrl) browserUrl = extracted.browserUrl;
-      url = extracted.url;
-    }
-    return { type: 'iframe', url: fallback, originalUrl, ...(browserUrl && { browserUrl }) };
   }
   close() {
     this.sessions.close();

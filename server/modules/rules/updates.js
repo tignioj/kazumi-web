@@ -62,7 +62,7 @@ export async function downloadOfficialRule(http, repository, name, options = {})
     : await http.json(`${repository}${encodeURIComponent(name)}.json`);
   if (typeof input?.name === 'string' && input.name.toLowerCase() !== name.toLowerCase())
     throw new HttpError('规则仓库返回的名称与请求不一致', 502);
-  assertRuleCompatible(input, options);
+  await assertRuleCompatible(input, options);
   return normalizeRule(input, { validate: false });
 }
 
@@ -107,7 +107,7 @@ export async function checkInstalledRuleUpdates(store, http, repository, catalog
             update: {
               name: local.name,
               version: rule.version,
-              compatibility: assertRuleCompatible(rule, options),
+              compatibility: await assertRuleCompatible(rule, options),
             },
           };
         } catch (error) {

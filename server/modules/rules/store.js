@@ -99,16 +99,20 @@ export class RuleStore {
     this.pending = operation.catch(() => {});
     return operation;
   }
-  import(content) {
-    const incoming = parseImport(content, this.validationOptions);
+  async import(content) {
+    const incoming = (await this.validationOptions.core.validate(content)).map((rule) =>
+      normalizeRule(rule),
+    );
     return this.update((existing) => {
       const map = new Map(existing.map((rule) => [rule.name.toLowerCase(), rule]));
       for (const rule of incoming) map.set(rule.name.toLowerCase(), rule);
       return [...map.values()];
     });
   }
-  replace(name, input) {
-    const replacement = normalizeRule(input, this.validationOptions);
+  async replace(name, input) {
+    const [replacement] = (await this.validationOptions.core.validate(input)).map((rule) =>
+      normalizeRule(rule),
+    );
     return this.update((rules) => {
       const index = rules.findIndex((rule) => rule.name.toLowerCase() === name.toLowerCase());
       if (index < 0) throw new HttpError('找不到指定规则', 404);

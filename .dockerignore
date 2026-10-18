@@ -8,3 +8,6 @@ test-results
 playwright-report
 output/playwright
 *.log
+.playwright-cli
+services/kazumi-core/.dart_tool
+services/kazumi-core/build

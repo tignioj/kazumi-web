@@ -2,24 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { HttpError } from '../../lib/http.js';
 
 const id = () => randomBytes(24).toString('base64url');
-const KEYS = new Set([
-  'Enter',
-  'Tab',
-  'Backspace',
-  'Delete',
-  'ArrowLeft',
-  'ArrowRight',
-  'ArrowUp',
-  'ArrowDown',
-  'Home',
-  'End',
-  'Escape',
-  'Space',
-]);
-const locator = (page, selector) => page.locator(`xpath=${selector}`).first();
-
-// Only pixels and bounded human input cross this boundary. Source HTML, cookies,
-// browser debugging endpoints and arbitrary evaluation are never exposed.
+// Keep browser ownership and task lifetimes here; native verification runs in Kazumi.
 export class VerificationTasks {
   constructor({ ttlMs = 5 * 60 * 1000, timeoutMs = 45000, maxTasks = 16 } = {}) {
     this.ttlMs = Math.max(50, Number(ttlMs) || 300000);
@@ -165,146 +148,67 @@ export class VerificationTasks {
     };
   }
 
+  resume(task, challenge) {
+    if (task.challenges[0] !== challenge) return;
+    task.challenges.shift();
+    task.status = task.challenges.length ? 'waiting' : 'running';
+    if (!task.challenges.length)
+      task.timeout = setTimeout(
+        () => task.controller.abort(new HttpError('验证后的片源请求超时，请重试', 504)),
+        this.timeoutMs,
+      );
+    challenge.resolve();
+  }
+
   async snapshot(owner, taskId) {
     const task = this.get(owner, taskId);
     if (task.status !== 'waiting') return this.state(task);
     return this.locked(task, async () => {
       const challenge = task.challenges[0];
       if (!challenge) return this.state(task);
-      const { page, captcha } = challenge;
-      let mode = 'page';
-      let dimensions = page.viewportSize() || { width: 1280, height: 720 };
-      let bytes;
-      // A solved form may disappear before the user presses Continue. Fall back
-      // to the live page so that the user can still resume the original request.
-      if (captcha?.image && captcha.input && captcha.submit) {
-        try {
-          const element = locator(page, captcha.image);
-          if (await element.isVisible()) {
-            bytes = await element.screenshot({ type: 'jpeg', quality: 80, timeout: 2500 });
-            const bounds = await element.boundingBox();
-            if (bounds) dimensions = { width: bounds.width, height: bounds.height };
-            mode = 'image';
-          }
-        } catch {
-          /* The page remains available for manual verification. */
-        }
+      const remote = await challenge.snapshot();
+      if (remote.status === 'completed') {
+        this.resume(task, challenge);
+        return this.state(task);
       }
-      if (!bytes)
-        bytes = await page.screenshot({ type: 'jpeg', quality: 75, scale: 'css', timeout: 5000 });
+      if (remote.status === 'failed') {
+        challenge.reject(new HttpError(remote.error || '原版验证未完成，请重试', 422));
+        return { ...this.state(task), status: 'failed', error: remote.error };
+      }
       return {
         ...this.state(task),
         challenge: {
           id: challenge.id,
           ruleName: challenge.ruleName,
-          reason: challenge.reason === 'manual' ? 'manual' : 'challenge',
-          attempt: challenge.attempt,
           originalUrl: challenge.originalUrl,
-          url: page.url(),
-          mode,
-          ...dimensions,
-          image: `data:image/jpeg;base64,${bytes.toString('base64')}`,
+          url: challenge.originalUrl,
+          reason: 'challenge',
+          attempt: challenge.attempt,
+          mode: 'image',
+          image: remote.image || '',
+          width: remote.width || 320,
+          height: remote.height || 120,
         },
       };
     });
   }
 
-  async action(owner, taskId, challengeId, action) {
+  async action(owner, taskId, input) {
     const task = this.get(owner, taskId);
     return this.locked(task, async () => {
       const challenge = task.challenges[0];
-      if (!challenge || challenge.id !== challengeId || task.status !== 'waiting')
-        throw new HttpError('验证画面已更新，请稍候再试', 409);
-      if (!action || typeof action !== 'object' || Array.isArray(action))
-        throw new HttpError('验证操作无效');
-      const { page, captcha } = challenge;
-      const viewport = page.viewportSize() || { width: 1280, height: 720 };
-      const point = (value) => {
-        if (
-          !value ||
-          !Number.isFinite(value.x) ||
-          !Number.isFinite(value.y) ||
-          value.x < 0 ||
-          value.y < 0 ||
-          value.x >= viewport.width ||
-          value.y >= viewport.height
-        )
-          throw new HttpError('操作位置超出验证画面');
-      };
-      const text = (maximum) => {
-        if (
-          typeof action.text !== 'string' ||
-          !action.text.length ||
-          action.text.length > maximum ||
-          /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(action.text)
-        )
-          throw new HttpError(`输入内容须为 1 至 ${maximum} 个字符`);
-      };
-      const resume = () => {
-        task.challenges.shift();
-        task.status = task.challenges.length ? 'waiting' : 'running';
-        if (!task.challenges.length) {
-          clearTimeout(task.timeout);
-          task.timeout = setTimeout(
-            () => task.controller.abort(new HttpError('验证后的片源请求超时，请重试', 504)),
-            this.timeoutMs,
-          );
-        }
-        challenge.resolve();
-      };
-      switch (action.type) {
-        case 'click':
-          point(action);
-          await page.mouse.click(action.x, action.y);
-          break;
-        case 'drag':
-          if (
-            !Array.isArray(action.points) ||
-            action.points.length < 2 ||
-            action.points.length > 64
-          )
-            throw new HttpError('拖动轨迹须包含 2 至 64 个位置');
-          action.points.forEach(point);
-          await page.mouse.move(action.points[0].x, action.points[0].y);
-          await page.mouse.down();
-          try {
-            for (const position of action.points.slice(1))
-              await page.mouse.move(position.x, position.y);
-          } finally {
-            await page.mouse.up();
-          }
-          break;
-        case 'text':
-          text(256);
-          await page.keyboard.insertText(action.text);
-          break;
-        case 'key':
-          if (!KEYS.has(action.key)) throw new HttpError('不支持的验证按键');
-          await page.keyboard.press(action.key);
-          break;
-        case 'scroll':
-          if (!Number.isFinite(action.deltaY) || Math.abs(action.deltaY) > 1500)
-            throw new HttpError('滚动距离无效');
-          await page.mouse.wheel(0, action.deltaY);
-          break;
-        case 'answer':
-          text(64);
-          if (!captcha?.input || !captcha.submit) throw new HttpError('请在验证画面内输入答案');
-          await locator(page, captcha.input).fill(action.text, { timeout: 5000 });
-          await locator(page, captcha.submit).click({ timeout: 5000 });
-          resume();
-          break;
-        case 'refresh':
-          if (captcha?.image && (await locator(page, captcha.image).isVisible()))
-            await locator(page, captcha.image).click({ timeout: 5000 });
-          else await page.reload({ waitUntil: 'domcontentloaded', timeout: 10000 });
-          break;
-        case 'continue':
-          resume();
-          break;
-        default:
-          throw new HttpError('不支持的验证操作');
-      }
+      if (!challenge || input?.challengeId !== challenge.id)
+        throw new HttpError('验证画面已更新，请重试', 409);
+      const action = input.action;
+      if (!action || !['answer', 'continue', 'refresh'].includes(action.type))
+        throw new HttpError('不支持的验证操作');
+      if (
+        action.type === 'answer' &&
+        (typeof action.text !== 'string' || !action.text.trim() || action.text.length > 64)
+      )
+        throw new HttpError('验证码无效');
+      const remote = await challenge.action(action);
+      if (remote.status === 'completed') this.resume(task, challenge);
       return { ok: true };
     });
   }

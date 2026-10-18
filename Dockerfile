@@ -21,12 +21,9 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 FROM node:24-bookworm-slim AS runtime
-ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000 DATA_DIR=/app/data PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000 DATA_DIR=/app/data
 WORKDIR /app
 COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
-RUN ./node_modules/.bin/playwright install --with-deps --only-shell chromium \
-    && chmod -R a+rX /ms-playwright \
-    && rm -rf /var/lib/apt/lists/*
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --chown=node:node package.json LICENSE ./
 COPY --chown=node:node server ./server

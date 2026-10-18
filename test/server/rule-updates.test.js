@@ -118,7 +118,14 @@ test('imported rules update from a fresh official catalog and persist partial su
     dataDir: directory,
     seedRules: [],
     httpClient: http,
-    browserResolver: false,
+    core: {
+      async validate(content) {
+        if (typeof content === 'string') content = JSON.parse(content);
+        if (Number(content.api) > 9)
+          throw Object.assign(new Error('Upstream rejected rule'), { status: 400 });
+        return Array.isArray(content) ? content : [content];
+      },
+    },
   });
   const server = application.app.listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -188,7 +195,10 @@ test('imported rules update from a fresh official catalog and persist partial su
     assert.equal(batch.rules.find((rule) => rule.name === name).baseURL, 'https://old.example/');
   assert.deepEqual((await (await fetch(`${base}/api/rules/updates`)).json()).updates, []);
   assert.match(batch.results.find((rule) => rule.name === 'Mismatch').message, /名称/);
-  assert.match(batch.results.find((rule) => rule.name === 'Unsupported').message, /版本不受支持/);
+  assert.match(
+    batch.results.find((rule) => rule.name === 'Unsupported').message,
+    /Upstream rejected rule/,
+  );
   assert.deepEqual(JSON.parse(await readFile(join(directory, 'rules.json'), 'utf8')), batch.rules);
   assert.equal((await post('update', { name: 'Missing' })).status, 404);
   assert.equal((await post('update', { name: '' })).status, 400);

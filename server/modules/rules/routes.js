@@ -7,7 +7,6 @@ import {
 } from './updates.js';
 import { createOfficialRulesCatalog } from './catalog.js';
 import { RULE_API_VERSION, ruleCompatibility } from './validation.js';
-import { parseImport } from './store.js';
 
 export function registerRuleRoutes(app, { http, store, engine, interactive }) {
   const { repository, officialRules, officialRule } = createOfficialRulesCatalog(http);
@@ -29,8 +28,8 @@ export function registerRuleRoutes(app, { http, store, engine, interactive }) {
     res.json(await checkInstalledRuleUpdates(store, http, repository, catalog, options));
   });
   app.get('/api/rules/catalog', async (req, res) => res.json({ rules: await officialRules() }));
-  app.post('/api/rules/validate', (req, res) => {
-    const rules = parseImport(req.body?.content, options);
+  app.post('/api/rules/validate', async (req, res) => {
+    const rules = await store.validationOptions.core.validate(req.body?.content);
     res.json({
       compatibility: rules.map((rule) => ({
         name: rule.name,

@@ -292,9 +292,11 @@ async function fixture(t, { downloadOptions, session = false } = {}) {
   async function start() {
     const http = createHttpClient({ allowPrivate: true, dnsOverHttpsUrl: '' });
     application = await createApp({
-      browserResolver: session
-        ? {
-            resolve: async () => ({
+      core: {
+        validate: async (content) => (Array.isArray(content) ? content : [content]),
+        async resolve(rule, url, { signal } = {}) {
+          if (session)
+            return {
               type: 'video',
               url: `${upstreamUrl}/movie.mp4?token=upstream-secret`,
               headers: { authorization: 'Bearer auth-secret' },
@@ -308,11 +310,21 @@ async function fixture(t, { downloadOptions, session = false } = {}) {
                   secure: false,
                 },
               ],
-              requestHeaders: [],
-            }),
-            close: async () => {},
+            };
+          if (url.includes('/wait-play') || url.includes('/resolving')) {
+            const response = await fetch(url, { signal });
+            await response.text();
+            url = `${upstreamUrl}/movie.mp4`;
           }
-        : false,
+          if (url.endsWith('/watch') && state.watchReady) url = `${upstreamUrl}/movie.mp4`;
+          return {
+            type: url.includes('.m3u8') ? 'hls' : 'video',
+            url,
+            headers: { referer: rule.referer },
+            cookies: [],
+          };
+        },
+      },
       dataDir: directory,
       httpClient: http,
       seedRules: [rule],
