@@ -1,5 +1,18 @@
 import { createHttpClient, checkedUrl, HttpError } from '../../lib/http.js';
 import { PROXY_SCOPES, proxySettingsFor } from '../../../shared/network-settings.js';
+import { bangumiImageMirrorUrl } from '../../../shared/images.js';
+
+export function connectionTestRequest(settings, scope, url) {
+  const mirror =
+    scope === 'image' && settings.imageAcceleration === 'mirror'
+      ? bangumiImageMirrorUrl(url)
+      : null;
+  return {
+    url: mirror || url,
+    mirror: Boolean(mirror),
+    ech: scope === 'image' ? settings.imageAcceleration === 'ech' : undefined,
+  };
+}
 
 export function registerNetworkRoutes(app, { network, http }) {
   app.use('/api/network-settings', (_req, res, next) => {
@@ -18,6 +31,7 @@ export function registerNetworkRoutes(app, { network, http }) {
     if (!Object.hasOwn(PROXY_SCOPES, scope)) throw new HttpError('请选择有效的代理测试范围');
     const proxy = proxySettingsFor(settings, scope);
     const target = checkedUrl(req.body?.url, { allowPrivate: http.allowPrivate });
+    const test = connectionTestRequest(settings, scope, target.href);
     const client = createHttpClient({
       allowPrivate: http.allowPrivate,
       getProxySettings: () => proxy,
@@ -25,8 +39,9 @@ export function registerNetworkRoutes(app, { network, http }) {
     });
     const started = Date.now();
     try {
-      const { response, echAccepted } = await client.request(target.href, {
+      const { response, echAccepted } = await client.request(test.url, {
         signal: AbortSignal.timeout(10000),
+        ech: test.ech,
       });
       await response.body?.cancel();
       if (!response.ok) throw new HttpError(`测试站点返回 HTTP ${response.status}`, 502);
@@ -35,7 +50,8 @@ export function registerNetworkRoutes(app, { network, http }) {
         elapsedMs: Date.now() - started,
         status: response.status,
         scope,
-        mode: proxy.enabled ? 'proxy' : echAccepted ? 'ech' : 'direct',
+        mirror: test.mirror,
+        mode: proxy.enabled ? 'proxy' : test.mirror ? 'mirror' : echAccepted ? 'ech' : 'direct',
       });
     } finally {
       await client.close();

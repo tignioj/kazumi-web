@@ -14,7 +14,12 @@ import { createHttpClient } from '../../server/lib/http.js';
 import { createBrowserEgress } from '../../server/lib/browser-egress.js';
 import { createProxyTunnels } from '../../server/lib/proxy-tunnel.js';
 import { NetworkStore } from '../../server/modules/network/store.js';
-import { DEFAULT_NETWORK_SETTINGS, proxySettingsFor } from '../../shared/network-settings.js';
+import {
+  DEFAULT_NETWORK_SETTINGS,
+  PROXY_SCOPES,
+  proxySettingsFor,
+} from '../../shared/network-settings.js';
+import { connectionTestRequest } from '../../server/modules/network/routes.js';
 
 const credentials = { username: 'proxy-user', password: '密码:@secret' };
 const basicAuth = `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString('base64')}`;
@@ -332,6 +337,41 @@ test('Chromium video egress ignores image and API proxy switches and follows vid
   }
 });
 
+test('connection tests use image ECH and mirror settings without affecting the other categories', () => {
+  const url = 'https://api.bgm.tv/v0/subjects/253/image?type=large';
+  for (const bangumiEch of [false, true]) {
+    const settings = { ...DEFAULT_NETWORK_SETTINGS, bangumiEch };
+    assert.deepEqual(connectionTestRequest(settings, 'image', url), {
+      url,
+      mirror: false,
+      ech: false,
+    });
+    settings.imageAcceleration = 'ech';
+    assert.deepEqual(connectionTestRequest(settings, 'image', url), {
+      url,
+      mirror: false,
+      ech: true,
+    });
+    settings.imageAcceleration = 'mirror';
+    assert.deepEqual(connectionTestRequest(settings, 'image', url), {
+      url: 'https://wsrv.nl/?url=api.bgm.tv%2Fv0%2Fsubjects%2F253%2Fimage%3Ftype%3Dlarge',
+      mirror: true,
+      ech: false,
+    });
+    for (const scope of ['video', 'bangumi', 'rules', 'archive'])
+      assert.deepEqual(connectionTestRequest(settings, scope, url), {
+        url,
+        mirror: false,
+        ech: undefined,
+      });
+    assert.deepEqual(connectionTestRequest(settings, 'image', 'https://example.com/image.png'), {
+      url: 'https://example.com/image.png',
+      mirror: false,
+      ech: false,
+    });
+  }
+});
+
 test('network settings API persists secrets, supports draft tests and keeps saved settings on failure', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'kazumi-network-'));
   let application;
@@ -408,17 +448,18 @@ test('network settings API persists secrets, supports draft tests and keeps save
   });
   assert.equal(tested.data.mode, 'proxy');
   assert.equal(proxy.calls.length, 1);
-  for (const [scope, mode] of [
-    ['video', 'direct'],
-    ['image', 'proxy'],
-    ['bangumi', 'proxy'],
-    ['rules', 'proxy'],
-    ['archive', 'proxy'],
-  ]) {
-    const result = await request('/test', 'POST', { settings: {}, scope, url: origin.url });
-    assert.equal(result.data.mode, mode);
-    assert.equal(result.data.scope, scope);
-  }
+  for (const [scope, key] of Object.entries(PROXY_SCOPES))
+    for (const enabled of [false, true]) {
+      const before = proxy.calls.length;
+      const settings = Object.fromEntries(
+        Object.values(PROXY_SCOPES).map((key) => [key, !enabled]),
+      );
+      settings[key] = enabled;
+      const result = await request('/test', 'POST', { settings, scope, url: origin.url });
+      assert.equal(result.data.mode, enabled ? 'proxy' : 'direct');
+      assert.equal(result.data.scope, scope);
+      assert.equal(proxy.calls.length - before, Number(enabled));
+    }
   assert.equal(
     (await request('/test', 'POST', { settings: {}, scope: 'all', url: origin.url })).response
       .status,

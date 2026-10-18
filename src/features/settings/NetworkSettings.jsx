@@ -6,25 +6,39 @@ import { Notice } from '../../components/feedback.jsx';
 const imageModes = { mirror: '镜像', ech: 'ECH', direct: '直连' };
 const proxyRows = [
   {
+    scope: 'video',
     key: 'videoProxy',
     label: '视频源请求代理',
     help: '用于片源搜索、剧集解析、视频播放、下载和验证页面。',
+    testUrl: '',
   },
-  { key: 'imageProxy', label: '番剧图片请求代理', help: '用于原图、wsrv.nl 镜像和封面地址查询。' },
   {
+    scope: 'image',
+    key: 'imageProxy',
+    label: '番剧图片请求代理',
+    help: '用于原图、wsrv.nl 镜像和封面地址查询。',
+    testUrl: 'https://api.bgm.tv/v0/subjects/253/image?type=large',
+  },
+  {
+    scope: 'bangumi',
     key: 'bangumiProxy',
     label: 'Bangumi API 请求代理',
     help: '用于 Bangumi 分类、搜索、详情、章节和日历等 API。',
+    testUrl: 'https://api.bgm.tv/v0/subjects/253',
   },
   {
+    scope: 'rules',
     key: 'rulesProxy',
     label: '规则仓库请求代理',
     help: '用于官方规则列表、规则安装和规则更新。',
+    testUrl: 'https://raw.githubusercontent.com/Predidit/KazumiRules/main/index.json',
   },
   {
+    scope: 'archive',
     key: 'archiveProxy',
     label: '资料归档下载代理',
     help: '用于归档版本检查和 ZIP 下载，手动及自动更新、命令行更新均使用此设置。',
+    testUrl: 'https://raw.githubusercontent.com/bangumi/Archive/master/aux/latest.json',
   },
 ];
 
@@ -34,7 +48,11 @@ export function NetworkSettings({ request, notify }) {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [result, setResult] = useState('');
-  const [testUrl, setTestUrl] = useState('https://api.bgm.tv/v0/subjects/253');
+  const [testScope, setTestScope] = useState('bangumi');
+  const [testUrls, setTestUrls] = useState({});
+  const testType = proxyRows.find(({ scope }) => scope === testScope);
+  const testLabel = testType.label.replace(/代理$/, '');
+  const testUrl = testUrls[testScope] ?? testType.testUrl;
   const disabled = Boolean(busy) || request.saving || request.loading;
   useEffect(() => {
     if (request.data)
@@ -77,14 +95,15 @@ export function NetworkSettings({ request, notify }) {
       } else {
         const tested = await api('/network-settings/test', {
           method: 'POST',
-          body: JSON.stringify({ settings, url: testUrl }),
+          body: JSON.stringify({ settings, scope: testScope, url: testUrl }),
         });
+        const mode = { proxy: '代理', ech: 'ECH', direct: '直连', mirror: '镜像' }[tested.mode];
         setResult(
-          `${tested.mode === 'proxy' ? '代理' : tested.mode === 'ech' ? 'ECH' : '直连'}测试成功 · HTTP ${tested.status} · ${tested.elapsedMs} ms。测试不会保存设置。`,
+          `${testLabel} · ${mode}${tested.mirror && tested.mode === 'proxy' ? ' / 镜像' : ''}测试成功 · HTTP ${tested.status} · ${tested.elapsedMs} ms。测试不会保存设置。`,
         );
       }
     } catch (error) {
-      setError(error.message);
+      setError(action === 'test' ? `${testLabel}测试失败：${error.message}` : error.message);
     } finally {
       setBusy('');
     }
@@ -230,20 +249,43 @@ export function NetworkSettings({ request, notify }) {
               build:ech。
             </p>
             <label>
-              <span>API 测试地址</span>
+              <span>测试请求类型</span>
+              <select
+                value={testScope}
+                onChange={(event) => {
+                  setTestScope(event.target.value);
+                  setResult('');
+                  setError('');
+                }}
+              >
+                {proxyRows.map(({ scope, label }) => (
+                  <option key={scope} value={scope}>
+                    {label.replace(/代理$/, '')}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>测试地址</span>
               <input
                 type="url"
                 value={testUrl}
+                placeholder="填写要测试的视频源或视频地址"
                 onChange={(event) => {
-                  setTestUrl(event.target.value);
+                  setTestUrls((previous) => ({ ...previous, [testScope]: event.target.value }));
                   setResult('');
+                  setError('');
                 }}
               />
             </label>
+            <p className="muted small">
+              按所选类型和当前表单设置测试，无需先保存。可修改测试地址，各类型分别保留。 Bangumi
+              图片测试遵循封面方式；归档默认检查版本接口，不下载完整归档。
+            </p>
           </fieldset>
           <p className="muted small">
             保存后新请求即时生效，无需重启，已有连接可能继续使用原设置，封面缓存继续复用。
-            右上角仅控制视频请求代理。连接测试按 Bangumi API 设置进行。
+            右上角仅控制视频请求代理。
           </p>
           <div className="button-group">
             <button type="submit" className="button primary" disabled={disabled}>
@@ -253,7 +295,7 @@ export function NetworkSettings({ request, notify }) {
             <button
               type="button"
               className="button quiet"
-              disabled={disabled}
+              disabled={disabled || !testUrl.trim()}
               onClick={() => submit('test')}
             >
               <Wifi size={15} />

@@ -19,7 +19,8 @@
   gap: 9px;
   font-size: 12px;
 }
-.network-fields input {
+.network-fields input,
+.network-fields select {
   width: 100%;
   padding: 11px 12px;
   border: 1px solid var(--line);
