@@ -218,6 +218,162 @@ browserTest(
 );
 
 browserTest(
+  'a rejected HLS candidate keeps sniffing for a later valid candidate beyond three seconds',
+  async (t) => {
+    const { resolver, baseURL, rule } = await fixture(
+      t,
+      (request, response) => {
+        if (request.url === '/watch')
+          return html(
+            response,
+            `<script>
+              fetch('/broken.m3u8').then(response => response.text());
+              setTimeout(() => fetch('/movie.m3u8').then(response => response.text()), 4200);
+            </script>`,
+          );
+        if (request.url === '/broken.m3u8')
+          return html(response, '<html>Media temporarily unavailable</html>');
+        if (request.url === '/movie.m3u8')
+          return response
+            .writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl' })
+            .end('#EXTM3U\n#EXTINF:5,\nfirst.ts\n#EXT-X-ENDLIST\n');
+        if (request.url === '/first.ts')
+          return response.writeHead(206, { 'content-type': 'video/mp2t' }).end(segment);
+        response.writeHead(404).end();
+      },
+      { timeout: 8000 },
+    );
+    const validated = [];
+    const validate = resolver.validate.bind(resolver);
+    resolver.validate = async (candidate, session, signal) => {
+      validated.push(candidate.url);
+      return validate(candidate, session, signal);
+    };
+    const result = await resolver.resolve(rule, `${baseURL}/watch`);
+    assert.equal(result.type, 'hls');
+    assert.equal(result.url, `${baseURL}/movie.m3u8`);
+    assert.deepEqual(validated, [`${baseURL}/broken.m3u8`, `${baseURL}/movie.m3u8`]);
+    assert.equal(resolver.active.size, 0);
+    assert.equal(resolver.browser.contexts().length, 0);
+  },
+);
+
+browserTest(
+  'rejected candidates wait until the overall deadline and retain the validation error without offering manual verification',
+  async (t) => {
+    const timeout = 4600;
+    const { resolver, baseURL, rule, requests } = await fixture(
+      t,
+      (request, response) => {
+        if (request.url === '/watch')
+          return html(
+            response,
+            `<script>fetch('/broken.m3u8').then(response => response.text())</script>`,
+          );
+        if (request.url === '/broken.m3u8')
+          return html(response, '<html>Media temporarily unavailable</html>');
+        response.writeHead(404).end();
+      },
+      { timeout },
+    );
+    const started = Date.now();
+    await assert.rejects(
+      resolver.resolve(rule, `${baseURL}/watch`, {
+        onVerification: () => assert.fail('a failed media probe is not a page challenge'),
+      }),
+      {
+        status: 504,
+        message: /动态解析超时.*已捕获视频.*服务端验证失败.*无效的 HLS 播放列表/,
+      },
+    );
+    assert.ok(Date.now() - started >= timeout - 100, 'failed candidates do not end the task early');
+    assert.equal(
+      requests.filter((request) => request.path === '/broken.m3u8').length,
+      2,
+      'a rejected candidate is only fetched by the browser and its server probe',
+    );
+    assert.equal(resolver.active.size, 0);
+    assert.equal(resolver.browser.contexts().length, 0);
+  },
+);
+
+browserTest(
+  'the overall deadline aborts an unfinished media probe even when manual verification is available',
+  async (t) => {
+    const timeout = 1800;
+    const { resolver, baseURL, rule, requests } = await fixture(
+      t,
+      (request, response) => {
+        if (request.url === '/watch')
+          return html(
+            response,
+            `<script>fetch('/pending.m3u8').then(response => response.text())</script>`,
+          );
+        if (request.url === '/pending.m3u8') {
+          response.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl' });
+          response.flushHeaders();
+          response.write('#EXTM3U\n');
+          return;
+        }
+        response.writeHead(404).end();
+      },
+      { timeout },
+    );
+    await assert.rejects(
+      resolver.resolve(rule, `${baseURL}/watch`, {
+        signal: AbortSignal.timeout(timeout + 2500),
+        onVerification: () => assert.fail('a pending media probe is not a page challenge'),
+      }),
+      { status: 504, message: /动态解析超时/ },
+    );
+    assert.equal(
+      requests.filter((request) => request.path === '/pending.m3u8').length,
+      2,
+      'the deadline interrupts the server probe while it is still reading the playlist',
+    );
+    assert.equal(resolver.active.size, 0);
+    assert.equal(resolver.browser.contexts().length, 0);
+  },
+);
+
+browserTest(
+  'waiting after a rejected candidate still allows immediate caller cancellation',
+  async (t) => {
+    const { resolver, baseURL, rule } = await fixture(t, (request, response) => {
+      if (request.url === '/watch')
+        return html(
+          response,
+          `<script>fetch('/broken.m3u8').then(response => response.text())</script>`,
+        );
+      if (request.url === '/broken.m3u8')
+        return html(response, '<html>Media temporarily unavailable</html>');
+      response.writeHead(404).end();
+    });
+    let rejected;
+    const candidateRejected = new Promise((resolve) => {
+      rejected = resolve;
+    });
+    const validate = resolver.validate.bind(resolver);
+    resolver.validate = async (...args) => {
+      try {
+        return await validate(...args);
+      } catch (error) {
+        rejected();
+        throw error;
+      }
+    };
+    const controller = new AbortController();
+    const pending = resolver.resolve(rule, `${baseURL}/watch`, { signal: controller.signal });
+    const cancelled = assert.rejects(pending, { status: 499, message: /取消/ });
+    await candidateRejected;
+    controller.abort();
+    await cancelled;
+    assert.equal(resolver.active.size, 0);
+    assert.equal(resolver.browser.contexts().length, 0);
+  },
+);
+
+browserTest(
   'decoded playback fallback shares the source session and keeps the original parser running',
   async (t) => {
     const { resolver, baseURL, rule, requests } = await fixture(t, (request, response) => {
