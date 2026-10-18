@@ -51,7 +51,7 @@ HLS 在线去广告使用 Kazumi 原生播放器的 FFmpeg `hls_ad_filter` 补�
 
 GitHub Actions 的 `Check Kazumi releases` 每天北京时间 09:17 检查官方最新稳定 Release，也支持在 Actions 页面手动运行。只有版本号高于当前锁定版本、且发布提交是当前固定提交的后续提交时，才提出升级；同版本中尚未发布的修复不会被旧发布标签覆盖，草稿、预发布和分叉历史均不自动引入。
 
-升级 PR 使用 `codex/kazumi-<提交号前12位>` 分支，固定到发布标签解析出的完整 Git SHA，同步核心报告的版本、规则 API 等级，以及必要的 Flutter SDK 提交。`pubspec.lock` 由固定工具链运行 `flutter pub get` 生成。相同提交已有 PR（含已关闭的 PR）时不重复创建，也不覆盖维护者的分支改动。FFmpeg 补丁仍按 `native/hls/README.md` 独立升级。
+升级 PR 使用 `codex/kazumi-<提交号前12位>` 分支，固定到发布标签解析出的完整 Git SHA，同步核心报告的提交号、规则 API 等级，以及必要的 Flutter SDK 提交。`pubspec.lock` 由固定工具链运行 `flutter pub get` 生成。相同提交已有 PR（含已关闭的 PR）时不重复创建，也不覆盖维护者的分支改动。FFmpeg 补丁仍按 `native/hls/README.md` 独立升级。
 
 仓库的 **Settings → Actions → General → Workflow permissions** 需要允许 **Allow GitHub Actions to create and approve pull requests**；工作流使用默认 `GITHUB_TOKEN`，无需另配 PAT。机器人创建 PR 后显式派发该分支的 `Verify`，避免机器人 push 不触发 CI 的限制。PR 不自动合并，确认 `Verify / test` 通过后再合并；若需强制阻止未通过的合并，将 `test` 配置为主分支的必需状态检查。工作流合入默认分支后定时检查才会生效。
 

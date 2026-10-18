@@ -36,10 +36,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           UPDATE_BRANCH: ${{ steps.release.outputs.branch }}
         run: |
-          existing_url="$(gh pr list --head "$UPDATE_BRANCH" --state all --json url --jq '.[0].url // empty')"
+          existing="$(gh pr list --head "$UPDATE_BRANCH" --state all --json url,state --jq '.[0] // {}')"
+          existing_url="$(jq -r '.url // empty' <<< "$existing")"
           if [ -n "$existing_url" ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "open=$(jq -r '.state == "OPEN"' <<< "$existing")" >> "$GITHUB_OUTPUT"
             echo "Upgrade already proposed: $existing_url" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Recover an interrupted verification dispatch
+        if: steps.existing.outputs.open == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPDATE_BRANCH: ${{ steps.release.outputs.branch }}
+        run: |
+          dispatched="$(gh run list --workflow ci.yml --branch "$UPDATE_BRANCH" \
+            --event workflow_dispatch --limit 1 --json databaseId --jq length)"
+          if [ "$dispatched" -eq 0 ]; then
+            gh workflow run ci.yml --ref "$UPDATE_BRANCH"
+            echo 'Recovered Verify dispatch for the existing upgrade PR.' >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Resolve the lockfile with the pinned Flutter SDK
         if: steps.release.outputs.available == 'true' && steps.existing.outputs.exists != 'true'
