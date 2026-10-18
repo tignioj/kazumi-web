@@ -3,6 +3,7 @@ import { createHttpClient } from '../server/lib/http.js';
 import { LocalMetadataStore } from '../server/modules/metadata/local-store.js';
 import { ArchiveManager } from '../server/modules/metadata/archive-manager.js';
 import { NetworkStore } from '../server/modules/network/store.js';
+import { proxySettingsFor } from '../shared/network-settings.js';
 
 const args = process.argv.slice(2);
 const options = {};
@@ -14,7 +15,9 @@ for (let i = 0; i < args.length; i++) {
   else throw new Error(`未知参数：${args[i]}。支持 --file ZIP、--version 名称、--status。`);
 }
 const network = await new NetworkStore(resolve(process.env.DATA_DIR || 'data')).init();
-const http = createHttpClient({ getProxySettings: () => network.data });
+const http = createHttpClient({
+  getProxySettings: () => proxySettingsFor(network.data, 'archive'),
+});
 const store = await new LocalMetadataStore(
   resolve(process.env.DATA_DIR || 'data', 'metadata'),
 ).init();

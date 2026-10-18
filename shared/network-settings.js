@@ -1,5 +1,9 @@
 export const DEFAULT_NETWORK_SETTINGS = {
-  enabled: false,
+  videoProxy: false,
+  imageProxy: false,
+  bangumiProxy: false,
+  rulesProxy: false,
+  archiveProxy: false,
   url: '',
   username: '',
   password: '',
@@ -8,11 +12,32 @@ export const DEFAULT_NETWORK_SETTINGS = {
   echDohUrl: 'https://1.1.1.1/dns-query',
 };
 
+export const PROXY_SCOPES = {
+  video: 'videoProxy',
+  image: 'imageProxy',
+  bangumi: 'bangumiProxy',
+  rules: 'rulesProxy',
+  archive: 'archiveProxy',
+};
+
+// Transport settings are scoped by request purpose, including every redirect.
+export function proxySettingsFor(settings, scope) {
+  return {
+    ...settings,
+    enabled: settings?.[PROXY_SCOPES[scope]] === true,
+    bangumiEch: scope === 'bangumi' && settings?.bangumiEch === true,
+  };
+}
+
 export function normalizeNetworkSettings(input, previous = DEFAULT_NETWORK_SETTINGS) {
   if (!input || typeof input !== 'object' || Array.isArray(input))
     throw new Error('网络设置格式无效');
-  if (typeof input.enabled !== 'boolean') throw new Error('请选择是否启用网络代理');
-  const result = { enabled: input.enabled };
+  if (input.enabled !== undefined) throw new Error('全局代理已移除，请分别设置各类请求的代理');
+  const result = {};
+  for (const key of Object.values(PROXY_SCOPES)) {
+    result[key] = input[key] === undefined ? previous[key] : input[key];
+    if (typeof result[key] !== 'boolean') throw new Error('请选择是否启用各类请求的代理');
+  }
   for (const key of ['url', 'username', 'password']) {
     const value = input[key] === undefined ? previous[key] : input[key];
     if (typeof value !== 'string' || value.length > 2048 || /[\r\n\0]/.test(value))
@@ -41,7 +66,7 @@ export function normalizeNetworkSettings(input, previous = DEFAULT_NETWORK_SETTI
     )
       throw new Error('SOCKS5 用户名与密码不能超过 255 字节');
     result.url = url.href;
-  } else if (result.enabled) {
+  } else if (Object.values(PROXY_SCOPES).some((key) => result[key])) {
     throw new Error('启用网络代理前请填写代理地址');
   }
   result.bangumiEch =

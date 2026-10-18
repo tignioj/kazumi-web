@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHttpClient } from './lib/http.js';
+import { proxySettingsFor } from '../shared/network-settings.js';
 import { RuleStore } from './modules/rules/store.js';
 import { WatchStore } from './modules/watch/store.js';
 import { NetworkStore } from './modules/network/store.js';
@@ -27,20 +28,30 @@ const directory = dirname(fileURLToPath(import.meta.url));
 export async function createApp(options = {}) {
   const dataDir = options.dataDir || process.env.DATA_DIR || resolve(directory, '../data');
   const network = await new NetworkStore(dataDir).init();
-  const http =
-    options.httpClient ||
-    createHttpClient({
-      ...options.httpOptions,
-      getProxySettings: () => network.data,
-    });
+  const clients = new Set();
+  const clientFor = (scope) => {
+    const client =
+      options.httpClient ||
+      createHttpClient({
+        ...options.httpOptions,
+        getProxySettings: () => proxySettingsFor(network.data, scope),
+      });
+    clients.add(client);
+    return client;
+  };
+  const rulesHttp = clientFor('rules');
+  const archiveHttp = clientFor('archive');
+  const videoHttp = clientFor('video');
+  const imageHttp = clientFor('image');
+  const bangumiHttp = clientFor('bangumi');
   const localMetadata =
     !options.metadata && process.env.METADATA_MODE !== 'remote'
       ? await new LocalMetadataStore(resolve(dataDir, 'metadata')).init()
       : null;
   const archive = localMetadata
-    ? new ArchiveManager({ store: localMetadata, http, ...options.archiveOptions })
+    ? new ArchiveManager({ store: localMetadata, http: archiveHttp, ...options.archiveOptions })
     : null;
-  const metadata = options.metadata || new MetadataService(http, { local: localMetadata });
+  const metadata = options.metadata || new MetadataService(bangumiHttp, { local: localMetadata });
   const initialRules =
     options.seedRules ??
     (await Promise.all(
@@ -52,8 +63,8 @@ export async function createApp(options = {}) {
   const watchStore = await new WatchStore(dataDir).init();
   const images = await new ImageCache({
     directory: resolve(dataDir, 'images'),
-    http,
-    resolveUrl: createCoverResolver(http),
+    http: imageHttp,
+    resolveUrl: createCoverResolver(imageHttp),
     getNetworkSettings: () => network.data,
     maxBytes: Number(process.env.IMAGE_CACHE_MAX_BYTES ?? 5 * 1024 ** 3),
   }).init();
@@ -61,15 +72,15 @@ export async function createApp(options = {}) {
     options.browserResolver === false || process.env.DYNAMIC_RESOLVER === 'false'
       ? null
       : options.browserResolver ||
-        new BrowserResolver(http, {
+        new BrowserResolver(videoHttp, {
           timeout: Number(process.env.DYNAMIC_RESOLVER_TIMEOUT_MS || 20000),
           maxConcurrency: Number(process.env.DYNAMIC_RESOLVER_CONCURRENCY || 2),
         });
-  const engine = new RuleEngine(http, { browserResolver });
-  const media = new MediaService(http, undefined, { browserResolver });
+  const engine = new RuleEngine(videoHttp, { browserResolver });
+  const media = new MediaService(videoHttp, undefined, { browserResolver });
   const downloads = await new DownloadManager({
     directory: resolve(dataDir, 'downloads'),
-    http,
+    http: videoHttp,
     media,
     getRule: (name) => store.get(name),
     maxBytes: Math.floor(Number(process.env.VIDEO_CACHE_MAX_GB || 10) * 1024 ** 3),
@@ -82,7 +93,7 @@ export async function createApp(options = {}) {
   app.use(express.json({ limit: '2mb' }));
   app.use('/api', createApiRateLimit());
   registerRoutes(app, {
-    http,
+    http: rulesHttp,
     images,
     watchStore,
     network,
@@ -116,7 +127,7 @@ export async function createApp(options = {}) {
       await images.close();
       await browserResolver?.close();
       media.close?.();
-      await http.close();
+      await Promise.all([...clients].map((client) => client.close()));
     },
   };
 }

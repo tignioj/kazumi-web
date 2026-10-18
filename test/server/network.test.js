@@ -14,6 +14,7 @@ import { createHttpClient } from '../../server/lib/http.js';
 import { createBrowserEgress } from '../../server/lib/browser-egress.js';
 import { createProxyTunnels } from '../../server/lib/proxy-tunnel.js';
 import { NetworkStore } from '../../server/modules/network/store.js';
+import { DEFAULT_NETWORK_SETTINGS, proxySettingsFor } from '../../shared/network-settings.js';
 
 const credentials = { username: 'proxy-user', password: '密码:@secret' };
 const basicAuth = `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString('base64')}`;
@@ -265,6 +266,72 @@ test('Chromium egress uses the same proxy for plain HTTP and CONNECT', async (t)
   }
 });
 
+test('five proxy categories route independently across all combinations and redirects', async (t) => {
+  const origin = await upstream(t);
+  const proxy = await httpProxy(t);
+  let settings = { ...DEFAULT_NETWORK_SETTINGS, ...credentials, url: proxy.settings.url };
+  const clients = ['video', 'image', 'bangumi', 'rules', 'archive', undefined].map((scope) => ({
+    scope,
+    client: createHttpClient({
+      allowPrivate: true,
+      dnsOverHttpsUrl: '',
+      resolver: async () => [{ address: '127.0.0.1', family: 4 }],
+      getProxySettings: () => proxySettingsFor(settings, scope),
+    }),
+  }));
+  t.after(() => Promise.all(clients.map(({ client }) => client.close())));
+  for (let mask = 0; mask < 32; mask++) {
+    settings = {
+      ...settings,
+      videoProxy: Boolean(mask & 1),
+      imageProxy: Boolean(mask & 2),
+      bangumiProxy: Boolean(mask & 4),
+      rulesProxy: Boolean(mask & 8),
+      archiveProxy: Boolean(mask & 16),
+    };
+    for (const { scope, client } of clients) {
+      const before = proxy.calls.length;
+      const target = `http://${scope || 'other'}-${mask}.invalid:${origin.port}/redirect`;
+      assert.equal((await client.text(target)).text, 'via-upstream');
+      assert.equal(
+        proxy.calls.length > before,
+        scope ? settings[`${scope}Proxy`] : false,
+        `${scope || 'other'} traffic with switches ${mask}`,
+      );
+    }
+  }
+});
+
+test('Chromium video egress ignores image and API proxy switches and follows video changes', async (t) => {
+  const origin = await upstream(t);
+  const proxy = await httpProxy(t);
+  let settings = {
+    ...DEFAULT_NETWORK_SETTINGS,
+    ...credentials,
+    url: proxy.settings.url,
+    imageProxy: true,
+    bangumiProxy: true,
+  };
+  const egress = await createBrowserEgress({
+    allowPrivate: true,
+    dnsOverHttpsUrl: '',
+    getProxySettings: () => proxySettingsFor(settings, 'video'),
+  });
+  t.after(() => egress.close());
+  for (const videoProxy of [false, true, false]) {
+    settings = { ...settings, videoProxy };
+    const before = proxy.calls.length;
+    await new Promise((resolve, reject) => {
+      const req = http.get(egress.url, { path: `${origin.url}/browser` }, (res) => {
+        res.resume();
+        res.on('end', resolve);
+      });
+      req.on('error', reject);
+    });
+    assert.equal(proxy.calls.length > before, videoProxy);
+  }
+});
+
 test('network settings API persists secrets, supports draft tests and keeps saved settings on failure', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'kazumi-network-'));
   let application;
@@ -292,36 +359,72 @@ test('network settings API persists secrets, supports draft tests and keeps save
     assert.equal(response.headers.get('cache-control'), 'no-store');
     return { response, data: await response.json() };
   }
-  assert.equal((await request()).data.enabled, false);
+  assert.equal((await request()).data.videoProxy, false);
+  assert.equal((await request()).data.rulesProxy, false);
+  assert.equal((await request()).data.archiveProxy, false);
+  assert.equal((await request()).data.enabled, undefined);
   assert.equal((await request()).data.bangumiEch, false);
   assert.equal((await request()).data.imageAcceleration, 'direct');
   const saved = await request('', 'PUT', {
-    ...proxy.settings,
+    url: proxy.settings.url,
+    username: credentials.username,
+    password: credentials.password,
+    videoProxy: true,
+    imageProxy: true,
+    bangumiProxy: true,
+    rulesProxy: true,
+    archiveProxy: true,
     bangumiEch: true,
     imageAcceleration: 'mirror',
     echDohUrl: 'https://dns.example/dns-query',
   });
-  assert.equal(saved.data.enabled, true);
+  assert.equal(saved.data.videoProxy, true);
   assert.equal(saved.data.hasPassword, true);
   assert.equal(saved.data.password, undefined);
   assert.equal((await stat(join(directory, 'network-settings.json'))).mode & 0o777, 0o600);
   const reloaded = await new NetworkStore(directory).init();
   assert.equal(reloaded.data.password, credentials.password);
+  assert.equal(reloaded.data.videoProxy, true);
+  assert.equal(reloaded.data.imageProxy, true);
+  assert.equal(reloaded.data.bangumiProxy, true);
+  assert.equal(reloaded.data.rulesProxy, true);
+  assert.equal(reloaded.data.archiveProxy, true);
   assert.equal(reloaded.data.bangumiEch, true);
   assert.equal(reloaded.data.imageAcceleration, 'mirror');
   assert.equal(reloaded.data.echDohUrl, 'https://dns.example/dns-query');
-  const retained = await request('', 'PUT', { enabled: false, url: proxy.settings.url });
+  const retained = await request('', 'PUT', { videoProxy: false, url: proxy.settings.url });
   assert.equal(retained.data.hasPassword, true);
+  assert.equal(retained.data.videoProxy, false);
+  assert.equal(retained.data.imageProxy, true);
+  assert.equal(retained.data.bangumiProxy, true);
+  assert.equal(retained.data.rulesProxy, true);
+  assert.equal(retained.data.archiveProxy, true);
   assert.equal(retained.data.bangumiEch, true);
   assert.equal(retained.data.imageAcceleration, 'mirror');
   assert.equal(retained.data.echDohUrl, 'https://dns.example/dns-query');
   const tested = await request('/test', 'POST', {
-    settings: { enabled: true, url: proxy.settings.url, bangumiEch: false },
+    settings: { bangumiProxy: true, url: proxy.settings.url, bangumiEch: false },
     url: origin.url,
   });
   assert.equal(tested.data.mode, 'proxy');
   assert.equal(proxy.calls.length, 1);
-  assert.equal((await request()).data.enabled, false, 'draft tests never save');
+  for (const [scope, mode] of [
+    ['video', 'direct'],
+    ['image', 'proxy'],
+    ['bangumi', 'proxy'],
+    ['rules', 'proxy'],
+    ['archive', 'proxy'],
+  ]) {
+    const result = await request('/test', 'POST', { settings: {}, scope, url: origin.url });
+    assert.equal(result.data.mode, mode);
+    assert.equal(result.data.scope, scope);
+  }
+  assert.equal(
+    (await request('/test', 'POST', { settings: {}, scope: 'all', url: origin.url })).response
+      .status,
+    400,
+  );
+  assert.equal((await request()).data.videoProxy, false, 'draft tests never save');
   assert.equal((await request()).data.bangumiEch, true, 'draft tests preserve saved ECH');
   assert.equal(
     (await request()).data.imageAcceleration,
@@ -331,17 +434,18 @@ test('network settings API persists secrets, supports draft tests and keeps save
   const bad = await fetch(base, {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ enabled: true, url: 'file:///tmp/proxy' }),
+    body: JSON.stringify({ bangumiProxy: true, url: 'file:///tmp/proxy' }),
   });
   assert.equal(bad.status, 400);
-  assert.equal((await request()).data.enabled, false);
-  const badEch = await request('', 'PUT', { enabled: false, echDohUrl: 'http://dns.example' });
+  assert.equal((await request()).data.videoProxy, false);
+  const badEch = await request('', 'PUT', { videoProxy: false, echDohUrl: 'http://dns.example' });
   assert.equal(badEch.response.status, 400);
   assert.equal((await request()).data.echDohUrl, 'https://dns.example/dns-query');
-  const badImage = await request('', 'PUT', { enabled: false, imageAcceleration: 'invalid' });
+  const badImage = await request('', 'PUT', { videoProxy: false, imageAcceleration: 'invalid' });
   assert.equal(badImage.response.status, 400);
   assert.equal((await request()).data.imageAcceleration, 'mirror');
-  const cleared = await request('', 'PUT', { enabled: false, username: '', password: '' });
+  assert.equal((await request('', 'PUT', { enabled: true })).response.status, 400);
+  const cleared = await request('', 'PUT', { videoProxy: false, username: '', password: '' });
   assert.equal(cleared.data.hasPassword, false);
 });
 
@@ -354,8 +458,13 @@ test('legacy network files load with ECH disabled', async (t) => {
   );
   const network = await new NetworkStore(directory).init();
   assert.equal(network.data.bangumiEch, false);
+  assert.equal(network.data.videoProxy, false);
+  assert.equal(network.data.imageProxy, false);
+  assert.equal(network.data.bangumiProxy, false);
+  assert.equal(network.data.rulesProxy, false);
+  assert.equal(network.data.archiveProxy, false);
   assert.equal(network.data.imageAcceleration, 'direct');
-  await network.save({ enabled: false, bangumiEch: true });
+  await network.save({ bangumiEch: true });
   const reloaded = await new NetworkStore(directory).init();
   assert.equal(reloaded.data.bangumiEch, true);
   assert.equal(
@@ -363,6 +472,54 @@ test('legacy network files load with ECH disabled', async (t) => {
     'direct',
     'changing API ECH leaves images unchanged',
   );
+});
+
+test('legacy global proxy settings migrate once and scoped saves never restore the global switch', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'kazumi-proxy-scopes-legacy-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = join(directory, 'network-settings.json');
+  await writeFile(file, JSON.stringify({ enabled: true, url: 'http://localhost:7890' }));
+  const network = await new NetworkStore(directory).init();
+  assert.equal(network.data.videoProxy, true);
+  assert.equal(network.data.imageProxy, true);
+  assert.equal(network.data.bangumiProxy, true);
+  assert.equal(network.data.rulesProxy, true);
+  assert.equal(network.data.archiveProxy, true);
+  await network.save({ videoProxy: false });
+  const reloaded = await new NetworkStore(directory).init();
+  assert.equal(reloaded.data.videoProxy, false);
+  assert.equal(reloaded.data.imageProxy, true);
+  assert.equal(reloaded.data.bangumiProxy, true);
+  assert.equal(reloaded.data.rulesProxy, true);
+  assert.equal(reloaded.data.archiveProxy, true);
+  assert.equal(JSON.parse(await readFile(file, 'utf8')).enabled, undefined);
+});
+
+test('three-category settings gain independent rule and archive switches without changing existing choices', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'kazumi-repository-proxies-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(
+    join(directory, 'network-settings.json'),
+    JSON.stringify({
+      videoProxy: true,
+      imageProxy: false,
+      bangumiProxy: true,
+      url: 'http://localhost:7890',
+    }),
+  );
+  const network = await new NetworkStore(directory).init();
+  assert.equal(network.data.rulesProxy, false);
+  assert.equal(network.data.archiveProxy, false);
+  await network.save({ rulesProxy: true, archiveProxy: true });
+  await network.save({ videoProxy: false });
+  const reloaded = await new NetworkStore(directory).init();
+  assert.equal(reloaded.data.videoProxy, false);
+  assert.equal(reloaded.data.imageProxy, false);
+  assert.equal(reloaded.data.bangumiProxy, true);
+  assert.equal(reloaded.data.rulesProxy, true);
+  assert.equal(reloaded.data.archiveProxy, true);
+  await reloaded.save({ rulesProxy: false });
+  assert.equal(reloaded.data.archiveProxy, true);
 });
 
 test('legacy combined ECH settings migrate images once and persist independent choices', async (t) => {
@@ -374,7 +531,7 @@ test('legacy combined ECH settings migrate images once and persist independent c
   );
   const network = await new NetworkStore(directory).init();
   assert.equal(network.data.imageAcceleration, 'ech');
-  await network.save({ enabled: false, imageAcceleration: 'direct' });
+  await network.save({ imageAcceleration: 'direct' });
   const reloaded = await new NetworkStore(directory).init();
   assert.equal(reloaded.data.bangumiEch, true);
   assert.equal(reloaded.data.imageAcceleration, 'direct');

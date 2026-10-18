@@ -1,4 +1,5 @@
 import { createHttpClient, checkedUrl, HttpError } from '../../lib/http.js';
+import { PROXY_SCOPES, proxySettingsFor } from '../../../shared/network-settings.js';
 
 export function registerNetworkRoutes(app, { network, http }) {
   app.use('/api/network-settings', (_req, res, next) => {
@@ -13,10 +14,13 @@ export function registerNetworkRoutes(app, { network, http }) {
   });
   app.post('/api/network-settings/test', async (req, res) => {
     const settings = network.validate(req.body?.settings);
+    const scope = req.body?.scope ?? 'bangumi';
+    if (!Object.hasOwn(PROXY_SCOPES, scope)) throw new HttpError('请选择有效的代理测试范围');
+    const proxy = proxySettingsFor(settings, scope);
     const target = checkedUrl(req.body?.url, { allowPrivate: http.allowPrivate });
     const client = createHttpClient({
       allowPrivate: http.allowPrivate,
-      getProxySettings: () => settings,
+      getProxySettings: () => proxy,
       timeout: 10000,
     });
     const started = Date.now();
@@ -30,7 +34,8 @@ export function registerNetworkRoutes(app, { network, http }) {
         ok: true,
         elapsedMs: Date.now() - started,
         status: response.status,
-        mode: settings.enabled ? 'proxy' : echAccepted ? 'ech' : 'direct',
+        scope,
+        mode: proxy.enabled ? 'proxy' : echAccepted ? 'ech' : 'direct',
       });
     } finally {
       await client.close();

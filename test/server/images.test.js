@@ -543,7 +543,6 @@ test('real image route returns cache headers, ETag/304, HEAD and no-store errors
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        enabled: false,
         bangumiEch: mode !== 'ech',
         imageAcceleration: mode,
       }),

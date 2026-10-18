@@ -4,6 +4,29 @@ import { api } from '../../lib/api.js';
 import { Notice } from '../../components/feedback.jsx';
 
 const imageModes = { mirror: '镜像', ech: 'ECH', direct: '直连' };
+const proxyRows = [
+  {
+    key: 'videoProxy',
+    label: '视频源请求代理',
+    help: '用于片源搜索、剧集解析、视频播放、下载和验证页面。',
+  },
+  { key: 'imageProxy', label: '番剧图片请求代理', help: '用于原图、wsrv.nl 镜像和封面地址查询。' },
+  {
+    key: 'bangumiProxy',
+    label: 'Bangumi API 请求代理',
+    help: '用于 Bangumi 分类、搜索、详情、章节和日历等 API。',
+  },
+  {
+    key: 'rulesProxy',
+    label: '规则仓库请求代理',
+    help: '用于官方规则列表、规则安装和规则更新。',
+  },
+  {
+    key: 'archiveProxy',
+    label: '资料归档下载代理',
+    help: '用于归档版本检查和 ZIP 下载，手动及自动更新、命令行更新均使用此设置。',
+  },
+];
 
 export function NetworkSettings({ request, notify }) {
   const [form, setForm] = useState(null);
@@ -17,7 +40,7 @@ export function NetworkSettings({ request, notify }) {
     if (request.data)
       setForm((previous) =>
         previous
-          ? { ...previous, enabled: request.data.enabled }
+          ? { ...previous, videoProxy: request.data.videoProxy }
           : { ...request.data, password: '' },
       );
   }, [request.data]);
@@ -32,7 +55,11 @@ export function NetworkSettings({ request, notify }) {
     setError('');
     setResult('');
     const settings = {
-      enabled: form.enabled,
+      videoProxy: form.videoProxy,
+      imageProxy: form.imageProxy,
+      bangumiProxy: form.bangumiProxy,
+      rulesProxy: form.rulesProxy,
+      archiveProxy: form.archiveProxy,
       url: form.url,
       username: form.username,
       bangumiEch: form.bangumiEch,
@@ -83,23 +110,25 @@ export function NetworkSettings({ request, notify }) {
             void submit('save');
           }}
         >
-          <div className="setting-row">
-            <div>
-              <h3>启用网络代理</h3>
-              <p>片源、图片、视频、下载和资料更新使用此代理。</p>
+          {proxyRows.map(({ key, label, help }) => (
+            <div className="setting-row" key={key}>
+              <div>
+                <h3>{label}</h3>
+                <p>{help}</p>
+              </div>
+              <button
+                type="button"
+                className={`switch ${form[key] ? 'on' : ''}`}
+                role="switch"
+                aria-checked={form[key]}
+                aria-label={label}
+                disabled={disabled}
+                onClick={() => change(key, !form[key])}
+              >
+                <span />
+              </button>
             </div>
-            <button
-              type="button"
-              className={`switch ${form.enabled ? 'on' : ''}`}
-              role="switch"
-              aria-checked={form.enabled}
-              aria-label="启用网络代理"
-              disabled={disabled}
-              onClick={() => change('enabled', !form.enabled)}
-            >
-              <span />
-            </button>
-          </div>
+          ))}
           <fieldset disabled={disabled} className="network-fields">
             <label>
               <span>代理地址</span>
@@ -114,8 +143,8 @@ export function NetworkSettings({ request, notify }) {
               />
             </label>
             <p id="proxy-address-help" className="muted small">
-              支持 http://、https:// 和 socks5://。地址从服务器访问；Docker
-              中的本机地址指向容器自身，访问宿主机可使用 host.docker.internal。
+              五类请求共用此代理地址和认证信息，开关分别生效。支持 http://、https:// 和
+              socks5://。Docker 中的本机地址指向容器自身，访问宿主机可使用 host.docker.internal。
             </p>
             <div className="network-credentials">
               <label>
@@ -148,7 +177,7 @@ export function NetworkSettings({ request, notify }) {
           <div className="setting-row">
             <div>
               <h3>启用 Bangumi API ECH</h3>
-              <p>用于 Bangumi API，封面请求单独设置。ECH 连接失败时会报告错误。</p>
+              <p>API 代理关闭时按此开关连接。封面单独设置，ECH 失败时会报告错误。</p>
             </div>
             <button
               type="button"
@@ -166,7 +195,7 @@ export function NetworkSettings({ request, notify }) {
             <div>
               <h3 id="image-acceleration-label">封面请求方式</h3>
               <p id="image-acceleration-help">
-                镜像通过 wsrv.nl 加载，ECH 加密握手，直连加载原图。与 Bangumi API 设置独立。
+                镜像通过 wsrv.nl 加载，ECH 加密握手，直连加载原图。图片代理开启时优先使用代理。
               </p>
             </div>
             <select
@@ -213,8 +242,8 @@ export function NetworkSettings({ request, notify }) {
             </label>
           </fieldset>
           <p className="muted small">
-            保存后新请求即时生效，无需重启，已有封面缓存继续复用。启用网络代理时优先使用代理。
-            连接测试按 API 设置进行，不测试封面请求方式。
+            保存后新请求即时生效，无需重启，已有连接可能继续使用原设置，封面缓存继续复用。
+            右上角仅控制视频请求代理。连接测试按 Bangumi API 设置进行。
           </p>
           <div className="button-group">
             <button type="submit" className="button primary" disabled={disabled}>
@@ -234,7 +263,7 @@ export function NetworkSettings({ request, notify }) {
           {result && (
             <p className="network-result muted small" role="status">
               {result === 'saved'
-                ? `已保存。Bangumi API：${request.data.bangumiEch ? 'ECH' : '直连'}；封面：${imageModes[request.data.imageAcceleration]}。${request.data.enabled ? '网络代理已启用，优先通过代理连接。' : ''}`
+                ? `已保存。${proxyRows.map(({ key, label }) => `${label}：${request.data[key] ? '开' : '关'}`).join('；')}。`
                 : result}
             </p>
           )}

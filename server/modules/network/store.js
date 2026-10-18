@@ -5,6 +5,7 @@ import { HttpError } from '../../lib/http.js';
 import {
   DEFAULT_NETWORK_SETTINGS,
   normalizeNetworkSettings,
+  PROXY_SCOPES,
 } from '../../../shared/network-settings.js';
 
 export class NetworkStore {
@@ -18,6 +19,11 @@ export class NetworkStore {
     await mkdir(this.directory, { recursive: true });
     try {
       const saved = JSON.parse(await readFile(this.file, 'utf8'));
+      if (saved.enabled !== undefined && typeof saved.enabled !== 'boolean')
+        throw new Error('旧代理设置无效');
+      for (const key of Object.values(PROXY_SCOPES))
+        if (saved[key] === undefined) saved[key] = saved.enabled ?? false;
+      delete saved.enabled;
       // Older versions used the API ECH switch for images as well.
       if (saved.imageAcceleration === undefined)
         saved.imageAcceleration = saved.bangumiEch === true ? 'ech' : 'direct';

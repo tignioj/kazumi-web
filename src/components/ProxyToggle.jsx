@@ -2,7 +2,7 @@ import React from 'react';
 import { LoaderCircle, Network } from 'lucide-react';
 
 export function ProxyToggle({ network, notify, onConfigure }) {
-  const enabled = Boolean(network.data?.enabled);
+  const enabled = Boolean(network.data?.videoProxy);
   const busy = network.loading || network.saving;
   const toggle = async () => {
     if (network.error) {
@@ -15,8 +15,8 @@ export function ProxyToggle({ network, notify, onConfigure }) {
       return;
     }
     try {
-      const saved = await network.save({ enabled: !enabled });
-      notify(saved.enabled ? '网络代理已启用' : '网络代理已关闭');
+      const saved = await network.save({ videoProxy: !enabled });
+      notify(saved.videoProxy ? '视频请求代理已启用' : '视频请求代理已关闭');
     } catch (error) {
       notify(`代理切换失败：${error.message}`);
     }
@@ -27,7 +27,7 @@ export function ProxyToggle({ network, notify, onConfigure }) {
       type="button"
       className={`proxy-toggle ${enabled ? 'on' : ''}`}
       role="switch"
-      aria-label="代理快捷开关"
+      aria-label="视频请求代理快捷开关"
       aria-checked={enabled}
       aria-busy={busy}
       disabled={busy}
@@ -37,16 +37,16 @@ export function ProxyToggle({ network, notify, onConfigure }) {
           : busy
             ? '正在同步代理设置…'
             : enabled
-              ? '关闭网络代理'
+              ? '关闭视频请求代理'
               : network.data?.url
-                ? '启用网络代理'
+                ? '启用视频请求代理'
                 : '前往设置代理地址'
       }
       onClick={toggle}
     >
       {busy ? <LoaderCircle size={16} className="spin" /> : <Network size={16} />}
       <span className="proxy-toggle-label">
-        {network.error ? '读取失败' : enabled ? '代理已开' : '代理已关'}
+        {network.error ? '读取失败' : enabled ? '视频代理已开' : '视频代理已关'}
       </span>
       <span className="proxy-toggle-track" aria-hidden="true">
         <span />
