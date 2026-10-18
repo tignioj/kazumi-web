@@ -19,6 +19,7 @@ import { useDownloads } from './use-downloads.js';
 import { CacheProgress } from './CacheProgress.jsx';
 import { CacheRemoval } from './CacheRemoval.jsx';
 import { CacheRetry } from './CacheRetry.jsx';
+import { CacheTransferControl } from './CacheTransferControl.jsx';
 
 function DownloadGroup({ items, onPlay, onRemove, onRetried, notify }) {
   const item = items[0];
@@ -26,6 +27,7 @@ function DownloadGroup({ items, onPlay, onRemove, onRetried, notify }) {
   const complete = items.filter((entry) => entry.status === 'complete').length;
   const active = items.filter(cacheActive).length;
   const failed = items.filter((entry) => entry.status === 'error').length;
+  const paused = items.filter((entry) => entry.status === 'paused').length;
   const bytes = items.reduce((sum, entry) => sum + (Number(entry.bytes) || 0), 0);
   return (
     <details className="cache-group" open>
@@ -50,6 +52,7 @@ function DownloadGroup({ items, onPlay, onRemove, onRetried, notify }) {
           <div className="cache-group-stats">
             {complete > 0 && <span className="cache-status-complete">已缓存 {complete} 集</span>}
             {active > 0 && <span>下载中 {active} 集</span>}
+            {paused > 0 && <span>已暂停 {paused} 集</span>}
             {failed > 0 && <span className="cache-status-error">失败 {failed} 集</span>}
             <span>{bytesLabel(bytes)}</span>
           </div>
@@ -79,6 +82,9 @@ function DownloadGroup({ items, onPlay, onRemove, onRetried, notify }) {
               <CacheProgress item={episode} />
             </div>
             <div className="cache-actions">
+              {(cacheActive(episode) || episode.status === 'paused') && (
+                <CacheTransferControl item={episode} onChanged={onRetried} notify={notify} />
+              )}
               {episode.status === 'error' && (
                 <CacheRetry item={episode} onRetried={onRetried} notify={notify} />
               )}
@@ -124,6 +130,7 @@ export function Downloads({ onPlay, notify }) {
   const [removing, setRemoving] = useState(null);
   const groups = groupDownloads(downloads.items);
   const active = downloads.items.filter(cacheActive).length;
+  const paused = downloads.items.filter((item) => item.status === 'paused').length;
   const maxBytes = Number(downloads.data?.maxBytes) || 0;
   const usedBytes = Number(downloads.data?.usedBytes) || 0;
   return (
@@ -166,8 +173,8 @@ export function Downloads({ onPlay, notify }) {
           </div>
         )}
         <p className="cache-help">
-          缓存保存在部署服务器上，所有访问者共享；关闭页面后任务继续。播放仍需连接此服务器。 HLS
-          保存到设备时为包含播放列表与分片的压缩包，不会合并为 MP4。
+          缓存保存在部署服务器上，所有访问者共享；关闭页面后未暂停的任务继续下载。播放仍需连接此服务器。
+          HLS 保存到设备时为包含播放列表与分片的压缩包，不会合并为 MP4。
         </p>
       </section>
       <div className="catalog-toolbar">
@@ -178,6 +185,7 @@ export function Downloads({ onPlay, notify }) {
         <span className="muted small">
           {groups.length} 个片源列表 · {downloads.items.length} 个任务
           {active ? ` · ${active} 个正在下载` : ''}
+          {paused ? ` · ${paused} 个已暂停` : ''}
         </span>
       </div>
       {downloads.error && <Notice onRetry={downloads.reload}>{downloads.error}</Notice>}

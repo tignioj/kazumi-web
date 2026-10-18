@@ -7,9 +7,13 @@ export const sameCacheEpisode = (item, ruleName, episodeUrl) =>
 export const cacheStatus = (item) =>
   item.status === 'downloading' && item.type === 'pending'
     ? '正在解析'
-    : { queued: '等待下载', downloading: '正在缓存', complete: '已缓存', error: '缓存失败' }[
-        item.status
-      ] || '未知状态';
+    : {
+        queued: '等待下载',
+        downloading: '正在缓存',
+        paused: '已暂停',
+        complete: '已缓存',
+        error: '缓存失败',
+      }[item.status] || '未知状态';
 
 export function groupDownloads(items) {
   const groups = new Map();

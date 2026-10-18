@@ -22,7 +22,11 @@ export function CacheRetry({ item, onRetried, notify }) {
         }),
       });
       onRetried(result.items);
-      notify(result.added ? '已重新加入缓存任务，关闭页面后仍会继续' : '当前剧集已缓存或加入任务');
+      notify(
+        result.added
+          ? '已加入缓存任务，将自动检查并续传可用进度，关闭页面后仍会继续'
+          : '当前剧集已缓存或加入任务',
+      );
     } catch (e) {
       setError(e.message);
     } finally {
@@ -38,7 +42,7 @@ export function CacheRetry({ item, onRetried, notify }) {
         aria-label={`重试下载 ${item.title} ${item.episodeName || '当前剧集'}`}
       >
         {busy ? <LoaderCircle size={15} className="spin" /> : <RefreshCw size={15} />}
-        {busy ? '正在重试…' : '重试下载'}
+        {busy ? '正在重试…' : item.resumable ? '继续下载' : '重试下载'}
       </button>
       {error && (
         <span className="cache-help cache-error" role="alert">

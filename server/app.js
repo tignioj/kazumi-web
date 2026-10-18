@@ -70,6 +70,7 @@ export async function createApp(options = {}) {
     directory: resolve(dataDir, 'downloads'),
     http,
     media,
+    getRule: (name) => store.get(name),
     maxBytes: Math.floor(Number(process.env.VIDEO_CACHE_MAX_GB || 10) * 1024 ** 3),
     ...options.downloadOptions,
   }).init();

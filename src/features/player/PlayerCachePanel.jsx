@@ -15,6 +15,7 @@ import { CacheProgress } from '../downloads/CacheProgress.jsx';
 import { CacheRemoval } from '../downloads/CacheRemoval.jsx';
 import { CacheSelection } from '../downloads/CacheSelection.jsx';
 import { CacheRetry } from '../downloads/CacheRetry.jsx';
+import { CacheTransferControl } from '../downloads/CacheTransferControl.jsx';
 
 export function PlayerCachePanel({
   context,
@@ -84,6 +85,9 @@ export function PlayerCachePanel({
       )}
       {error && <Notice>{error}</Notice>}
       <div className="player-cache-actions">
+        {item && (cacheActive(item) || item.status === 'paused') && (
+          <CacheTransferControl item={item} onChanged={downloads.accept} notify={notify} />
+        )}
         {item?.status === 'error' && (
           <CacheRetry key={item.id} item={item} onRetried={downloads.accept} notify={notify} />
         )}

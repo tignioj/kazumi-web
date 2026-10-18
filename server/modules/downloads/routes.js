@@ -2,6 +2,12 @@ import { inputText } from '../../lib/validation.js';
 import { verificationOwner } from '../verification/interactive.js';
 
 export function registerDownloadRoutes(app, { downloads, store }) {
+  app.get('/api/download-settings', (_req, res) => {
+    res.set('Cache-Control', 'no-store').json(downloads.settings);
+  });
+  app.put('/api/download-settings', async (req, res) => {
+    res.set('Cache-Control', 'no-store').json(await downloads.saveSettings(req.body));
+  });
   app.get('/api/downloads', (req, res) => {
     res.set('Cache-Control', 'no-store').json(downloads.list());
   });
@@ -33,6 +39,17 @@ export function registerDownloadRoutes(app, { downloads, store }) {
   app.delete('/api/downloads/:id', async (req, res) => {
     await downloads.remove(req.params.id);
     res.json({ ok: true });
+  });
+  app.post('/api/downloads/:id/pause', async (req, res) => {
+    res.set('Cache-Control', 'no-store').json(await downloads.pause(req.params.id));
+  });
+  app.post('/api/downloads/:id/resume', async (req, res) => {
+    res
+      .status(202)
+      .set('Cache-Control', 'no-store')
+      .json(
+        await downloads.resume(req.params.id, { sessionOwner: verificationOwner(req, res, true) }),
+      );
   });
   app.get('/api/downloads/:id/files/:name', async (req, res, next) => {
     const file = await downloads.file(req.params.id, req.params.name);

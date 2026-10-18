@@ -12,6 +12,7 @@ import { createHttpClient } from '../../server/lib/http.js';
 import { tarHeader } from '../../server/modules/downloads/archive.js';
 
 const movie = Buffer.from('0123456789abcdefghijklmnopqrstuvwxyz');
+const rangeMovie = Buffer.alloc(64 * 1024).map((_, i) => i % 251);
 const hlsAsset = Buffer.from('INITseg1seg2');
 const hlsKey = Buffer.from('0123456789abcdef');
 const imageSegment = Buffer.concat([
@@ -58,11 +59,94 @@ async function fixture(t, { downloadOptions, session = false } = {}) {
     slowCompletes: false,
     resolvingConnections: 0,
     watchReady: false,
+    rangePause: false,
+    rangeVersion: 1,
+    rangeConnections: 0,
+    rangePeak: 0,
+    rangeIgnore: false,
+    rangeWrong: false,
+    rangeValidator: true,
+    sequentialPause: false,
+    sequentialVersion: 1,
+    segmentConnections: 0,
+    segmentPeak: 0,
+    segmentFailure: false,
+    playlistVersion: 1,
   };
   const upstream = createServer((req, res) => {
     const path = new URL(req.url, 'http://fixture').pathname;
     received.push({ path, headers: req.headers });
     if (state.offline) return res.writeHead(503).end('upstream unavailable');
+    if (path === '/ranges.mp4') {
+      const bytes = state.rangeVersion === 1 ? rangeMovie : Buffer.alloc(rangeMovie.length, 7);
+      const match = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range || '');
+      const partial = match && !(state.rangeIgnore && match[2] !== '0');
+      const start = partial ? Number(match[1]) : 0;
+      const end = partial ? Math.min(Number(match[2]), bytes.length - 1) : bytes.length - 1;
+      res.writeHead(partial ? 206 : 200, {
+        'content-type': 'video/mp4',
+        'content-length': end - start + 1,
+        ...(state.rangeValidator ? { etag: `"v${state.rangeVersion}"` } : {}),
+        ...(partial
+          ? {
+              'content-range': `bytes ${state.rangeWrong && end > 0 ? start + 1 : start}-${end}/${bytes.length}`,
+            }
+          : {}),
+      });
+      if (end === 0) return res.end(bytes.subarray(0, 1));
+      state.rangeConnections++;
+      state.rangePeak = Math.max(state.rangePeak, state.rangeConnections);
+      let position = start;
+      let timer;
+      res.once('close', () => {
+        clearInterval(timer);
+        state.rangeConnections--;
+      });
+      const send = () => {
+        const next = Math.min(position + 1024, end + 1);
+        res.write(bytes.subarray(position, next));
+        position = next;
+        if (position > end) {
+          clearInterval(timer);
+          res.end();
+        }
+      };
+      send();
+      if (!state.rangePause) timer = setInterval(send, 5);
+      return;
+    }
+    if (path === '/sequential.mp4') {
+      const bytes = state.sequentialVersion === 1 ? rangeMovie : Buffer.alloc(rangeMovie.length, 8);
+      res.writeHead(200, { 'content-type': 'video/mp4', 'content-length': bytes.length });
+      res.write(bytes.subarray(0, 4096));
+      if (!state.sequentialPause) setTimeout(() => res.end(bytes.subarray(4096)), 40);
+      return;
+    }
+    if (path === '/parallel.m3u8') {
+      res.setHeader('content-type', 'application/vnd.apple.mpegurl');
+      return res.end(
+        '#EXTM3U\n#EXT-X-TARGETDURATION:5\n' +
+          Array.from(
+            { length: 12 },
+            (_, i) => `#EXTINF:5,\n/parallel-${i}.ts?v=${state.playlistVersion}\n`,
+          ).join('') +
+          '#EXT-X-ENDLIST\n',
+      );
+    }
+    if (/^\/parallel-\d+\.ts$/.test(path)) {
+      state.segmentConnections++;
+      state.segmentPeak = Math.max(state.segmentPeak, state.segmentConnections);
+      const timer = setTimeout(() => {
+        if (state.segmentFailure && path === '/parallel-8.ts') return res.writeHead(503).end();
+        res.setHeader('content-type', 'video/mp2t');
+        res.end(`segment ${path} version ${state.playlistVersion}`);
+      }, 30);
+      res.once('close', () => {
+        clearTimeout(timer);
+        state.segmentConnections--;
+      });
+      return;
+    }
     if (path === '/resolving') {
       state.resolvingConnections++;
       res.writeHead(200, { 'content-type': 'text/html' });
@@ -969,4 +1053,335 @@ test('restart removes interrupted partial bytes and a fresh signed request retri
   assert.equal((await f.list()).usedBytes, movie.length);
   const response = await f.fetch(completed.playbackUrl);
   assert.deepEqual(Buffer.from(await response.arrayBuffer()), movie);
+});
+
+test('download thread settings validate 1–8 and survive restart', async (t) => {
+  const f = await fixture(t);
+  assert.deepEqual((await f.json('/api/download-settings')).data, { threads: 4 });
+  for (const threads of [0, 9, 1.5, '8', null]) {
+    assert.equal((await f.json('/api/download-settings', { threads }, 'PUT')).status, 400);
+  }
+  assert.equal((await f.json('/api/download-settings', { threads: 8 }, 'PUT')).status, 200);
+  await f.restart();
+  assert.deepEqual((await f.json('/api/download-settings')).data, { threads: 8 });
+});
+
+test('single video uses exactly the configured number of concurrent byte ranges', async (t) => {
+  for (const threads of [1, 4, 8]) {
+    const f = await fixture(t);
+    await f.json('/api/download-settings', { threads }, 'PUT');
+    const { job } = await f.submit('/ranges.mp4');
+    const completed = await f.finished(job.id);
+    assert.equal(completed.status, 'complete', completed.error);
+    assert.equal(f.state.rangePeak, threads);
+    assert.equal(completed.bytes, rangeMovie.length);
+    assert.equal((await f.list()).usedBytes, rangeMovie.length);
+    assert.deepEqual(
+      Buffer.from(await (await f.fetch(completed.playbackUrl)).arrayBuffer()),
+      rangeMovie,
+    );
+    const requests = f.received.filter(
+      ({ path, headers }) => path === '/ranges.mp4' && headers['if-range'],
+    );
+    assert.equal(requests.length, threads);
+    assert.ok(requests.every(({ headers }) => headers['if-range'] === '"v1"'));
+  }
+});
+
+test('interrupted video keeps range checkpoints across restart and batch retry resumes missing bytes', async (t) => {
+  const f = await fixture(t);
+  f.state.rangePause = true;
+  const { job } = await f.submit('/ranges.mp4');
+  await eventually(f.list, (data) => data.usedBytes >= 4096, 'ranges did not write partial bytes');
+  await f.restart();
+  const partial = (await f.list()).items.find((item) => item.id === job.id);
+  assert.equal(partial.status, 'error');
+  assert.equal(partial.resumable, true);
+  assert.equal(partial.bytes, 4096);
+  const index = JSON.parse(await readFile(join(f.directory, 'downloads/index.json'), 'utf8'));
+  const checkpoint = index.items.find((item) => item.id === job.id).resume;
+  assert.equal(checkpoint.ranges.length, 4);
+  assert.ok(checkpoint.ranges.every((part) => part.received === 1024));
+  assert.ok(!JSON.stringify(checkpoint).includes(f.upstreamUrl));
+  f.state.rangePause = false;
+  const before = f.received.length;
+  // Changing threads on retry must preserve the original range boundaries.
+  await f.json('/api/download-settings', { threads: 1 }, 'PUT');
+  const retry = await f.json('/api/downloads/batch', {
+    ruleName: f.rule.name,
+    episodes: [{ name: '第 1 集', url: `${f.upstreamUrl}/ranges.mp4` }],
+  });
+  assert.equal(retry.data.items[0].id, job.id);
+  const completed = await f.finished(job.id);
+  assert.equal(completed.status, 'complete', completed.error);
+  const ranges = f.received
+    .slice(before)
+    .filter(({ headers }) => headers['if-range'])
+    .map(({ headers }) => headers.range);
+  assert.deepEqual(
+    ranges,
+    checkpoint.ranges.map((part) => `bytes=${part.start + part.received}-${part.end}`),
+  );
+  assert.deepEqual(
+    Buffer.from(await (await f.fetch(completed.playbackUrl)).arrayBuffer()),
+    rangeMovie,
+  );
+  assert.equal((await f.list()).usedBytes, rangeMovie.length);
+});
+
+test('changed video validators discard stale partial bytes before retry', async (t) => {
+  const f = await fixture(t);
+  f.state.rangePause = true;
+  const { job } = await f.submit('/ranges.mp4');
+  await eventually(f.list, (data) => data.usedBytes >= 4096, 'ranges did not start');
+  await f.restart();
+  f.state.rangeVersion = 2;
+  f.state.rangePause = false;
+  const { job: retried } = await f.submit('/ranges.mp4');
+  assert.equal(retried.id, job.id);
+  const completed = await f.finished(job.id);
+  assert.equal(completed.status, 'complete', completed.error);
+  assert.deepEqual(
+    Buffer.from(await (await f.fetch(completed.playbackUrl)).arrayBuffer()),
+    Buffer.alloc(rangeMovie.length, 7),
+  );
+  assert.equal((await f.list()).usedBytes, rangeMovie.length);
+});
+
+test('a range probe followed by full responses falls back safely and malformed ranges fail', async (t) => {
+  const f = await fixture(t);
+  f.state.rangeIgnore = true;
+  const { job } = await f.submit('/ranges.mp4');
+  const completed = await f.finished(job.id);
+  assert.equal(completed.status, 'complete', completed.error);
+  assert.deepEqual(
+    Buffer.from(await (await f.fetch(completed.playbackUrl)).arrayBuffer()),
+    rangeMovie,
+  );
+  await f.json('/api/downloads', undefined, 'DELETE');
+  f.state.rangeIgnore = false;
+  f.state.rangeWrong = true;
+  const { job: invalid } = await f.submit('/ranges.mp4');
+  const failed = await f.finished(invalid.id);
+  assert.equal(failed.status, 'error');
+  assert.match(failed.error, /范围或文件版本不一致/);
+  assert.equal(failed.bytes, 0);
+  assert.equal(failed.playbackUrl, null);
+});
+
+test('HLS uses at most eight workers and resumes completed segments after a transient error and restart', async (t) => {
+  const f = await fixture(t);
+  await f.json('/api/download-settings', { threads: 8 }, 'PUT');
+  f.state.segmentFailure = true;
+  const { job } = await f.submit('/parallel.m3u8');
+  const failed = await f.finished(job.id);
+  assert.equal(failed.status, 'error');
+  assert.equal(failed.resumable, true);
+  assert.equal(f.state.segmentPeak, 8);
+  assert.ok(failed.completedFiles >= 8);
+  const index = JSON.parse(await readFile(join(f.directory, 'downloads/index.json'), 'utf8'));
+  const kept = index.items.find((item) => item.id === job.id).files;
+  assert.equal(
+    failed.bytes,
+    kept.reduce((sum, file) => sum + file.size, 0),
+  );
+  await f.restart();
+  assert.equal((await f.list()).usedBytes, failed.bytes);
+  f.state.segmentFailure = false;
+  const before = f.received.length;
+  const { job: retried } = await f.submit('/parallel.m3u8');
+  assert.equal(retried.id, job.id);
+  const complete = await f.finished(job.id);
+  assert.equal(complete.status, 'complete', complete.error);
+  assert.equal(complete.completedFiles, 13);
+  const fetched = f.received.slice(before).filter(({ path }) => /^\/parallel-\d+\.ts$/.test(path));
+  assert.equal(fetched.length, 12 - kept.length);
+  const playlist = await (await f.fetch(complete.playbackUrl)).text();
+  const segments = playlistUris(playlist);
+  for (let i = 0; i < segments.length; i++) {
+    const path = new URL(segments[i], `http://local${complete.playbackUrl}`).pathname;
+    assert.equal(await (await f.fetch(path)).text(), `segment /parallel-${i}.ts version 1`);
+  }
+  assert.equal((await f.list()).usedBytes, complete.bytes);
+});
+
+test('HLS manifest changes discard old segments and deleting resumable jobs frees all bytes', async (t) => {
+  const f = await fixture(t);
+  f.state.segmentFailure = true;
+  const { job } = await f.submit('/parallel.m3u8');
+  assert.equal((await f.finished(job.id)).resumable, true);
+  f.state.segmentFailure = false;
+  f.state.playlistVersion = 2;
+  const before = f.received.length;
+  await f.submit('/parallel.m3u8');
+  const completed = await f.finished(job.id);
+  assert.equal(completed.status, 'complete', completed.error);
+  assert.equal(
+    f.received.slice(before).filter(({ path }) => /^\/parallel-\d+\.ts$/.test(path)).length,
+    12,
+  );
+  await f.json('/api/downloads', undefined, 'DELETE');
+  assert.equal((await f.list()).usedBytes, 0);
+  f.state.rangePause = true;
+  const { job: partial } = await f.submit('/ranges.mp4');
+  await eventually(f.list, (data) => data.usedBytes >= 4096, 'ranges did not start');
+  await f.json(`/api/downloads/${partial.id}`, undefined, 'DELETE');
+  assert.equal((await f.list()).usedBytes, 0);
+  await assert.rejects(stat(join(f.directory, 'downloads', partial.id)), { code: 'ENOENT' });
+});
+
+test('pausing a ranged video preserves bytes, releases its slot and stays paused across restart', async (t) => {
+  const f = await fixture(t, { downloadOptions: { concurrency: 1 } });
+  f.state.rangePause = true;
+  const { job } = await f.submit('/ranges.mp4');
+  await eventually(f.list, (data) => data.usedBytes >= 4096, 'ranges did not start');
+  const { job: queued } = await f.submit('/movie.mp4');
+  assert.equal(queued.status, 'queued');
+  const paused = await f.json(`/api/downloads/${job.id}/pause`, {});
+  assert.equal(paused.status, 200);
+  assert.equal(paused.data.status, 'paused');
+  assert.equal(paused.data.resumable, true);
+  assert.equal(paused.data.bytes, 4096);
+  assert.ok(!paused.data.error);
+  await eventually(
+    async () => f.state.rangeConnections,
+    (count) => count === 0,
+    'paused requests stayed open',
+  );
+  assert.equal((await f.finished(queued.id)).status, 'complete');
+  assert.deepEqual((await f.json(`/api/downloads/${job.id}/pause`, {})).data, paused.data);
+  // Duplicate submissions must not implicitly unpause an existing task.
+  assert.equal((await f.submit('/ranges.mp4')).job.status, 'paused');
+  await f.restart();
+  const restored = (await f.list()).items.find((item) => item.id === job.id);
+  assert.deepEqual(restored, paused.data);
+  f.state.rangePause = false;
+  const before = f.received.length;
+  const resumed = await f.json(`/api/downloads/${job.id}/resume`, {});
+  assert.equal(resumed.status, 202);
+  assert.equal(resumed.data.id, job.id);
+  const completed = await f.finished(job.id);
+  assert.equal(completed.status, 'complete', completed.error);
+  assert.equal(f.received.slice(before).filter(({ headers }) => headers['if-range']).length, 4);
+  assert.deepEqual(
+    Buffer.from(await (await f.fetch(completed.playbackUrl)).arrayBuffer()),
+    rangeMovie,
+  );
+  assert.equal((await f.list()).usedBytes, rangeMovie.length + movie.length);
+});
+
+test('pause and resume work for queued jobs and active parsing without starting paused tasks', async (t) => {
+  const f = await fixture(t, { downloadOptions: { concurrency: 1 } });
+  const batch = await f.json('/api/downloads/batch', {
+    ruleName: f.rule.name,
+    episodes: [
+      { name: '解析中', url: `${f.upstreamUrl}/resolving` },
+      { name: '队列中', url: `${f.upstreamUrl}/movie.mp4` },
+    ],
+  });
+  const [resolving, queued] = batch.data.items;
+  await eventually(
+    async () => f.state.resolvingConnections,
+    (count) => count > 0,
+    'resolution did not start',
+  );
+  assert.equal((await f.json(`/api/downloads/${queued.id}/pause`, {})).data.status, 'paused');
+  assert.equal((await f.json(`/api/downloads/${resolving.id}/pause`, {})).data.status, 'paused');
+  await eventually(
+    async () => f.state.resolvingConnections,
+    (count) => count === 0,
+    'paused parser remained connected',
+  );
+  await f.restart();
+  assert.ok((await f.list()).items.every((item) => item.status === 'paused' && item.bytes === 0));
+  await f.json(`/api/downloads/${queued.id}/resume`, {});
+  const completed = await f.finished(queued.id);
+  assert.equal(completed.status, 'complete', completed.error);
+  assert.equal((await f.list()).items.find((item) => item.id === resolving.id).status, 'paused');
+  assert.equal((await f.json('/api/downloads/not-found/pause', {})).status, 404);
+  assert.equal((await f.json('/api/downloads/not-found/resume', {})).status, 404);
+  assert.equal((await f.json(`/api/downloads/${queued.id}/pause`, {})).data.status, 'complete');
+});
+
+test('pausing HLS retains completed segments and continuing fetches only remaining assets', async (t) => {
+  const f = await fixture(t);
+  await f.json('/api/download-settings', { threads: 1 }, 'PUT');
+  const { job } = await f.submit('/parallel.m3u8');
+  await eventually(
+    f.list,
+    (data) => data.items[0].completedFiles >= 2,
+    'HLS segments did not finish',
+  );
+  const paused = await f.json(`/api/downloads/${job.id}/pause`, {});
+  assert.equal(paused.data.status, 'paused');
+  assert.ok(paused.data.completedFiles >= 2 && paused.data.completedFiles < 12);
+  const index = JSON.parse(await readFile(join(f.directory, 'downloads/index.json'), 'utf8'));
+  const kept = index.items.find((item) => item.id === job.id).files;
+  assert.equal(
+    paused.data.bytes,
+    kept.reduce((sum, file) => sum + file.size, 0),
+  );
+  await eventually(
+    async () => f.state.segmentConnections,
+    (count) => count === 0,
+    'paused HLS requests remained active',
+  );
+  const before = f.received.length;
+  await f.json(`/api/downloads/${job.id}/resume`, {});
+  const completed = await f.finished(job.id);
+  assert.equal(completed.status, 'complete', completed.error);
+  assert.equal(
+    f.received.slice(before).filter(({ path }) => /^\/parallel-\d+\.ts$/.test(path)).length,
+    12 - kept.length,
+  );
+  assert.equal((await f.list()).usedBytes, completed.bytes);
+});
+
+test('a source without range support retains paused bytes and verifies them before appending', async (t) => {
+  const f = await fixture(t);
+  for (const version of [1, 2]) {
+    f.state.sequentialVersion = 1;
+    f.state.sequentialPause = true;
+    const { job } = await f.submit('/sequential.mp4');
+    await eventually(f.list, (data) => data.usedBytes >= 4096, 'sequential bytes were not written');
+    const paused = await f.json(`/api/downloads/${job.id}/pause`, {});
+    assert.equal(paused.data.status, 'paused');
+    assert.equal(paused.data.bytes, 4096);
+    await f.restart();
+    assert.equal((await f.list()).items[0].bytes, 4096);
+    assert.equal((await f.list()).items[0].status, 'paused');
+    f.state.sequentialVersion = version;
+    f.state.sequentialPause = false;
+    await f.json(`/api/downloads/${job.id}/resume`, {});
+    const completed = await f.finished(job.id);
+    assert.equal(completed.status, 'complete', completed.error);
+    assert.deepEqual(
+      Buffer.from(await (await f.fetch(completed.playbackUrl)).arrayBuffer()),
+      version === 1 ? rangeMovie : Buffer.alloc(rangeMovie.length, 8),
+    );
+    assert.equal((await f.list()).usedBytes, rangeMovie.length);
+    await f.json('/api/downloads', undefined, 'DELETE');
+  }
+});
+
+test('ranges without a validator preserve paused bytes and compare them when continuing', async (t) => {
+  const f = await fixture(t);
+  f.state.rangeValidator = false;
+  f.state.rangePause = true;
+  const { job } = await f.submit('/ranges.mp4');
+  await eventually(f.list, (data) => data.usedBytes >= 4096, 'range bytes were not written');
+  const paused = await f.json(`/api/downloads/${job.id}/pause`, {});
+  assert.equal(paused.data.bytes, 4096);
+  await f.restart();
+  assert.equal((await f.list()).items[0].bytes, 4096);
+  f.state.rangePause = false;
+  f.state.rangeVersion = 2;
+  await f.json(`/api/downloads/${job.id}/resume`, {});
+  const completed = await f.finished(job.id);
+  assert.equal(completed.status, 'complete', completed.error);
+  assert.deepEqual(
+    Buffer.from(await (await f.fetch(completed.playbackUrl)).arrayBuffer()),
+    Buffer.alloc(rangeMovie.length, 7),
+  );
+  assert.equal((await f.list()).usedBytes, rangeMovie.length);
 });

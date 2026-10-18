@@ -5,6 +5,13 @@ import { checkedUrl, cleanHeaders, HttpError } from '../../lib/http.js';
 import { headersForSession } from '../playback/session-store.js';
 import { filterHlsAds } from '../playback/hls-ad-filter.js';
 import { streamArchive } from './archive.js';
+import { contentLength, checkContent } from './content.js';
+import { fingerprint, parallel } from './transfers.js';
+import { downloadVideo, restoreVideo } from './video.js';
+import {
+  DEFAULT_DOWNLOAD_SETTINGS,
+  normalizeDownloadSettings,
+} from '../../../shared/download-settings.js';
 
 const MAX_JOBS = 200;
 const MAX_FILES = 20000;
@@ -92,38 +99,6 @@ function extension(url, contentType = '', fallback = '.bin') {
   return fallback;
 }
 
-function contentLength(response) {
-  const value = response.headers.get('content-length');
-  if (response.headers.get('content-encoding') || value == null) return null;
-  if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)))
-    throw new HttpError('视频长度无效', 502);
-  return Number(value);
-}
-
-function checkContent(contentType, prefix, kind) {
-  // HLS CDNs can serve image-prefixed segments as image/png or image/jpeg.
-  // Keep their bytes intact, just as the playback proxy does, for the demuxer,
-  // encrypted segments and playlist byte ranges. SVG and error pages still fail.
-  if (
-    /text\/html|application\/(?:json|javascript|xhtml|xml)|image\/svg/i.test(contentType) ||
-    (kind !== 'segment' && /image\//i.test(contentType))
-  )
-    throw new HttpError('媒体服务器返回了网页或其他非视频内容', 422);
-  if (
-    kind === 'video' &&
-    /^(?:text\/|application\/(?:vnd\.apple\.mpegurl|x-mpegurl))/i.test(contentType)
-  )
-    throw new HttpError('媒体服务器未返回视频文件', 422);
-  const start = prefix
-    .toString('utf8')
-    .replace(/^\uFEFF/, '')
-    .trimStart();
-  if (/^(?:<!doctype|<html|<head|<body|<script|<\?xml|<svg|\{\s*["}]|\[\s*\{)/i.test(start))
-    throw new HttpError('媒体服务器返回了网页或其他非视频内容', 422);
-  if (kind !== 'manifest' && start.startsWith('#EXTM3U'))
-    throw new HttpError('视频文件意外返回了播放列表，请重新解析', 422);
-}
-
 function publicJob(job) {
   const result = {
     id: job.id,
@@ -139,6 +114,7 @@ function publicJob(job) {
     completedFiles: job.completedFiles,
     totalFiles: job.totalFiles,
     createdAt: job.createdAt,
+    resumable: Boolean(job.resume && job.bytes > 0),
     playbackUrl:
       job.status === 'complete' ? `/api/downloads/${job.id}/files/${job.mainFile}` : null,
     downloadUrl: job.status === 'complete' ? `/api/downloads/${job.id}/download` : null,
@@ -150,14 +126,16 @@ function publicJob(job) {
 }
 
 export class DownloadManager {
-  constructor({ directory, http, media, maxBytes = 10 * 1024 ** 3, concurrency = 2 }) {
+  constructor({ directory, http, media, getRule, maxBytes = 10 * 1024 ** 3, concurrency = 2 }) {
     this.directory = resolve(directory);
     this.http = http;
     this.media = media;
+    this.getRule = getRule;
     if (!Number.isSafeInteger(maxBytes) || maxBytes < 1)
       throw new HttpError('视频缓存容量必须为正整数');
     this.maxBytes = maxBytes;
     this.concurrency = Math.min(4, Math.max(1, Number(concurrency) || 2));
+    this.settings = { ...DEFAULT_DOWNLOAD_SETTINGS };
     this.jobs = new Map();
     this.usedBytes = 0;
     this.active = new Set();
@@ -168,6 +146,13 @@ export class DownloadManager {
 
   async init() {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
+    try {
+      this.settings = normalizeDownloadSettings(
+        JSON.parse(await readFile(join(this.directory, 'settings.json'), 'utf8')),
+      );
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw new HttpError('下载设置损坏，无法读取', 500);
+    }
     let records = [];
     try {
       const index = JSON.parse(await readFile(join(this.directory, 'index.json'), 'utf8'));
@@ -223,14 +208,66 @@ export class DownloadManager {
         job.totalBytes = job.bytes;
         this.usedBytes += job.bytes;
       } catch {
-        await rm(join(this.directory, job.id), { recursive: true, force: true });
-        job.status = 'error';
-        job.error =
-          data.status === 'error'
-            ? textField(data.error, '缓存失败，请重试')
-            : '缓存任务已中断或文件不完整，请重新缓存';
-        job.bytes = 0;
         job.files = [];
+        job.bytes = 0;
+        let recovered = false;
+        if (data.status !== 'complete') {
+          try {
+            if (data.resume?.type === 'video' && data.type === 'video') {
+              await restoreVideo(this, job, data.resume);
+              recovered = true;
+            } else if (
+              data.resume?.type === 'hls' &&
+              data.type === 'hls' &&
+              /^[a-f0-9]{64}$/.test(data.resume.identity) &&
+              Array.isArray(data.files) &&
+              data.files.length <= MAX_FILES
+            ) {
+              const names = new Set();
+              for (const file of data.files) {
+                if (!FILE.test(file.name) || names.has(file.name)) throw new Error('invalid file');
+                names.add(file.name);
+                const info = await stat(join(this.directory, job.id, file.name));
+                if (!info.isFile() || info.size !== file.size) throw new Error('missing file');
+                job.files.push({
+                  name: file.name,
+                  size: info.size,
+                  contentType: textField(file.contentType),
+                });
+                job.bytes += info.size;
+              }
+              job.resume = data.resume;
+              job.completedFiles = job.files.length;
+              job.totalFiles = Number.isSafeInteger(data.totalFiles) ? data.totalFiles : 0;
+              recovered = true;
+            }
+          } catch {
+            /* Discard an invalid or missing checkpoint. */
+          }
+        }
+        if (recovered) {
+          this.usedBytes += job.bytes;
+          const keep = new Set(
+            job.resume.type === 'video' ? ['video.part'] : job.files.map((file) => file.name),
+          );
+          for (const name of await readdir(join(this.directory, job.id)))
+            if (!keep.has(name))
+              await rm(join(this.directory, job.id, name), { recursive: true, force: true });
+        } else {
+          await rm(join(this.directory, job.id), { recursive: true, force: true });
+          job.bytes = 0;
+          job.files = [];
+          job.completedFiles = 0;
+          delete job.resume;
+        }
+        job.status = data.status === 'paused' ? 'paused' : 'error';
+        if (job.status === 'error')
+          job.error =
+            data.status === 'error'
+              ? textField(data.error, '缓存失败，请重试')
+              : recovered
+                ? '缓存任务已中断，重试后继续下载'
+                : '缓存任务已中断或文件不完整，请重新缓存';
       }
       this.jobs.set(job.id, job);
     }
@@ -238,12 +275,96 @@ export class DownloadManager {
     for (const entry of await readdir(this.directory, { withFileTypes: true })) {
       if (
         (entry.isDirectory() && ID.test(entry.name) && !this.jobs.has(entry.name)) ||
-        /^index\.[a-f0-9-]+\.tmp$/.test(entry.name)
+        /^(?:index|settings)\.[a-f0-9-]+\.tmp$/.test(entry.name)
       )
         await rm(join(this.directory, entry.name), { recursive: true, force: true });
     }
     await this.persist();
     return this;
+  }
+
+  saveSettings(input) {
+    return this.lock(async () => {
+      let next;
+      try {
+        next = normalizeDownloadSettings(input);
+      } catch (error) {
+        throw new HttpError(error.message);
+      }
+      const temporary = join(this.directory, `settings.${randomUUID()}.tmp`);
+      try {
+        await writeFile(temporary, JSON.stringify(next), { mode: 0o600 });
+        await rename(temporary, join(this.directory, 'settings.json'));
+      } finally {
+        await rm(temporary, { force: true });
+      }
+      this.settings = next;
+      return next;
+    });
+  }
+
+  async discard(job) {
+    await rm(join(this.directory, job.id), { recursive: true, force: true });
+    this.usedBytes -= job.bytes;
+    job.bytes = 0;
+    job.files = [];
+    job.completedFiles = 0;
+    job.totalBytes = null;
+    delete job.resume;
+  }
+
+  ensureDirectory(job) {
+    return mkdir(join(this.directory, job.id), { recursive: true, mode: 0o700 });
+  }
+
+  retryJob(existing, input, media) {
+    Object.assign(existing, media, { status: 'queued' });
+    delete existing.needsResolve;
+    for (const key of ['title', 'episodeName', 'image'])
+      if (typeof input[key] === 'string') existing[key] = textField(input[key]);
+    delete existing.error;
+    return existing;
+  }
+
+  pause(id) {
+    return this.lock(async () => {
+      if (this.closed) throw new HttpError('缓存服务已关闭', 503);
+      const job = this.jobs.get(id);
+      if (!job || job.removed) throw new HttpError('缓存任务不存在', 404);
+      if (['paused', 'complete'].includes(job.status)) return publicJob(job);
+      if (!['queued', 'downloading'].includes(job.status))
+        throw new HttpError('当前任务无法暂停', 409);
+      job.pauseRequested = true;
+      if (job.status === 'queued') job.status = 'paused';
+      job.controller?.abort();
+      await job.promise?.catch(() => {});
+      delete job.pauseRequested;
+      delete job.error;
+      await this.persist();
+      return publicJob(job);
+    });
+  }
+
+  resume(id, { sessionOwner } = {}) {
+    return this.lock(async () => {
+      if (this.closed) throw new HttpError('缓存服务已关闭', 503);
+      const job = this.jobs.get(id);
+      if (!job || job.removed) throw new HttpError('缓存任务不存在', 404);
+      if (['queued', 'downloading', 'complete'].includes(job.status)) return publicJob(job);
+      if (job.status !== 'paused') throw new HttpError('当前任务未暂停，请重试下载', 409);
+      await job.promise?.catch(() => {});
+      if (!job.source || job.needsResolve || job.type === 'pending') {
+        job.rule = this.getRule(job.ruleName);
+        job.needsResolve = true;
+      }
+      if (sessionOwner !== undefined) job.sessionOwner = sessionOwner;
+      job.status = 'queued';
+      delete job.error;
+      await this.persist();
+      const result = publicJob(job);
+      this.pump();
+      return result;
+    });
   }
 
   list() {
@@ -281,14 +402,15 @@ export class DownloadManager {
       if (existing && existing.status !== 'error') return publicJob(existing);
       if (this.jobs.size >= MAX_JOBS && !existing)
         throw new HttpError('最多保留 200 个缓存任务，请先清理缓存', 409);
-      if (this.usedBytes >= this.maxBytes)
+      if (this.usedBytes >= this.maxBytes && !existing?.resume)
         throw new HttpError('视频缓存空间不足，请先清理缓存', 507);
       const media = this.mediaSource(input.mediaUrl);
-      if (existing) {
+      if (existing?.status === 'error') await existing.promise?.catch(() => {});
+      if (existing && !existing.resume) {
         await rm(join(this.directory, existing.id), { recursive: true, force: true });
         this.jobs.delete(existing.id);
       }
-      const job = newJob(input, media);
+      const job = existing?.resume ? this.retryJob(existing, input, media) : newJob(input, media);
       this.jobs.set(job.id, job);
       await this.persist();
       const result = publicJob(job);
@@ -321,14 +443,19 @@ export class DownloadManager {
       const pending = entries.filter(({ existing }) => !existing || existing.status === 'error');
       if (this.jobs.size + pending.filter(({ existing }) => !existing).length > MAX_JOBS)
         throw new HttpError('最多保留 200 个缓存任务，请先清理缓存', 409);
-      if (pending.length && this.usedBytes >= this.maxBytes)
+      if (pending.some(({ existing }) => !existing?.resume) && this.usedBytes >= this.maxBytes)
         throw new HttpError('视频缓存空间不足，请先清理缓存', 507);
       for (const entry of pending) {
-        if (entry.existing) {
+        await entry.existing?.promise?.catch(() => {});
+        if (entry.existing && !entry.existing.resume) {
           await rm(join(this.directory, entry.existing.id), { recursive: true, force: true });
           this.jobs.delete(entry.existing.id);
         }
-        const job = newJob(entry.input, { type: 'pending', rule, sessionOwner });
+        const media = { rule, sessionOwner };
+        const job = entry.existing?.resume
+          ? this.retryJob(entry.existing, entry.input, media)
+          : newJob(entry.input, { type: 'pending', ...media });
+        job.needsResolve = true;
         this.jobs.set(job.id, job);
         entry.existing = job;
       }
@@ -370,6 +497,7 @@ export class DownloadManager {
         : null,
     };
     delete source.headers.range;
+    delete source.headers['if-range'];
     return { type: verified.kind, source };
   }
 
@@ -380,7 +508,8 @@ export class DownloadManager {
         .map((job) => ({
           ...publicJob(job),
           mainFile: job.mainFile,
-          files: job.files,
+          files: job.files.map((file) => ({ ...file })),
+          resume: job.resume ? structuredClone(job.resume) : undefined,
         }));
       const path = join(this.directory, `index.${randomUUID()}.tmp`);
       await writeFile(path, JSON.stringify({ version: 1, items }), { mode: 0o600 });
@@ -398,13 +527,18 @@ export class DownloadManager {
       if (job.removed || job.status !== 'queued') continue;
       job.status = 'downloading';
       job.controller = new AbortController();
+      job.transferController = new AbortController();
+      job.threads = this.settings.threads;
       this.active.add(job.id);
       job.promise = this.run(job).finally(() => {
         this.active.delete(job.id);
-        delete job.source;
-        delete job.rule;
-        delete job.sessionOwner;
+        if (job.status !== 'paused') {
+          delete job.source;
+          delete job.rule;
+          delete job.sessionOwner;
+        }
         delete job.controller;
+        delete job.transferController;
         this.pump();
       });
       // run() records expected failures; a failed index write must not create
@@ -415,9 +549,9 @@ export class DownloadManager {
 
   async run(job) {
     try {
-      await mkdir(join(this.directory, job.id), { mode: 0o700 });
+      await mkdir(join(this.directory, job.id), { recursive: true, mode: 0o700 });
       await this.persist();
-      if (job.type === 'pending') {
+      if (job.type === 'pending' || job.needsResolve) {
         const resolved = await this.media.resolve(job.rule, job.episodeUrl, {
           signal: job.controller.signal,
           ...(job.sessionOwner !== undefined ? { sessionOwner: job.sessionOwner } : {}),
@@ -426,28 +560,48 @@ export class DownloadManager {
         if (!['video', 'hls'].includes(resolved.type))
           throw new HttpError('当前播放来源暂不支持视频缓存，请切换可直接播放的视频线路', 422);
         Object.assign(job, this.mediaSource(resolved.url));
+        delete job.needsResolve;
+      }
+      if (job.resume && job.resume.type !== job.type) {
+        await this.discard(job);
+        await mkdir(join(this.directory, job.id), { mode: 0o700 });
       }
       if (job.type === 'hls') await this.hls(job);
       else await this.video(job);
-      job.controller.signal.throwIfAborted();
+      // A pause arriving during finalization may race with a finished file.
+      if (!job.pauseRequested || job.removed) job.controller.signal.throwIfAborted();
+      delete job.resume;
       job.status = 'complete';
       job.totalBytes = job.bytes;
       job.totalFiles = job.completedFiles;
       await this.persist();
     } catch (error) {
-      await rm(join(this.directory, job.id), { recursive: true, force: true });
-      this.usedBytes -= job.bytes;
-      job.bytes = 0;
-      job.files = [];
-      job.completedFiles = 0;
-      job.totalBytes = null;
-      job.status = 'error';
-      job.error = job.controller.signal.aborted
-        ? '缓存任务已中断，请重试'
-        : textField(error.message, '视频缓存失败，请重试', 250).replace(
-            /https?:\/\/[^\s]+/g,
-            '[媒体地址]',
-          );
+      if (
+        !job.resume ||
+        (job.resume.type === 'video' && !job.resume.validator && !job.pauseRequested) ||
+        job.removed ||
+        [400, 422, 507].includes(error.status)
+      ) {
+        await this.discard(job);
+      } else if (job.resume.type === 'hls') {
+        // Only finished, validated assets are checkpoints; discard partial files.
+        const keep = new Set(job.files.map((file) => file.name));
+        for (const name of await readdir(join(this.directory, job.id)))
+          if (!keep.has(name)) await rm(join(this.directory, job.id, name), { force: true });
+        const retained = job.files.reduce((sum, file) => sum + file.size, 0);
+        this.usedBytes -= job.bytes - retained;
+        job.bytes = retained;
+        job.completedFiles = job.files.length;
+      }
+      job.status = job.pauseRequested && !job.removed ? 'paused' : 'error';
+      if (job.status === 'paused') delete job.error;
+      else
+        job.error = job.controller.signal.aborted
+          ? '缓存任务已中断，请重试'
+          : textField(error.message, '视频缓存失败，请重试', 250).replace(
+              /https?:\/\/[^\s]+/g,
+              '[媒体地址]',
+            );
       if (!job.removed) await this.persist();
     }
   }
@@ -461,14 +615,19 @@ export class DownloadManager {
     job.bytes += count;
   }
 
-  async request(job, url) {
+  async request(job, url, { headers: extraHeaders = {}, statuses = [200] } = {}) {
     checkedUrl(url, { allowPrivate: this.http.allowPrivate });
     const controller = new AbortController();
-    const signal = AbortSignal.any([job.controller.signal, controller.signal]);
+    const signal = AbortSignal.any([
+      job.controller.signal,
+      job.transferController.signal,
+      controller.signal,
+    ]);
     let timer = setTimeout(() => controller.abort(), 20000);
     const headersForUrl = (target) => {
-      if (job.source.session) return headersForSession(job.source.session, target);
-      const headers = { ...job.source.headers };
+      if (job.source.session)
+        return { ...headersForSession(job.source.session, target), ...extraHeaders };
+      const headers = { ...job.source.headers, ...extraHeaders };
       if (new URL(target).origin !== new URL(job.source.url).origin) {
         delete headers.authorization;
         delete headers.cookie;
@@ -482,7 +641,7 @@ export class DownloadManager {
         signal,
       });
       clearTimeout(timer);
-      if (result.response.status !== 200 || !result.response.body) {
+      if (!statuses.includes(result.response.status) || !result.response.body) {
         await result.response.body?.cancel();
         throw new HttpError(`媒体服务器返回 HTTP ${result.response.status}`, 502);
       }
@@ -556,25 +715,15 @@ export class DownloadManager {
   }
 
   async video(job) {
-    const result = await this.request(job, job.source.url);
-    const contentType = result.response.headers.get('content-type') || '';
-    const name = `video${extension(result.url, contentType)}`;
-    // consume owns cancellation even when a malformed length is encountered.
-    const { size } = await this.consume(job, result, { name, kind: 'video' });
-    job.mainFile = name;
-    job.files.push({
-      name,
-      size,
-      contentType: /^(?:video|audio)\//i.test(contentType)
-        ? contentType
-        : 'application/octet-stream',
-    });
-    job.completedFiles = 1;
+    await downloadVideo(this, job, extension);
   }
 
   async hls(job) {
     const seen = new Map();
     const active = new Set();
+    const assets = [];
+    const manifests = [];
+    const identities = [];
     let sequence = 0;
     const cache = async (input, kind, depth = 0, root = false) => {
       const url = checkedUrl(input, { allowPrivate: this.http.allowPrivate }).href;
@@ -592,27 +741,16 @@ export class DownloadManager {
       seen.set(identity, name);
       job.totalFiles = seen.size;
       active.add(identity);
-      const result = await this.request(job, url);
       if (kind !== 'manifest') {
-        const file = await this.consume(job, result, {
-          name,
-          kind,
-          ...(kind === 'key' ? { maxBytes: 16 } : {}),
-        });
-        job.files.push({
-          name,
-          size: file.size,
-          contentType:
-            kind === 'key'
-              ? 'application/octet-stream'
-              : /^(?:video|audio)\/|^text\/vtt/i.test(file.contentType)
-                ? file.contentType
-                : 'application/octet-stream',
-        });
+        assets.push({ name, kind, url });
+        active.delete(identity);
+        return name;
       } else {
+        const result = await this.request(job, url);
         const { bytes } = await this.consume(job, result, { kind, maxBytes: MAX_MANIFEST_BYTES });
         const original = bytes.toString('utf8').replace(/^\uFEFF/, '');
         const raw = job.source.adBlocker ? filterHlsAds(original) : original;
+        identities.push([url, raw]);
         if (!raw.trimStart().startsWith('#EXTM3U'))
           throw new HttpError('HLS 播放列表格式无效', 422);
         if (
@@ -685,19 +823,56 @@ export class DownloadManager {
         if (nextPlaylist || !references || (!master && !mediaReferences))
           throw new HttpError('HLS 播放列表不完整', 422);
         const rewritten = Buffer.from(lines.join('\n'));
-        this.reserve(job, rewritten.length);
-        await writeFile(join(this.directory, job.id, name), rewritten, { mode: 0o600, flag: 'wx' });
-        job.files.push({
-          name,
-          size: rewritten.length,
-          contentType: 'application/vnd.apple.mpegurl',
-        });
+        manifests.push({ name, bytes: rewritten });
       }
-      job.completedFiles++;
       active.delete(identity);
       return name;
     };
-    job.mainFile = await cache(job.source.url, 'manifest', 0, true);
+    const mainFile = await cache(job.source.url, 'manifest', 0, true);
+    const identity = fingerprint(JSON.stringify({ identities, assets }));
+    if (job.resume?.type !== 'hls' || job.resume.identity !== identity) {
+      await this.discard(job);
+      await this.ensureDirectory(job);
+      job.resume = { type: 'hls', identity };
+    }
+    job.totalFiles = seen.size;
+    job.completedFiles = job.files.length;
+    const completed = new Set(job.files.map((file) => file.name));
+    await this.persist();
+    await parallel(
+      job,
+      assets.filter((asset) => !completed.has(asset.name)),
+      job.threads,
+      async ({ name, kind, url }) => {
+        const result = await this.request(job, url);
+        const file = await this.consume(job, result, {
+          name,
+          kind,
+          ...(kind === 'key' ? { maxBytes: 16 } : {}),
+        });
+        job.files.push({
+          name,
+          size: file.size,
+          contentType:
+            kind === 'key'
+              ? 'application/octet-stream'
+              : /^(?:video|audio)\/|^text\/vtt/i.test(file.contentType)
+                ? file.contentType
+                : 'application/octet-stream',
+        });
+        job.completedFiles++;
+        await this.persist();
+      },
+    );
+    for (const { name, bytes } of manifests) {
+      if (completed.has(name)) continue;
+      this.reserve(job, bytes.length);
+      await writeFile(join(this.directory, job.id, name), bytes, { mode: 0o600, flag: 'wx' });
+      job.files.push({ name, size: bytes.length, contentType: 'application/vnd.apple.mpegurl' });
+      job.completedFiles++;
+      await this.persist();
+    }
+    job.mainFile = mainFile;
   }
 
   remove(id) {

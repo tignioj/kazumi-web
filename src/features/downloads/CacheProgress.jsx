@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check, CircleAlert, LoaderCircle } from 'lucide-react';
+import { Check, CircleAlert, LoaderCircle, Pause } from 'lucide-react';
 import { bytesLabel } from '../../lib/format.js';
 import { cacheActive, cacheStatus } from './utils.js';
 
@@ -15,6 +15,7 @@ export function CacheProgress({ item }) {
           {cacheActive(item) && <LoaderCircle size={13} className="spin" />}
           {item.status === 'complete' && <Check size={13} />}
           {item.status === 'error' && <CircleAlert size={13} />}
+          {item.status === 'paused' && <Pause size={13} />}
           {cacheStatus(item)}
         </span>
         <span>
@@ -27,15 +28,15 @@ export function CacheProgress({ item }) {
             : ''}
         </span>
       </div>
-      {cacheActive(item) && (
+      {(cacheActive(item) || item.status === 'paused') && (
         <div
-          className={`progress-track ${percentage === null ? 'cache-indeterminate' : ''}`}
+          className={`progress-track ${percentage === null && item.status !== 'paused' ? 'cache-indeterminate' : ''}`}
           role="progressbar"
           aria-label="视频缓存进度"
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={percentage === null ? undefined : Math.round(percentage)}
-          aria-valuetext={percentage === null ? '正在下载，大小未知' : `${Math.round(percentage)}%`}
+          aria-valuetext={`${item.status === 'paused' ? '已暂停，' : ''}${percentage === null ? '大小未知' : `${Math.round(percentage)}%`}`}
         >
           <span style={{ width: `${percentage === null ? 35 : percentage}%` }} />
         </div>

@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { ArrowDownToLine, ArrowRight, Download, Sun, Upload } from 'lucide-react';
+import { Download, Sun, Upload } from 'lucide-react';
 import { downloadJSON } from '../../lib/download-json.js';
 import { useRequest } from '../../hooks/use-request.js';
 import { Notice } from '../../components/feedback.jsx';
@@ -8,6 +8,7 @@ import { Modal } from '../../components/Modal.jsx';
 import { normalizeBackup } from './backup.js';
 import { MetadataSettings } from './MetadataSettings.jsx';
 import { NetworkSettings } from './NetworkSettings.jsx';
+import { DownloadSettings } from './DownloadSettings.jsx';
 
 export function Settings({
   network,
@@ -172,23 +173,7 @@ export function Settings({
           )}
           {error && <Notice>{error}</Notice>}
         </section>
-        <section className="settings-card">
-          <div className="settings-card-heading">
-            <ArrowDownToLine size={19} />
-            <div>
-              <h2>视频下载与缓存</h2>
-              <p>缓存视频，查看下载进度，释放服务器空间</p>
-            </div>
-          </div>
-          <p className="muted small">
-            视频缓存保存在服务器，与所有访问者共享；不包含在浏览器数据备份中。
-          </p>
-          <div className="button-group">
-            <button className="button quiet" onClick={() => navigate('/downloads')}>
-              管理视频缓存 <ArrowRight size={15} />
-            </button>
-          </div>
-        </section>
+        <DownloadSettings notify={notify} navigate={navigate} />
         <NetworkSettings request={network} notify={notify} />
         <MetadataSettings notify={notify} />
         <section className="settings-card about-card">
