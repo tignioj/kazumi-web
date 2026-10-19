@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { analyzeCoreImpact, readCoreImports, renderCoreImpact } from './kazumi-impact.mjs';
 
 export const upstreamRepository = 'Predidit/Kazumi';
 const shaPattern = /^[a-f0-9]{40}$/;
@@ -53,6 +54,7 @@ export async function readPinnedKazumi(root) {
     apiLevel: Number(
       capture(sources.validation, /export const RULE_API_VERSION = (\d+);/, 'rule API level'),
     ),
+    directImports: await readCoreImports(join(root, 'services/kazumi-core/lib')),
     sources,
   };
 }
@@ -121,7 +123,7 @@ export async function discoverUpdate(pins, api = github) {
     assert.match(revision.sha, shaPattern, 'Flutter must resolve to an immutable commit');
     sdk = { version: flutter, revision: revision.sha };
   }
-  return {
+  const update = {
     available: true,
     currentVersion: pins.version,
     previous: pins.ref,
@@ -136,6 +138,14 @@ export async function discoverUpdate(pins, api = github) {
     releaseUrl: `https://github.com/${upstreamRepository}/releases/tag/${encodeURIComponent(release.tag_name)}`,
     compareUrl: `https://github.com/${upstreamRepository}/compare/${pins.ref}...${sha}`,
   };
+  update.impact = await analyzeCoreImpact({
+    pins,
+    update,
+    comparison,
+    api,
+    repository: upstreamRepository,
+  });
+  return update;
 }
 
 export async function applyUpdate(root, pins, update) {
@@ -168,6 +178,7 @@ export function upgradeBody(update) {
     `- Rule API: ${update.apiLevel}\n\n` +
     `The lockfile is resolved with the pinned Flutter toolchain. Verify is dispatched explicitly ` +
     `on this branch to build and start the real core, check its revision, and run the browser suite. ` +
-    `Review and merge only after Verify / test passes; this PR does not enable automatic merging.\n`
+    `Review and merge only after Verify / test passes; this PR does not enable automatic merging.\n` +
+    `\n${renderCoreImpact(update.impact, update.compareUrl)}`
   );
 }
