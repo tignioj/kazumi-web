@@ -9,6 +9,7 @@ import {
   compareVersions,
   discoverUpdate,
   readPinnedKazumi,
+  upgradeBody,
   verifyPins,
 } from '../../scripts/lib/kazumi-upstream.mjs';
 import { checkCore } from '../../scripts/check-kazumi-core.mjs';
@@ -26,6 +27,7 @@ function pinned() {
     reportedRef: previous,
     sdk: { version: '3.47.7', revision: 'd'.repeat(40) },
     apiLevel: 9,
+    directImports: ['lib/services/plugin/rule_engine.dart'],
   };
 }
 function releaseApi({ version = '2.4.0', flutter = '3.47.7', status = 'ahead', ...flags } = {}) {
@@ -41,7 +43,7 @@ function releaseApi({ version = '2.4.0', flutter = '3.47.7', status = 'ahead', .
         ...flags,
       };
     if (path.endsWith(`/commits/${version}`)) return { sha: commit };
-    if (path.includes('/compare/')) return { status };
+    if (path.includes('/compare/')) return { status, files: [] };
     if (path.includes('/contents/pubspec.yaml'))
       return `version: ${version}+20400\nenvironment:\n  flutter: ${flutter}\n`;
     if (path.includes('/contents/lib/request/config/api_endpoints.dart'))
@@ -75,6 +77,10 @@ test('release tags resolve to full SHAs, never the mutable release target branch
   assert.equal(update.commit, commit);
   assert.equal(update.branch, `codex/kazumi-${commit.slice(0, 12)}`);
   assert.equal(update.apiLevel, 10);
+  assert.equal(update.impact.apiChange, '9 → 10');
+  assert.equal(update.impact.level, 'adaptation');
+  assert.match(upgradeBody(update), /核心模块变更与适配提示/);
+  assert.match(upgradeBody(update), /规则 API 等级：9 → 10/);
   assert.deepEqual(update.sdk, pinned().sdk);
   assert.ok(calls.includes(`repos/Predidit/Kazumi/compare/${previous}...${commit}`));
   assert.ok(

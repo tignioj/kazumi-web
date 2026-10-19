@@ -61,6 +61,10 @@ GitHub Actions 的 `Check Kazumi releases` 每天北京时间 09:17 检查官方
 
 升级 PR 使用 `codex/kazumi-<提交号前12位>` 分支，固定到发布标签解析出的完整 Git SHA，同步核心报告的提交号、规则 API 等级，以及必要的 Flutter SDK 提交。`pubspec.lock` 由固定工具链运行 `flutter pub get` 生成。相同提交已有 PR（含已关闭的 PR）时不重复创建，也不覆盖维护者的分支改动。FFmpeg 补丁仍按 `native/hls/README.md` 独立升级。
 
+PR 描述还会列出我们使用的规则引擎、规则模型、视频解析、WebView、验证码、网络、存储、规则协议和运行环境的上游变更，并附文件状态、增删行数、差异链接和可识别的声明/参数线索。适配层的 Kazumi 直接引用从 Dart 源文件自动扫描，新引用即使不在既有模块分类中也会纳入报告。直接引用、规则 API 或 SDK 有变化时提示可能需要适配，相关实现变化时提示重点回归；只有监控范围内没有变化时才给出通常无需适配的初步判断。仅修改发布版本号不会被当作依赖升级。
+
+比对文件达到 GitHub 的 300 个文件上限时，会改用两个固定提交的完整文件树补全变更；无法完整分析时明确标记为需人工核查。报告是静态路径比对，不覆盖全部传递依赖或 Dart 语义，最终仍需审阅差异并等待真实核心 CI 通过。
+
 仓库的 **Settings → Actions → General → Workflow permissions** 需要允许 **Allow GitHub Actions to create and approve pull requests**；工作流使用默认 `GITHUB_TOKEN`，无需另配 PAT。机器人创建 PR 后显式派发该分支的 `Verify`，避免机器人 push 不触发 CI 的限制。PR 不自动合并，确认 `Verify / test` 通过后再合并；若需强制阻止未通过的合并，将 `test` 配置为主分支的必需状态检查。工作流合入默认分支后定时检查才会生效。
 
 本地可只读检查版本及校验固定提交：
