@@ -2,15 +2,40 @@ name: Verify
 on:
   push:
   pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: verify-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      KAZUMI_CORE_URL: http://127.0.0.1:7331
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
+      - name: Verify immutable dependency pins
+        run: node scripts/update-kazumi.mjs --verify
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and test the real Kazumi core
+        uses: docker/build-push-action@v6
+        with:
+          context: services/kazumi-core
+          load: true
+          tags: kazumi-core:ci
+          cache-from: type=gha,scope=kazumi-core
+          cache-to: type=gha,scope=kazumi-core,mode=max
+      - name: Start the real Kazumi core
+        run: |
+          docker run --detach --name kazumi-core-ci --network host --shm-size 256m \
+            --env KAZUMI_EGRESS_PROXY=http://127.0.0.1:7332 kazumi-core:ci
+          node scripts/check-kazumi-core.mjs
       - run: npm ci
       - run: npm run build:hls
       - uses: actions/setup-go@v5
@@ -21,7 +46,11 @@ jobs:
         working-directory: native/ech
       - run: npx playwright install --with-deps chromium
       - run: npm run check
-      - run: npm run test:e2e
+      - name: Browser end-to-end tests against the real core
+        env:
+          KAZUMI_EGRESS_HOST: 127.0.0.1
+          KAZUMI_EGRESS_PORT: 7332
+        run: npm run test:e2e
       - run: docker compose config --quiet
       - run: docker build -t kazumi-web:test .
       - run: docker run --rm --read-only kazumi-web:test test -s /etc/ssl/certs/ca-certificates.crt
@@ -31,3 +60,17 @@ jobs:
         with:
           name: browser-test-results
           path: test-results/
+      - name: Collect core diagnostics and stop it
+        if: always()
+        run: |
+          mkdir -p test-results
+          docker logs kazumi-core-ci > test-results/kazumi-core.log 2>&1 || true
+          docker inspect kazumi-core-ci > test-results/kazumi-core-inspect.json 2>&1 || true
+          docker rm --force kazumi-core-ci || true
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: kazumi-core-diagnostics
+          path: |
+            test-results/kazumi-core.log
+            test-results/kazumi-core-inspect.json

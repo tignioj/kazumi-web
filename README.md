@@ -47,6 +47,23 @@ HLS 在线去广告使用 Kazumi 原生播放器的 FFmpeg `hls_ad_filter` 补�
 
 升级时修改原版 Git ref，更新并提交 `pubspec.lock`，对齐所需 Flutter SDK，然后运行服务测试和网页联调。当前固定提交和 SDK 见服务目录及 Dockerfile。
 
+### 官方版本升级 PR
+
+GitHub Actions 的 `Check Kazumi releases` 每天北京时间 09:17 检查官方最新稳定 Release，也支持在 Actions 页面手动运行。只有版本号高于当前锁定版本、且发布提交是当前固定提交的后续提交时，才提出升级；同版本中尚未发布的修复不会被旧发布标签覆盖，草稿、预发布和分叉历史均不自动引入。
+
+升级 PR 使用 `codex/kazumi-<提交号前12位>` 分支，固定到发布标签解析出的完整 Git SHA，同步核心报告的提交号、规则 API 等级，以及必要的 Flutter SDK 提交。`pubspec.lock` 由固定工具链运行 `flutter pub get` 生成。相同提交已有 PR（含已关闭的 PR）时不重复创建，也不覆盖维护者的分支改动。FFmpeg 补丁仍按 `native/hls/README.md` 独立升级。
+
+仓库的 **Settings → Actions → General → Workflow permissions** 需要允许 **Allow GitHub Actions to create and approve pull requests**；工作流使用默认 `GITHUB_TOKEN`，无需另配 PAT。机器人创建 PR 后显式派发该分支的 `Verify`，避免机器人 push 不触发 CI 的限制。PR 不自动合并，确认 `Verify / test` 通过后再合并；若需强制阻止未通过的合并，将 `test` 配置为主分支的必需状态检查。工作流合入默认分支后定时检查才会生效。
+
+本地可只读检查版本及校验固定提交：
+
+```bash
+node scripts/update-kazumi.mjs
+node scripts/update-kazumi.mjs --verify
+```
+
+`Verify` 会构建真实核心镜像（包含 Dart 分析、测试、Linux 编译及 WebKit 编码能力检查），在 Linux host 网络启动独立容器，等待 `/health` 返回并核对提交及规则 API 等级，再运行浏览器测试。测试站点、规则仓库、番剧资料和媒体使用本地 fixtures，规则执行和视频嗅探走真实核心。无论成功或失败都清理测试容器，失败时保存核心日志、容器状态和浏览器诊断。正常核心镜像构建使用 `--enforce-lockfile`，拒绝未提交或不一致的依赖解析结果。
+
 ## 本地开发与验证
 
 ```bash
@@ -65,7 +82,7 @@ docker build -t kazumi-core:local services/kazumi-core
 # Node 单元与适配集成测试，以及网页构建
 npm run check
 
-# 端到端测试须先准备可访问的核心服务及出口地址
+# 端到端测试须先准备与锁文件一致的核心服务及出口地址；启动器会检查版本
 KAZUMI_CORE_URL=http://127.0.0.1:7331 KAZUMI_EGRESS_HOST=0.0.0.0 KAZUMI_EGRESS_PORT=7332 npm run test:e2e
 ```
 
