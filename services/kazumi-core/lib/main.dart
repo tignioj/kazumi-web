@@ -7,12 +7,12 @@ import 'package:kazumi/services/storage/storage.dart';
 import 'package:kazumi/services/video_source/video_source_service.dart';
 import 'package:kazumi/services/plugin/rule_engine_models.dart';
 import 'package:kazumi/request/core/dio_factory.dart';
-import 'package:kazumi/request/core/network_config.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'core.dart';
 import 'errors.dart';
+import 'proxy_http_adapter.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -30,15 +30,9 @@ Future<void> main() async {
   }
   await GStorage.putSetting(SettingsKeys.proxyEnable, true);
   await GStorage.putSetting(SettingsKeys.proxyUrl, proxy);
-  // This CONNECT proxy leaves TLS end-to-end; retain certificate verification.
-  final endpoint = Uri.parse(proxy);
   final dio = DioFactory.pluginDio;
   dio.httpClientAdapter.close(force: true);
-  dio.httpClientAdapter = NetworkConfig(
-    proxyHost: endpoint.host,
-    proxyPort: endpoint.port,
-    allowBadCertificates: false,
-  ).createAdapter();
+  dio.httpClientAdapter = ProxyHttpAdapter(Uri.parse(proxy));
   final core = KazumiCore();
   final server = await HttpServer.bind(
     Platform.environment['HOST'] ?? '0.0.0.0',

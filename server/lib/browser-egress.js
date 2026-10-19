@@ -79,6 +79,33 @@ export async function createBrowserEgress({
     return socket;
   };
   const server = http.createServer((request, response) => {
+    // The core always uses this internal proxy. Tell its TLS client whether the
+    // target actually uses a configured exit, including per-domain overrides.
+    if (request.url.startsWith('/_kazumi/tls-policy?')) {
+      try {
+        if (request.method !== 'GET') {
+          response.writeHead(405).end();
+          request.resume();
+          return;
+        }
+        if (closing) throw new HttpError('解析器已关闭', 503);
+        const query = new URL(request.url, 'http://egress.internal');
+        const target = checkedUrl(query.searchParams.get('url'), { allowPrivate });
+        response.writeHead(200, {
+          'content-type': 'application/json',
+          'cache-control': 'no-store',
+        });
+        response.end(
+          JSON.stringify({
+            allowBadCertificates: getProxySettings(target.href)?.enabled === true,
+          }),
+        );
+      } catch (error) {
+        response.writeHead(errorStatus(error), { connection: 'close' }).end();
+      }
+      request.resume();
+      return;
+    }
     let url;
     try {
       url = checkedUrl(request.url, { allowPrivate });

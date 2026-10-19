@@ -46,6 +46,41 @@ function tunnel(proxy, target) {
   });
 }
 
+test('core TLS policy follows effective routes without exposing proxy credentials', async (t) => {
+  let enabled = false;
+  const seen = [];
+  const egress = await createBrowserEgress({
+    dnsOverHttpsUrl: '',
+    getProxySettings: (url) => {
+      seen.push(url);
+      return {
+        enabled: enabled && new URL(url).hostname !== 'direct.example',
+        url: 'http://private-proxy:17893',
+        password: 'private-password',
+      };
+    },
+  });
+  t.after(() => egress.close());
+  const policy = (url, options) =>
+    request(egress.url, `/_kazumi/tls-policy?url=${encodeURIComponent(url)}`, options);
+  assert.deepEqual(JSON.parse((await policy('https://source.example/')).body), {
+    allowBadCertificates: false,
+  });
+  enabled = true;
+  const proxied = await policy('https://source.example/');
+  assert.equal(proxied.status, 200);
+  assert.equal(proxied.headers['cache-control'], 'no-store');
+  assert.deepEqual(JSON.parse(proxied.body), { allowBadCertificates: true });
+  assert.deepEqual(JSON.parse((await policy('https://direct.example/')).body), {
+    allowBadCertificates: false,
+  });
+  assert.equal((await policy('https://localhost/')).status, 403);
+  assert.equal((await policy('file:///etc/passwd')).status, 400);
+  assert.equal((await policy('https://user:secret@source.example/')).status, 400);
+  assert.equal((await policy('https://source.example/', { method: 'POST' })).status, 405);
+  assert.equal(seen.length, 3);
+});
+
 test('browser egress rejects private literals and names before opening a socket', async (t) => {
   const egress = await createBrowserEgress({ dnsOverHttpsUrl: '' });
   t.after(() => egress.close());

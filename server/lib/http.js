@@ -202,7 +202,8 @@ export function createHttpClient({
     }
   }
   const tunnels = createProxyTunnels({ lookup: dnsLookup.lookup });
-  const tlsConnector = buildConnector({ timeout: 15000 });
+  // Match Kazumi's proxy mode. Direct connections retain the default TLS checks.
+  const tlsConnector = buildConnector({ timeout: 15000, rejectUnauthorized: false });
   const proxyDispatchers = new Map();
   const retiring = new Set();
   function requestDispatcher(settings) {
