@@ -196,3 +196,68 @@ test('cancellation reaches the upstream request ID', async () => {
   assert.equal(calls[1].path, '/cancel');
   assert.equal(calls[1].body.requestId, calls[0].body.requestId);
 });
+
+test('search retries transient connection failures once with a fresh request ID', async () => {
+  for (const code of ['SOURCE_CONNECTION_ERROR', 'SOURCE_CONNECT_TIMEOUT']) {
+    const calls = [];
+    const items = [{ name: '银魂', url: 'opaque/247' }];
+    const client = new KazumiCoreClient({
+      fetcher: async (url, options) => {
+        calls.push({ path: url.pathname, body: JSON.parse(options.body) });
+        return calls.length === 1
+          ? Response.json({ error: '来源连接中断', code }, { status: 502 })
+          : Response.json({ items });
+      },
+    });
+    const rule = { name: 'Source', usePost: true };
+    assert.deepEqual(await client.search(rule, '银魂', { sessionOwner: 'owner' }), items);
+    assert.equal(calls.length, 2);
+    assert.ok(calls.every((call) => call.path === '/search'));
+    assert.deepEqual(calls[1].body.rule, rule);
+    assert.equal(calls[1].body.keyword, '银魂');
+    assert.equal(calls[1].body.owner, 'owner');
+    assert.notEqual(calls[0].body.requestId, calls[1].body.requestId);
+  }
+});
+
+test('persistent failures stop after one retry and permanent failures are not retried', async () => {
+  for (const [code, expected] of [
+    ['SOURCE_CONNECTION_ERROR', 2],
+    ['SOURCE_CERTIFICATE_ERROR', 1],
+    ['SOURCE_TLS_ERROR', 1],
+    ['SOURCE_TIMEOUT', 1],
+    ['SOURCE_HTTP_ERROR', 1],
+    ['SOURCE_RULE_ERROR', 1],
+    [undefined, 1],
+  ]) {
+    let calls = 0;
+    const client = new KazumiCoreClient({
+      fetcher: async () => {
+        calls++;
+        return Response.json({ error: '来源失败', code }, { status: 502 });
+      },
+    });
+    await assert.rejects(client.search({}, '银魂'), { message: '来源失败' });
+    assert.equal(calls, expected, code);
+  }
+});
+
+test('cancelling a failed search prevents a retry', async () => {
+  const controller = new AbortController();
+  const calls = [];
+  const client = new KazumiCoreClient({
+    fetcher: async (url) => {
+      calls.push(url.pathname);
+      if (url.pathname === '/cancel') return Response.json({ ok: true });
+      controller.abort();
+      return Response.json(
+        { error: '来源连接中断', code: 'SOURCE_CONNECTION_ERROR' },
+        { status: 502 },
+      );
+    },
+  });
+  await assert.rejects(client.search({}, '银魂', { signal: controller.signal }), {
+    name: 'AbortError',
+  });
+  assert.deepEqual(calls, ['/search', '/cancel']);
+});

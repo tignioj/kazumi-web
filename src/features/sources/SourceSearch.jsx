@@ -9,12 +9,15 @@ export function SourceSearch({ defaultQuery = '', subject, rules, onPlay, naviga
   const [selected, setSelected] = useState('');
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [retrying, setRetrying] = useState('');
   const [error, setError] = useState('');
   const [opening, setOpening] = useState('');
   const [total, setTotal] = useState(0);
   const mounted = useRef(true);
   const requestsRef = useRef(new Set());
   const searchRef = useRef(null);
+  const retryRef = useRef(null);
+  const searchedKeyword = useRef('');
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -25,7 +28,8 @@ export function SourceSearch({ defaultQuery = '', subject, rules, onPlay, naviga
   }, []);
   const submit = async (e) => {
     e?.preventDefault();
-    if (!keyword.trim() || loading) return;
+    if (!keyword.trim() || loading || retryRef.current) return;
+    searchedKeyword.current = keyword.trim();
     setLoading(true);
     setError('');
     setResults([]);
@@ -45,7 +49,7 @@ export function SourceSearch({ defaultQuery = '', subject, rules, onPlay, naviga
             ]);
         },
         body: JSON.stringify({
-          keyword: keyword.trim(),
+          keyword: searchedKeyword.current,
           ...(selected ? { ruleNames: [selected] } : {}),
         }),
       });
@@ -60,6 +64,37 @@ export function SourceSearch({ defaultQuery = '', subject, rules, onPlay, naviga
       requestsRef.current.delete(controller);
       searchRef.current = null;
       if (mounted.current) setLoading(false);
+    }
+  };
+  const retry = async (ruleName) => {
+    if (loading || retryRef.current || !searchedKeyword.current) return;
+    const controller = new AbortController();
+    retryRef.current = controller;
+    searchRef.current = controller;
+    requestsRef.current.add(controller);
+    setRetrying(ruleName);
+    const replace = (group) => {
+      if (mounted.current)
+        setResults((current) =>
+          current.map((previous) => (previous.ruleName === ruleName ? group : previous)),
+        );
+    };
+    try {
+      const data = await api('/rules/search', {
+        method: 'POST',
+        signal: controller.signal,
+        body: JSON.stringify({ keyword: searchedKeyword.current, ruleNames: [ruleName] }),
+      });
+      const group = data.results?.find((result) => result.ruleName === ruleName);
+      if (group) replace(group);
+      else throw new Error('片源未返回搜索结果，请重试');
+    } catch (e) {
+      if (e.name !== 'AbortError') replace({ ruleName, items: [], error: e.message });
+    } finally {
+      requestsRef.current.delete(controller);
+      retryRef.current = null;
+      searchRef.current = null;
+      if (mounted.current) setRetrying('');
     }
   };
   const open = async (ruleName, item) => {
@@ -136,16 +171,22 @@ export function SourceSearch({ defaultQuery = '', subject, rules, onPlay, naviga
             </option>
           ))}
         </select>
-        <button className="button primary" disabled={loading || !keyword.trim()} type="submit">
+        <button
+          className="button primary"
+          disabled={loading || !!retrying || !keyword.trim()}
+          type="submit"
+        >
           {loading ? <LoaderCircle className="spin" size={16} /> : <Search size={16} />}搜索片源
         </button>
       </form>
       {error && <Notice>{error}</Notice>}
-      {loading && (
+      {(loading || retrying) && (
         <div className="search-progress" role="status">
           <LoaderCircle className="spin" size={16} />
           <span>
-            已完成 {results?.length || 0} / {total} 个片源，继续搜索中…
+            {retrying
+              ? `正在重试 ${retrying}…`
+              : `已完成 ${results?.length || 0} / ${total} 个片源，继续搜索中…`}
           </span>
           <button className="button quiet" onClick={() => searchRef.current?.abort()}>
             停止搜索
@@ -159,10 +200,18 @@ export function SourceSearch({ defaultQuery = '', subject, rules, onPlay, naviga
               <header>
                 <span className="source-initial">{group.ruleName?.slice(0, 1)}</span>
                 <h3>{group.ruleName}</h3>
-                <small>{group.items?.length || 0} 个结果</small>
+                <small>
+                  {retrying === group.ruleName
+                    ? '正在重试…'
+                    : group.error
+                      ? '搜索失败'
+                      : `${group.items?.length || 0} 个结果`}
+                </small>
               </header>
               {group.error ? (
-                <Notice>{group.error}</Notice>
+                <Notice onRetry={!loading && !retrying ? () => retry(group.ruleName) : undefined}>
+                  {group.error}
+                </Notice>
               ) : group.items?.length ? (
                 <div className="source-items">
                   {group.items.map((item, i) => (

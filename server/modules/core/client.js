@@ -83,7 +83,17 @@ export class KazumiCoreClient {
   }
 
   async search(rule, keyword, options) {
-    return (await this.run('/search', rule, { keyword }, options)).items;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return (await this.run('/search', rule, { keyword }, options)).items;
+      } catch (error) {
+        // Searches are read-only, including API rules that use POST. Retry a
+        // dropped connection once; certificate, HTTP and parsing errors persist.
+        if (attempt || !['SOURCE_CONNECTION_ERROR', 'SOURCE_CONNECT_TIMEOUT'].includes(error.code))
+          throw error;
+        options?.signal?.throwIfAborted();
+      }
+    }
   }
 
   async chapters(rule, url, options) {

@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'core.dart';
+import 'errors.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -82,7 +83,9 @@ Future<void> main() async {
         request.response.statusCode = e is FormatException || e is TypeError
             ? 400
             : 502;
-        request.response.write(jsonEncode({'error': e.toString()}));
+        request.response.write(
+          jsonEncode(ruleFailure(e) ?? {'error': e.toString()}),
+        );
       } finally {
         try {
           await request.response.close();
