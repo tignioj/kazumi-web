@@ -1,98 +1,73 @@
 # Kazumi Web
 
-React + Node.js 网页端，直接依赖 [原版 Kazumi](https://github.com/Predidit/Kazumi) 的 Dart 核心，支持 Docker Compose 部署。规则执行、XPath/API 解析、视频嗅探和规则验证码均调用原版实现；网页播放使用 [ArtPlayer](https://github.com/zhw2590582/ArtPlayer) 与 hls.js。
+React + Node.js 网页端，兼容 [Kazumi](https://github.com/Predidit/Kazumi) 的 XPath / API 9 规则，支持 Docker Compose 部署。本地执行规则、搜索和章节解析；静态提取优先，动态播放器与验证码按需使用 Chromium。网页播放使用 ArtPlayer 与 hls.js。
 
-接口、上游地址、缓存策略和存储位置见 [API 与持久化](docs/api.md)。
+接口、上游地址、缓存策略和存储位置见 [API 与持久化](docs/api.md)。实现边界、官方对照及性能复现见 [本地规则引擎](docs/local-rule-engine.md)。
 
 ## 部署
 
 ```bash
-docker compose up -d --build
+docker compose up -d --build --remove-orphans
 ```
 
-打开 <http://localhost:3000>，其他设备使用 `http://服务器IP:3000`。首次构建需要下载 Flutter、Kazumi Git 依赖及原生库。构建较原来的纯 Node 镜像耗时更长。
+打开 <http://localhost:3000>，其他设备使用 `http://服务器IP:3000`。Compose 只启动 `kazumi` 一个服务，镜像包含 Chromium headless shell、ECH 和原生 HLS 工具，不安装 Flutter 或官方 Kazumi 应用。
 
-Compose 启动两个服务：
-
-- `kazumi`：网页、规则管理、元数据、收藏历史、媒体代理和下载缓存。
-- `kazumi-core`：Flutter 服务适配层，直接通过 Git 依赖固定提交的原版 Kazumi。Linux WebView 在 Xvfb 虚拟显示中运行。此服务及其网络出口端口仅在容器网络内使用。
-
-`kazumi-data` 保留规则、收藏、历史、图片、下载、番剧元数据库和评论缓存；`kazumi-core-data` 保存适配服务的初始化设置。迁移沿用原有数据格式。日常停止使用 `docker compose down`，更新使用 `docker compose up -d --build`。
-
-镜像发布流程、GitHub Actions 配置及预构建镜像部署见 [发布 Docker Hub 镜像](docs/docker-publish.md)。
+`kazumi-data` 沿用已有规则、收藏、历史、网络设置、图片、下载、番剧资料和评论缓存。升级时 `--remove-orphans` 停止旧 `kazumi-core` 容器；旧 `kazumi-core-data` 卷保留，可自行归档。日常停止使用 `docker compose down`，不添加 `--volumes`。镜像发布和预构建镜像部署见 [Docker Hub 镜像](docs/docker-publish.md)。
 
 ## 使用
 
 1. 在「发现」「番剧分类」「放送日历」浏览番剧，或直接搜索片源。
-2. 在「规则管理」导入原版 JSON / kazumi 分享文本，或从官方目录安装、更新规则。
-3. 搜索片源、选择剧集，由 Kazumi 服务执行规则并解析视频地址。规则配置的图片验证码、自动点击和自定义验证脚本通过原版验证码控制器处理。
-4. 使用 ArtPlayer 的播放、进度条、倍速、全屏和画中画。选集、自动下一话及服务器观看记录由网页业务层衔接。
-5. 可缓存当前剧集或批量缓存线路中的剧集；下载支持暂停、继续、重试和删除，旧缓存仍可播放和下载。
+2. 在「规则管理」导入 JSON / kazumi 分享文本，或从官方目录安装、更新规则。
+3. 搜索片源、选择剧集。本地引擎执行 XPath/API 规则，动态播放器需要时启动 Chromium；图片验证码、自动点击和规则验证脚本沿用规则配置。
+4. 使用 ArtPlayer 播放、调整进度、倍速、全屏和画中画。选集、自动下一话及服务器观看记录由网页衔接。
+5. 缓存当前剧集或批量缓存线路；支持暂停、继续、重试和删除，已有缓存继续可用。
 
-片源搜索最多同时请求 4 个来源，完成一个就开始下一个，并立即显示该来源的结果。整体搜索超时或手动停止后，已收到的结果仍可使用；遇到验证码时会暂停整体超时计时，验证后继续。
+片源搜索最多同时请求 4 个来源，完成一个就开始下一个，并立即显示结果。整体搜索超时或手动停止后保留已收到的结果；验证码暂停整体超时计时，验证后继续。连接中断或连接超时自动重试一次；证书、响应超时、HTTP 和解析错误显示具体原因。失败来源可单独重试，保留其他结果。
 
-搜索遇到连接中断或连接超时时自动重试一次；证书错误、响应超时、HTTP 错误和解析失败直接显示具体原因。失败片源提供「重试」，沿用该轮搜索的关键词，仅重新搜索此来源并保留其他结果。错误提示不再显示核心异常类名或会话标识。源站证书或网络故障仍需在站点或视频代理侧解决。
-
-播放器仍受浏览器支持的编码限制。来源可用性及规则行为由固定版本的 Kazumi 决定；核心服务不可用时会报告错误，不再回退到本地规则引擎或站点解析器。手动验证仅提供原版控制器支持的验证码操作。
+播放器仍受浏览器编码支持限制，站点可用性取决于规则与网络。手动验证只传送画面和有限的用户操作，Cookie 留在服务端。
 
 ## 维护边界
 
 ```text
-React → Node 接口 → Kazumi Core HTTP 适配 → 原版 Kazumi
-            ↓
-      同源媒体代理 → hls.js / 原生 FFmpeg + MediaSource → ArtPlayer
+React → Node 接口 → 本地 XPath / API 引擎
+                 → 静态视频提取 → 按需 Chromium 嗅探 / 验证
+                 → 同源媒体代理 → hls.js / 原生 FFmpeg + MediaSource → ArtPlayer
 ```
 
-[services/kazumi-core/pubspec.yaml](services/kazumi-core/pubspec.yaml) 直接依赖 `Predidit/Kazumi` 的固定 Git 提交；没有复制、改写或修补原版核心源码。我们维护 HTTP、存储和平台初始化适配，保留 Node 的媒体代理、HLS 传输重写及离线缓存。
+我们维护规则协议、浏览器适配和 Web 传输。官方 Flutter 应用只在 [开发对照目录](test/reference/kazumi-core) 中作为固定版本的测试参考，生产启动、构建和镜像发布均不依赖它。兼容样本记录官方实际输出和请求参数，普通测试离线验证；独立 `Official rule compatibility` 工作流与真实官方服务比较。
 
 HLS 在线去广告使用 Kazumi 原生播放器的 FFmpeg `hls_ad_filter` 补丁，按实际视频包的 PTS 判断。构建时从官方仓库下载固定版本的 FFmpeg 和补丁并校验 SHA-256，原样应用，不维护 JS/Dart 广告算法或来源目录特例。服务器边读取边过滤，以 `-c copy` 转封装成浏览器可播放的分片 MP4，不重新编码、不等待整集完成，也不写整集临时文件。拖动和续播从目标位置重新读取，关闭播放器会取消请求并释放原生进程。
 
 启用规则的 `adBlocker` 后，网页通过 MediaSource 播放原生过滤后的流，仍受浏览器编码支持限制。未启用的来源继续使用 hls.js 或浏览器原生 HLS。原生处理最多同时运行 4 个进程，满额或工具缺失时会报告错误。
 
-规则源请求及 Linux WebView 使用 Node 的 DNS 校验出口，沿用片源代理设置和私网访问限制。Bangumi、规则仓库、图片与归档仍使用各自的网络设置。验证码 Cookie 保存在服务端，媒体凭据不放进前端可读链接。
+规则请求和 Chromium 使用相同的视频网络分流、DNS 校验与私网限制。元数据、规则仓库、图片和归档保留各自的网络设置。验证码 Cookie 按浏览器访问者隔离，媒体链接只携带服务端会话标识。
 
-代理请求沿用原版 Kazumi 的证书策略：目标实际走已启用的代理时，允许 HTTPS 证书校验失败；关闭代理或命中直连规则时，仍执行正常校验。Linux WebView 镜像补充[经过系统根证书验证的公共中间证书](services/kazumi-core/certificates/README.md)，兼容仍发送旧交叉签名链的站点，保留证书及域名校验。
+目标实际走代理时允许证书校验失败；直连与重定向后的直连目标保留正常校验。镜像继续验证并安装 [公共中间证书](server/certificates/README.md)，供 Node 和 Chromium 使用。Chromium 默认在无任务 30 秒后关闭，已验证的访问者 Cookie 会话保留在 Node 内存中。
 
-升级时修改原版 Git ref，更新并提交 `pubspec.lock`，对齐所需 Flutter SDK，然后运行服务测试和网页联调。当前固定提交和 SDK 见服务目录及 Dockerfile。
+### 官方参考版本更新
 
-### 官方版本升级 PR
-
-GitHub Actions 的 `Check Kazumi releases` 每天北京时间 09:17 检查官方最新稳定 Release，也支持在 Actions 页面手动运行。只有版本号高于当前锁定版本、且发布提交是当前固定提交的后续提交时，才提出升级；同版本中尚未发布的修复不会被旧发布标签覆盖，草稿、预发布和分叉历史均不自动引入。
-
-升级 PR 使用 `codex/kazumi-<提交号前12位>` 分支，固定到发布标签解析出的完整 Git SHA，同步核心报告的提交号、规则 API 等级，以及必要的 Flutter SDK 提交。`pubspec.lock` 由固定工具链运行 `flutter pub get` 生成。相同提交已有 PR（含已关闭的 PR）时不重复创建，也不覆盖维护者的分支改动。FFmpeg 补丁仍按 `native/hls/README.md` 独立升级。
-
-仓库的 **Settings → Actions → General → Workflow permissions** 需要允许 **Allow GitHub Actions to create and approve pull requests**；工作流使用默认 `GITHUB_TOKEN`，无需另配 PAT。机器人创建 PR 后显式派发该分支的 `Verify`，避免机器人 push 不触发 CI 的限制。PR 不自动合并，确认 `Verify / test` 通过后再合并；若需强制阻止未通过的合并，将 `test` 配置为主分支的必需状态检查。工作流合入默认分支后定时检查才会生效。
-
-本地可只读检查版本及校验固定提交：
+`Check Kazumi reference releases` 每天北京时间 09:17 检查官方稳定版本，创建固定提交、锁文件和 Flutter SDK 的参考升级 PR，并派发官方兼容性工作流。它只更新开发参考的 API 等级，不提高本地引擎声明的能力。维护者需审查差异、更新兼容样本并通过测试后合并；不自动合并。FFmpeg 及补丁按 `native/hls/README.md` 独立升级。
 
 ```bash
 node scripts/update-kazumi.mjs
 node scripts/update-kazumi.mjs --verify
 ```
 
-`Verify` 会构建真实核心镜像（包含 Dart 分析、测试、Linux 编译及 WebKit 编码能力检查），在 Linux host 网络启动独立容器，等待 `/health` 返回并核对提交及规则 API 等级，再运行浏览器测试。测试站点、规则仓库、番剧资料和媒体使用本地 fixtures，规则执行和视频嗅探走真实核心。无论成功或失败都清理测试容器，失败时保存核心日志、容器状态和浏览器诊断。正常核心镜像构建使用 `--enforce-lockfile`，拒绝未提交或不一致的依赖解析结果。
+工作流需要仓库允许 Actions 创建 PR。机器人显式派发兼容性工作流，避免 `GITHUB_TOKEN` push 不触发 CI 的限制。
 
 ## 本地开发与验证
 
+需要 Node.js 24；本地 HLS/ECH 构建另需相应原生工具链，见 `native/`。
+
 ```bash
 npm ci
-npm run build:hls
+npx playwright install chromium
 npm run dev
 npm run check
+npm run test:e2e
 ```
 
-Node 开发需要连接运行中的核心服务：`KAZUMI_CORE_URL` 默认 `http://127.0.0.1:7331`。核心服务必须设置 `KAZUMI_EGRESS_PROXY` 指向 Node 的 HTTP 出口；Node 用 `KAZUMI_EGRESS_HOST` / `KAZUMI_EGRESS_PORT` 指定监听地址和端口。两端地址需能互相访问。Compose 已完成这项配置。
-
-```bash
-# 构建过程中执行 Dart 分析、服务测试和 Linux release 编译
-docker build -t kazumi-core:local services/kazumi-core
-
-# Node 单元与适配集成测试，以及网页构建
-npm run check
-
-# 端到端测试须先准备与锁文件一致的核心服务及出口地址；启动器会检查版本
-KAZUMI_CORE_URL=http://127.0.0.1:7331 KAZUMI_EGRESS_HOST=0.0.0.0 KAZUMI_EGRESS_PORT=7332 npm run test:e2e
-```
+`npm run check` 包含普通回归和固定官方输出测试。无需运行 Flutter。`npm run test:compat` 可单独执行兼容性样本；真实官方比较与 Docker 性能对比的步骤见 [本地规则引擎](docs/local-rule-engine.md)。
 
 ## 本地番剧资料
 
@@ -167,8 +142,8 @@ docker compose exec kazumi npm run metadata:update
 
 ## 配置
 
-复制 `.env.example` 为 `.env`，可调整端口、监听地址、缓存容量、图片缓存和归档更新设置。Compose 内的核心地址与网络出口已经配置，无需单独暴露核心服务。
+复制 `.env.example` 为 `.env`，可调整端口、监听地址、缓存容量、图片缓存和归档更新设置。Compose 已包含动态解析所需的 Chromium；本地运行及高级环境变量见 `.env.example`。
 
 ## 许可
 
-GPL-3.0-only。原版代码通过依赖引入，相关作者与许可保留在其仓库及构建产物中；ArtPlayer 使用 MIT 许可。
+GPL-3.0-only。保留相关作者与许可；官方开发参考及原生 FFmpeg 补丁的许可随对应源码和构建产物提供。ArtPlayer 使用 MIT 许可。

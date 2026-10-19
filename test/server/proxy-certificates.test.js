@@ -6,6 +6,15 @@ import net from 'node:net';
 import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import { createHttpClient } from '../../server/lib/http.js';
+import { BrowserResolver } from '../../server/modules/playback/browser-resolver.js';
+import { chromium } from 'playwright';
+const browserInstalled = await chromium.launch({ headless: true }).then(
+  async (browser) => {
+    await browser.close();
+    return true;
+  },
+  () => false,
+);
 
 test('bad target certificates are allowed only on proxy routes, including redirects and settings changes', async (t) => {
   const origin = https.createServer(
@@ -77,4 +86,35 @@ test('bad target certificates are allowed only on proxy routes, including redire
   assert.equal(concurrent[1].status, 'rejected');
   enabled = false;
   await assert.rejects(client.request(url), /DEPTH_ZERO_SELF_SIGNED_CERT/);
+  await t.test(
+    'Chromium keeps direct TLS strict across redirects and routing changes',
+    { skip: !browserInstalled },
+    async () => {
+      const resolver = new BrowserResolver(client, {
+        dnsOverHttpsUrl: '',
+        resolver: async () => [{ address: '127.0.0.1', family: 4 }],
+      });
+      try {
+        const browser = await resolver.getBrowser();
+        const context = await resolver.createContext(browser, { name: 'TLS fixture' });
+        const navigate = async (target) => {
+          const page = await context.newPage();
+          try {
+            await page.goto(target);
+            return await page.locator('body').innerText();
+          } finally {
+            await page.close();
+          }
+        };
+        await assert.rejects(navigate(url), /CERT/);
+        enabled = true;
+        assert.equal(await navigate(url), 'proxied TLS');
+        await assert.rejects(navigate(`${url}/redirect`), /CERT/);
+        enabled = false;
+        await assert.rejects(navigate(url), /CERT/);
+      } finally {
+        await resolver.close();
+      }
+    },
+  );
 });

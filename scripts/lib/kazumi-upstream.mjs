@@ -5,11 +5,11 @@ import { join } from 'node:path';
 export const upstreamRepository = 'Predidit/Kazumi';
 const shaPattern = /^[a-f0-9]{40}$/;
 const files = {
-  pubspec: 'services/kazumi-core/pubspec.yaml',
-  lock: 'services/kazumi-core/pubspec.lock',
-  core: 'services/kazumi-core/lib/core.dart',
-  sdk: 'services/kazumi-core/flutter-sdk.json',
-  validation: 'server/modules/rules/validation.js',
+  pubspec: 'test/reference/kazumi-core/pubspec.yaml',
+  lock: 'test/reference/kazumi-core/pubspec.lock',
+  core: 'test/reference/kazumi-core/lib/core.dart',
+  sdk: 'test/reference/kazumi-core/flutter-sdk.json',
+  validation: 'test/reference/capabilities.js',
 };
 
 function capture(text, pattern, label) {
@@ -160,14 +160,14 @@ export async function applyUpdate(root, pins, update) {
 
 export function upgradeBody(update) {
   return (
-    `Upgrade the Kazumi core from ${update.currentVersion} to ${update.version}.\n\n` +
+    `Upgrade the development Kazumi reference from ${update.currentVersion} to ${update.version}.\n\n` +
     `- Official release: ${update.releaseUrl}\n` +
     `- Changes: ${update.compareUrl}\n` +
     `- Pinned commit: \`${update.commit}\`\n` +
     `- Flutter: ${update.sdk.version} (\`${update.sdk.revision}\`)\n` +
     `- Rule API: ${update.apiLevel}\n\n` +
-    `The lockfile is resolved with the pinned Flutter toolchain. Verify is dispatched explicitly ` +
+    `The lockfile is resolved with the pinned Flutter toolchain. Official rule compatibility is dispatched explicitly ` +
     `on this branch to build and start the real core, check its revision, and run the browser suite. ` +
-    `Review and merge only after Verify / test passes; this PR does not enable automatic merging.\n`
+    `Review and merge only after Official rule compatibility passes; this PR does not enable automatic merging.\n`
   );
 }

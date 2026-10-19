@@ -1,0 +1,166 @@
+{
+  "date": "2026-10-19T17:33:49.666Z",
+  "node": "v24.14.1",
+  "fixture": "http://fixture:4174",
+  "rounds": 20,
+  "idleMs": 35000,
+  "workloads": "Same Docker VM, same HTTP fixture and media bytes, sequential requests, two warm-up rounds; baseline = Node + pinned Flutter; local = Node + on-demand Chromium. Results include network and runtime overhead.",
+  "results": {
+    "baseline": {
+      "beforeRequests": [
+        {
+          "name": "kazumi-engine-baseline-web",
+          "memory": "36.7MiB",
+          "pids": 11
+        },
+        {
+          "name": "kazumi-engine-baseline-core",
+          "memory": "168MiB",
+          "pids": 59
+        }
+      ],
+      "coldMs": {
+        "search": 38.42829100000017,
+        "chapters": 25.344375000000127,
+        "staticMP4": 121.02000000000044,
+        "staticHLS": 42.42787499999986,
+        "dynamicMP4": 323.0347079999997
+      },
+      "latencies": {
+        "search": {
+          "samples": 20,
+          "medianMs": 17.297042000001966,
+          "p95Ms": 18.46733299999869
+        },
+        "chapters": {
+          "samples": 20,
+          "medianMs": 16.49645799999962,
+          "p95Ms": 17.360000000000582
+        },
+        "staticMP4": {
+          "samples": 20,
+          "medianMs": 17.31145800000013,
+          "p95Ms": 19.958583999999973
+        },
+        "staticHLS": {
+          "samples": 20,
+          "medianMs": 19.082417000001442,
+          "p95Ms": 27.504667000001064
+        },
+        "dynamicMP4": {
+          "samples": 20,
+          "medianMs": 322.60262499999953,
+          "p95Ms": 330.8230000000003
+        }
+      },
+      "cpuUsec": 3480619,
+      "afterRequests": [
+        {
+          "name": "kazumi-engine-baseline-web",
+          "memory": "58MiB",
+          "pids": 11
+        },
+        {
+          "name": "kazumi-engine-baseline-core",
+          "memory": "360.4MiB",
+          "pids": 128
+        }
+      ],
+      "afterIdle": [
+        {
+          "name": "kazumi-engine-baseline-web",
+          "memory": "58.09MiB",
+          "pids": 11
+        },
+        {
+          "name": "kazumi-engine-baseline-core",
+          "memory": "354.7MiB",
+          "pids": 111
+        }
+      ]
+    },
+    "local": {
+      "beforeRequests": [
+        {
+          "name": "kazumi-engine-local-web",
+          "memory": "116.8MiB",
+          "pids": 11
+        }
+      ],
+      "coldMs": {
+        "search": 49.76879199999985,
+        "chapters": 16.58720799999992,
+        "staticMP4": 12.353665999999976,
+        "staticHLS": 8.982332999999926,
+        "dynamicMP4": 657.8474159999996
+      },
+      "latencies": {
+        "search": {
+          "samples": 20,
+          "medianMs": 7.253582999997889,
+          "p95Ms": 8.589750000001004
+        },
+        "chapters": {
+          "samples": 20,
+          "medianMs": 5.820750000000771,
+          "p95Ms": 6.913542000000234
+        },
+        "staticMP4": {
+          "samples": 20,
+          "medianMs": 5.374916000000667,
+          "p95Ms": 9.442084000002069
+        },
+        "staticHLS": {
+          "samples": 20,
+          "medianMs": 5.77166699999907,
+          "p95Ms": 12.861417000000074
+        },
+        "dynamicMP4": {
+          "samples": 20,
+          "medianMs": 553.0374579999989,
+          "p95Ms": 566.0186249999997
+        }
+      },
+      "cpuUsec": 4096852,
+      "afterRequests": [
+        {
+          "name": "kazumi-engine-local-web",
+          "memory": "324.1MiB",
+          "pids": 69
+        }
+      ],
+      "afterIdle": [
+        {
+          "name": "kazumi-engine-local-web",
+          "memory": "157.6MiB",
+          "pids": 14
+        }
+      ]
+    }
+  },
+  "upstream": "4effe14ee78b790a92c23ed86f969093d2ed376d",
+  "baselineCommit": "0a560d76555633d20609744cc8d5feb368079c35",
+  "images": [
+    {
+      "tag": "kazumi-web:engine-baseline",
+      "id": "sha256:d1caff2ebf753fcaa099ba4161092072566e2ce56f4c19c16f9a742d9d0188ed",
+      "architecture": "arm64",
+      "os": "linux",
+      "bytes": 492532047
+    },
+    {
+      "tag": "kazumi-core:engine-reference",
+      "id": "sha256:822b28ec9ec01cfba0e1391ed4b1fcd802fea3bae13918df5c5e2dbcc60ccb9f",
+      "architecture": "arm64",
+      "os": "linux",
+      "bytes": 1461647832
+    },
+    {
+      "tag": "kazumi-web:local-engine",
+      "id": "sha256:a1d49dcb9d98546291ef70144db4605cf02d8477605b479ab36bf0fc4f1848e4",
+      "architecture": "arm64",
+      "os": "linux",
+      "bytes": 1401315728
+    }
+  ]
+}

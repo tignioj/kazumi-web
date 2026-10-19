@@ -6,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../../server/app.js';
-import { KazumiCoreClient } from '../../server/modules/core/client.js';
+import { KazumiCoreClient } from '../reference/core-client.js';
 import { createHttpClient } from '../../server/lib/http.js';
 
 async function fixture(t) {
@@ -83,7 +83,9 @@ async function fixture(t) {
     seedRules: [rule],
     egress: false,
     httpClient: createHttpClient({ allowPrivate: true, dnsOverHttpsUrl: '' }),
-    coreOptions: { url: `http://127.0.0.1:${service.address().port}` },
+    engine: new KazumiCoreClient({ url: `http://127.0.0.1:${service.address().port}` }),
+    sourceResolver: new KazumiCoreClient({ url: `http://127.0.0.1:${service.address().port}` }),
+    browserResolver: false,
   });
   const server = app.app.listen(0, '127.0.0.1');
   await once(server, 'listening');

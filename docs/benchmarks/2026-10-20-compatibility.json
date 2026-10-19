@@ -1,0 +1,18 @@
+{
+  "upstream": "4effe14ee78b790a92c23ed86f969093d2ed376d",
+  "cases": 17,
+  "rounds": 2,
+  "measured": "search + chapters per source, HTTP fixture, two warm-up rounds; host Node versus Docker Flutter; not a pure parser microbenchmark",
+  "metrics": {
+    "local": {
+      "samples": 34,
+      "medianMs": 5.007124999999633,
+      "p95Ms": 13.091542000000118
+    },
+    "reference": {
+      "samples": 34,
+      "medianMs": 34.67741699999988,
+      "p95Ms": 38.926750000000084
+    }
+  }
+}

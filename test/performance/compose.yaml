@@ -1,0 +1,54 @@
+name: kazumi-engine-performance
+services:
+  fixture:
+    image: kazumi-web:engine-baseline
+    container_name: kazumi-engine-fixture
+    command:
+      [
+        'node',
+        '--input-type=module',
+        '-e',
+        'import {createUpstream} from "./test/e2e/fixtures/upstream.mjs"; await createUpstream();',
+      ]
+    environment:
+      E2E_FIXTURE_HOST: 0.0.0.0
+      E2E_FIXTURE_URL: http://fixture:4174
+    volumes:
+      - ../:/app/test:ro
+    healthcheck:
+      disable: true
+  baseline-web:
+    image: kazumi-web:engine-baseline
+    container_name: kazumi-engine-baseline-web
+    ports:
+      - '127.0.0.1:17300:3000'
+    environment:
+      METADATA_MODE: remote
+      ALLOW_PRIVATE_NETWORK: 'true'
+      KAZUMI_CORE_URL: http://baseline-core:7331
+      KAZUMI_EGRESS_HOST: 0.0.0.0
+      KAZUMI_EGRESS_PORT: 7332
+    read_only: true
+    tmpfs:
+      - /app/data:uid=1000,gid=1000
+      - /tmp:mode=1777
+    shm_size: 256m
+  baseline-core:
+    image: kazumi-core:engine-reference
+    container_name: kazumi-engine-baseline-core
+    environment:
+      KAZUMI_EGRESS_PROXY: http://baseline-web:7332
+    shm_size: 256m
+  local-web:
+    image: kazumi-web:local-engine
+    container_name: kazumi-engine-local-web
+    ports:
+      - '127.0.0.1:17301:3000'
+    environment:
+      METADATA_MODE: remote
+      ALLOW_PRIVATE_NETWORK: 'true'
+    read_only: true
+    tmpfs:
+      - /app/data:uid=1000,gid=1000
+      - /tmp:mode=1777
+    shm_size: 256m

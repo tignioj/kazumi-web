@@ -13,7 +13,14 @@ export function registerVerificationRoutes(app, { verification }) {
     res.json(await verification.snapshot(verificationOwner(req, res), req.params.id));
   });
   app.post('/api/verification/:id/action', async (req, res) => {
-    res.json(await verification.action(verificationOwner(req, res), req.params.id, req.body));
+    res.json(
+      await verification.action(
+        verificationOwner(req, res),
+        req.params.id,
+        req.body?.challengeId,
+        req.body?.action,
+      ),
+    );
   });
   app.delete('/api/verification/:id', (req, res) => {
     verification.cancel(verificationOwner(req, res), req.params.id);

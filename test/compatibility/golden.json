@@ -1,0 +1,752 @@
+{
+  "upstream": "4effe14ee78b790a92c23ed86f969093d2ed376d",
+  "apiLevel": 9,
+  "rulesCommit": "ba8e10b35b0c3a56bbb6032a12356b0473844c64",
+  "imports": [
+    "7sefun",
+    "aafun",
+    "AGE",
+    "akianime",
+    "baimao",
+    "dalvdm",
+    "DM84",
+    "ezdmw",
+    "giriGiriLove",
+    "LMM",
+    "mgnacg",
+    "moonci",
+    "mutefun",
+    "MXdm",
+    "sorani",
+    "xfdmneo",
+    "xfdmnext"
+  ],
+  "cases": [
+    {
+      "id": "xpath",
+      "search": [
+        {
+          "name": "番剧 & 测试",
+          "url": "https://fixture.example/detail/1"
+        },
+        {
+          "name": "夜空",
+          "url": "https://fixture.example/detail/2"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "第1集",
+              "url": "https://fixture.example/play/1"
+            },
+            {
+              "name": "第2集",
+              "url": "http://cdn.example/2"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/xpath/search",
+          "query": {
+            "wd": "番剧 & a/b+中"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/case/xpath/detail",
+          "query": {},
+          "method": "GET",
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "xpath-post",
+      "search": [
+        {
+          "name": "番剧 & 测试",
+          "url": "https://fixture.example/detail/1"
+        },
+        {
+          "name": "夜空",
+          "url": "https://fixture.example/detail/2"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "第1集",
+              "url": "https://fixture.example/play/1"
+            },
+            {
+              "name": "第2集",
+              "url": "http://cdn.example/2"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/xpath-post/search",
+          "query": {
+            "wd": "番剧 & a/b+中"
+          },
+          "method": "POST",
+          "body": {
+            "wd": "番剧 & a/b+中"
+          }
+        },
+        {
+          "path": "/case/xpath-post/detail",
+          "query": {},
+          "method": "GET",
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "xpath-bare",
+      "search": [
+        {
+          "name": "番剧 & 测试",
+          "url": "https://fixture.example/detail/1"
+        },
+        {
+          "name": "夜空",
+          "url": "https://fixture.example/detail/2"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "第1集",
+              "url": "https://fixture.example/play/1"
+            },
+            {
+              "name": "第2集",
+              "url": "http://cdn.example/2"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/xpath-bare/search",
+          "query": {
+            "wd": "番剧 & a/b+中"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/case/xpath-bare/detail",
+          "query": {},
+          "method": "GET",
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "xpath-empty-results",
+      "search": [],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "第1集",
+              "url": "https://fixture.example/play/1"
+            },
+            {
+              "name": "第2集",
+              "url": "http://cdn.example/2"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/xpath-empty-results/search",
+          "query": {
+            "wd": "番剧 & a/b+中"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/case/xpath-empty-results/detail",
+          "query": {},
+          "method": "GET",
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "xpath-normalize",
+      "search": [
+        {
+          "name": "一",
+          "url": "https://fixture.example/detail/1"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "一",
+              "url": "https://fixture.example/play/1"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/xpath-normalize/search",
+          "query": {
+            "wd": "番剧 & a/b+中"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/case/xpath-normalize/detail",
+          "query": {},
+          "method": "GET",
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "xpath-empty-road",
+      "search": [
+        {
+          "name": "番剧 & 测试",
+          "url": "https://fixture.example/detail/1"
+        },
+        {
+          "name": "夜空",
+          "url": "https://fixture.example/detail/2"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "一",
+              "url": "https://fixture.example/play/1"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/xpath-empty-road/search",
+          "query": {
+            "wd": "番剧 & a/b+中"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/case/xpath-empty-road/detail",
+          "query": {},
+          "method": "GET",
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "xpath-attributes",
+      "search": [
+        {
+          "name": "名称",
+          "url": "https://fixture.example/detail/1"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "第1集",
+              "url": "https://fixture.example/play/1"
+            },
+            {
+              "name": "第2集",
+              "url": "http://cdn.example/2"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/xpath-attributes/search",
+          "query": {
+            "wd": "番剧 & a/b+中"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/case/xpath-attributes/detail",
+          "query": {},
+          "method": "GET",
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "official-giriGiriLove",
+      "search": [
+        {
+          "name": "番剧",
+          "url": "https://fixture.example/GVa%2Fb%20%2B%E4%B8%AD/"
+        },
+        {
+          "name": "数字 ID",
+          "url": "https://fixture.example/GV7/"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "第1集",
+              "url": "https://fixture.example/play/1"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/official-giriGiriLove/search",
+          "query": {
+            "mid": "1",
+            "wd": "番剧 & a/b+中"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/case/official-giriGiriLove/detail",
+          "query": {},
+          "method": "GET",
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "official-mutefun",
+      "search": [
+        {
+          "name": "番剧",
+          "url": "a/b +中"
+        },
+        {
+          "name": "数字 ID",
+          "url": "7"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "第1集",
+              "url": "https://fixture.example/play/1"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/official-mutefun/search",
+          "query": {
+            "mid": "1",
+            "wd": "番剧 & a/b+中"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/case/official-mutefun/detail",
+          "query": {},
+          "method": "GET",
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "official-mgnacg",
+      "search": [
+        {
+          "name": "番剧",
+          "url": "a/b +中"
+        },
+        {
+          "name": "数字 ID",
+          "url": "7"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "第1集",
+              "url": "https://fixture.example/play/1"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/official-mgnacg/search",
+          "query": {
+            "mid": "1",
+            "wd": "番剧 & a/b+中"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/case/official-mgnacg/detail",
+          "query": {},
+          "method": "GET",
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "official-dalvdm",
+      "search": [
+        {
+          "name": "番剧",
+          "url": "https://fixture.example/index.php/vod/detail/id/a%2Fb%20%2B%E4%B8%AD.html"
+        },
+        {
+          "name": "数字 ID",
+          "url": "https://fixture.example/index.php/vod/detail/id/7.html"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "第1集",
+              "url": "https://fixture.example/index.php/vod/play/123/sid/1/nid/1.html"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/official-dalvdm/search",
+          "query": {
+            "mid": "1",
+            "wd": "番剧 & a/b+中"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/case/official-dalvdm/detail",
+          "query": {},
+          "method": "GET",
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "official-LMM",
+      "search": [
+        {
+          "name": "番剧",
+          "url": "https://fixture.example/index.php/vod/detail/id/a%2Fb%20%2B%E4%B8%AD.html"
+        },
+        {
+          "name": "数字 ID",
+          "url": "https://fixture.example/index.php/vod/detail/id/7.html"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "第1集",
+              "url": "https://fixture.example/play/1"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/official-LMM/search",
+          "query": {
+            "mid": "1",
+            "wd": "番剧 & a/b+中"
+          },
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/case/official-LMM/detail",
+          "query": {},
+          "method": "GET",
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "api-nested",
+      "search": [
+        {
+          "name": "番剧",
+          "url": "opaque/a%2Fb"
+        },
+        {
+          "name": "数字",
+          "url": "7"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "线路",
+          "episodes": [
+            {
+              "name": "一",
+              "url": "https://fixture.example/play/opaque%2Fa%252Fb?token=x%2Fy+%2B&r=1&e=0&url=a%2Fb%3Fx%3D1"
+            },
+            {
+              "name": "第2集",
+              "url": "https://fixture.example/play/opaque%2Fa%252Fb?token=x%2Fy+%2B&r=1&e=1&url=next"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/api-nested/search",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "keyword": "番剧 & a/b+中",
+            "page": 1,
+            "enabled": true
+          }
+        },
+        {
+          "path": "/case/api-nested/chapters",
+          "query": {
+            "source": "opaque/a%2Fb"
+          },
+          "method": "GET",
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "api-root",
+      "search": [
+        {
+          "name": "番剧",
+          "url": "opaque/a%2Fb"
+        },
+        {
+          "name": "数字",
+          "url": "7"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "一",
+              "url": "https://fixture.example/play/1"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/api-root/search",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "keyword": "番剧 & a/b+中",
+            "page": 1,
+            "enabled": true
+          }
+        },
+        {
+          "path": "/case/api-root/chapters",
+          "query": {
+            "source": "opaque/a%2Fb"
+          },
+          "method": "GET",
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "api-empty-road",
+      "search": [
+        {
+          "name": "番剧",
+          "url": "opaque/a%2Fb"
+        },
+        {
+          "name": "数字",
+          "url": "7"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "一",
+              "url": "https://fixture.example/play/1"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/api-empty-road/search",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "keyword": "番剧 & a/b+中",
+            "page": 1,
+            "enabled": true
+          }
+        },
+        {
+          "path": "/case/api-empty-road/chapters",
+          "query": {
+            "source": "opaque/a%2Fb"
+          },
+          "method": "GET",
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "api-delimited",
+      "search": [
+        {
+          "name": "番剧",
+          "url": "opaque/a%2Fb"
+        },
+        {
+          "name": "数字",
+          "url": "7"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "线路一",
+          "episodes": [
+            {
+              "name": "一",
+              "url": "https://fixture.example/play/1?token=a$b"
+            },
+            {
+              "name": "二",
+              "url": "https://fixture.example/play/2"
+            }
+          ]
+        },
+        {
+          "name": "线路二",
+          "episodes": [
+            {
+              "name": "三",
+              "url": "https://fixture.example/play/3"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/api-delimited/search",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "keyword": "番剧 & a/b+中",
+            "page": 1,
+            "enabled": true
+          }
+        },
+        {
+          "path": "/case/api-delimited/chapters",
+          "query": {
+            "source": "opaque/a%2Fb"
+          },
+          "method": "GET",
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "api-form",
+      "search": [
+        {
+          "name": "番剧",
+          "url": "https://fixture.example/GVopaque%2Fa%252Fb/"
+        },
+        {
+          "name": "数字",
+          "url": "https://fixture.example/GV7/"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "线路",
+          "episodes": [
+            {
+              "name": "一",
+              "url": "https://fixture.example/play/1"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/api-form/search",
+          "query": {},
+          "method": "POST",
+          "body": {
+            "wd": "番剧 & a/b+中",
+            "page": "1"
+          }
+        },
+        {
+          "path": "/case/api-form/chapters",
+          "query": {
+            "source": "opaque/a%2Fb"
+          },
+          "method": "GET",
+          "body": null
+        }
+      ]
+    }
+  ]
+}

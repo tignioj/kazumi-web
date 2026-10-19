@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { HttpError } from '../../lib/http.js';
+import { HttpError } from '../../server/lib/http.js';
 
 // This is a wire adapter. Selectors, templates and website parsing run in Kazumi.
 export class KazumiCoreClient {

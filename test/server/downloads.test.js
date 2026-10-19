@@ -315,7 +315,7 @@ async function fixture(t, { downloadOptions, session = false } = {}) {
   async function start() {
     const http = createHttpClient({ allowPrivate: true, dnsOverHttpsUrl: '' });
     application = await createApp({
-      core: {
+      sourceResolver: {
         validate: async (content) => (Array.isArray(content) ? content : [content]),
         async resolve(rule, url, { signal } = {}) {
           if (session)

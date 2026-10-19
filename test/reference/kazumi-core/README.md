@@ -1,4 +1,7 @@
-# Kazumi core service
+> This is an optional test oracle. Production Compose, builds and publishing do
+> not depend on Flutter or this directory. See [the local engine guide](../../../docs/local-rule-engine.md).
+
+# Development-only Kazumi reference
 
 This Flutter host depends directly on `Predidit/Kazumi` at the Git commit in
 `pubspec.yaml`. It imports upstream classes without copying or patching source.
@@ -16,7 +19,7 @@ connections. Linux WebKit also uses a verified public issuer certificate for
 [alternate chain compatibility](certificates/README.md) when servers send an
 obsolete cross-sign. Certificate and hostname verification remain enabled.
 
-Build and test with `docker build -t kazumi-core:local services/kazumi-core`.
+Build and test with `docker build -t kazumi-core:reference test/reference/kazumi-core`.
 The runtime includes GStreamer H.264/AAC plugins: source players need WebKit's
 MP4/MSE support to start requesting HLS, even though playback happens in the
 user's browser. A headless WebKit smoke check verifies those capabilities in
@@ -27,7 +30,7 @@ then run the Dart tests and complete HTTP/browser checks.
 `flutter-sdk.json` pins the Flutter revision and the version required by Kazumi.
 The `toolchain` Docker stage exposes that SDK without resolving application
 dependencies, so the release-update workflow can regenerate the lockfile. Normal
-image builds enforce the committed lockfile. The daily `Check Kazumi releases`
-workflow proposes newer stable releases as pinned PRs; `Verify` builds this image,
-starts a fresh core container, checks its revision/API, and runs browser tests
-against its real rule engine and WebView resolver before a maintainer merges.
+image builds enforce the committed lockfile. The daily `Check Kazumi reference releases`
+workflow proposes newer stable releases as pinned PRs; `Official rule compatibility` builds this image,
+starts a fresh core container, checks its revision/API, and compares recorded requests and outputs
+against its real rule engine before a maintainer merges.

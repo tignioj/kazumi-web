@@ -9,8 +9,9 @@ import { WatchStore } from './modules/watch/store.js';
 import { NetworkStore } from './modules/network/store.js';
 import { LocalMetadataStore } from './modules/metadata/local-store.js';
 import { ArchiveManager } from './modules/metadata/archive-manager.js';
-import { KazumiCoreClient } from './modules/core/client.js';
-import { createBrowserEgress } from './lib/browser-egress.js';
+import { RuleEngine } from './modules/rules/engine.js';
+import { BrowserResolver } from './modules/playback/browser-resolver.js';
+import { LocalSourceResolver } from './modules/playback/source-resolver.js';
 import { MediaService } from './modules/playback/media.js';
 import { NativeHlsService, registerNativeHlsRoutes } from './modules/playback/native-hls.js';
 import { ImageCache } from './modules/images/cache.js';
@@ -68,17 +69,13 @@ export async function createApp(options = {}) {
         JSON.parse(await readFile(resolve(directory, 'defaults', `${name}.json`), 'utf8')),
       ),
     ));
-  const core = options.core || new KazumiCoreClient(options.coreOptions);
-  const egress =
-    options.egress === false
+  const browserResolver =
+    options.browserResolver === false
       ? null
-      : await createBrowserEgress({
-          allowPrivate: videoHttp.allowPrivate,
-          host: process.env.KAZUMI_EGRESS_HOST || '127.0.0.1',
-          port: Number(process.env.KAZUMI_EGRESS_PORT || 0),
-          getProxySettings: (url) => proxySettingsFor(network.data, 'video', { url }),
-        });
-  const store = await new RuleStore(dataDir, initialRules, { core }).init();
+      : options.browserResolver || new BrowserResolver(videoHttp, options.browserOptions);
+  const store = await new RuleStore(dataDir, initialRules, {
+    dynamicResolver: browserResolver?.available === true,
+  }).init();
   const watchStore = await new WatchStore(dataDir).init();
   const images = await new ImageCache({
     directory: resolve(dataDir, 'images'),
@@ -87,8 +84,10 @@ export async function createApp(options = {}) {
     getNetworkSettings: () => network.data,
     maxBytes: Number(process.env.IMAGE_CACHE_MAX_BYTES ?? 5 * 1024 ** 3),
   }).init();
-  const engine = core;
-  const media = new MediaService(videoHttp, undefined, { core });
+  const engine = options.engine || new RuleEngine(videoHttp, { browserResolver });
+  const resolver =
+    options.sourceResolver || new LocalSourceResolver(videoHttp, { browserResolver });
+  const media = new MediaService(videoHttp, undefined, { resolver });
   const downloads = await new DownloadManager({
     directory: resolve(dataDir, 'downloads'),
     http: videoHttp,
@@ -132,8 +131,8 @@ export async function createApp(options = {}) {
     archive,
     localMetadata,
     comments,
-    core,
-    egress,
+    engine,
+    browserResolver,
     async close() {
       await archive?.close();
       await comments.close?.();
@@ -143,7 +142,7 @@ export async function createApp(options = {}) {
       await network.pending;
       await downloads.close();
       await images.close();
-      await egress?.close();
+      await browserResolver?.close();
       media.close?.();
       nativeHls.close();
       await Promise.all([...clients].map((client) => client.close()));

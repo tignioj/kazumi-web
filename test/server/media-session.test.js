@@ -50,7 +50,7 @@ function fixture({ html = '<html>dynamic player</html>', error, result = candida
       return result;
     },
   };
-  const service = new MediaService(http, 'session-test', { core });
+  const service = new MediaService(http, 'session-test', { resolver: core });
   return { service, http, requests, coreCalls, core };
 }
 function payload(result) {

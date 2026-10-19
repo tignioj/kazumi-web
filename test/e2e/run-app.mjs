@@ -3,14 +3,6 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createUpstream, fixtureUrl } from './fixtures/upstream.mjs';
-import { checkCore } from '../../scripts/check-kazumi-core.mjs';
-import { fileURLToPath } from 'node:url';
-
-await checkCore({
-  root: fileURLToPath(new URL('../../', import.meta.url)),
-  url: process.env.KAZUMI_CORE_URL || 'http://127.0.0.1:7331',
-});
-
 const directory = await mkdtemp(join(tmpdir(), 'kazumi-web-e2e-'));
 const fixture = await createUpstream();
 const child = spawn(process.execPath, ['server/index.js'], {

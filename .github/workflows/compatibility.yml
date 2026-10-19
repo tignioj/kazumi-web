@@ -1,0 +1,53 @@
+name: Official rule compatibility
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'server/modules/rules/**'
+      - 'test/compatibility/**'
+      - 'test/reference/**'
+      - 'scripts/compare-rule-engines.mjs'
+      - '.github/workflows/compatibility.yml'
+permissions:
+  contents: read
+jobs:
+  reference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node scripts/update-kazumi.mjs --verify
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: test/reference/kazumi-core
+          load: true
+          tags: kazumi-core:reference
+          cache-from: type=gha,scope=kazumi-reference-amd64
+          cache-to: type=gha,scope=kazumi-reference-amd64,mode=max
+      - name: Start the development reference
+        run: |
+          docker run --detach --name kazumi-reference --network host --shm-size 256m \
+            --env KAZUMI_EGRESS_PROXY=http://127.0.0.1:17332 kazumi-core:reference
+          KAZUMI_CORE_URL=http://127.0.0.1:7331 node scripts/check-kazumi-core.mjs
+      - name: Compare actual official requests and outputs
+        env:
+          KAZUMI_REFERENCE_URL: http://127.0.0.1:7331
+          COMPAT_REFERENCE_ORIGIN: http://127.0.0.1:17334
+        run: npm run compare:engines -- --output test-results/rule-comparison.json
+      - name: Collect reference logs
+        if: always()
+        run: |
+          mkdir -p test-results
+          docker logs kazumi-reference > test-results/reference.log 2>&1 || true
+          docker rm --force kazumi-reference || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: official-rule-comparison
+          path: test-results/

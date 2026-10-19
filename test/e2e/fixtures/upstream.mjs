@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 
 export const fixturePort = Number(process.env.E2E_FIXTURE_PORT || 4174);
-export const fixtureUrl = `http://127.0.0.1:${fixturePort}`;
+export const fixtureUrl = process.env.E2E_FIXTURE_URL || `http://127.0.0.1:${fixturePort}`;
 export const fixtureRule = {
   api: '8',
   name: '本地测试源',
@@ -158,6 +158,10 @@ export async function createUpstream() {
       return html(
         '<html><body><section class="road"><a href="/source/watch/1">第 1 集</a><a href="/source/watch/2">第 2 集</a></section><section class="road"><a href="/source/watch/3">备用第 1 集</a></section></body></html>',
       );
+    if (url.pathname.startsWith('/source/dynamic/'))
+      return html(
+        `<html><body><script>setTimeout(() => { const v = document.createElement('video'); v.autoplay = true; v.muted = true; v.src = ['${fixtureUrl}/sample', 'mp4'].join('.'); document.body.append(v); }, 300);</script></body></html>`,
+      );
     if (url.pathname.startsWith('/source/watch/'))
       return html(
         `<html><body><video controls src="${fixtureUrl}/${url.pathname.endsWith('/2') ? 'sample.m3u8' : 'sample.mp4'}"></video></body></html>`,
@@ -192,6 +196,8 @@ export async function createUpstream() {
     response.statusCode = 404;
     json({ error: `Unknown fixture URL ${url.pathname}` });
   });
-  await new Promise((resolve) => server.listen(fixturePort, '127.0.0.1', resolve));
+  await new Promise((resolve) =>
+    server.listen(fixturePort, process.env.E2E_FIXTURE_HOST || '127.0.0.1', resolve),
+  );
   return server;
 }

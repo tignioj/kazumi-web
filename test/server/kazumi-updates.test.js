@@ -132,11 +132,11 @@ test('updating sources leaves lock generation to Flutter and verifies the result
   const directory = await mkdtemp(join(tmpdir(), 'kazumi-upgrade-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const paths = [
-    'services/kazumi-core/pubspec.yaml',
-    'services/kazumi-core/pubspec.lock',
-    'services/kazumi-core/lib/core.dart',
-    'services/kazumi-core/flutter-sdk.json',
-    'server/modules/rules/validation.js',
+    'test/reference/kazumi-core/pubspec.yaml',
+    'test/reference/kazumi-core/pubspec.lock',
+    'test/reference/kazumi-core/lib/core.dart',
+    'test/reference/kazumi-core/flutter-sdk.json',
+    'test/reference/capabilities.js',
   ];
   for (const path of paths) {
     await mkdir(dirname(join(directory, path)), { recursive: true });

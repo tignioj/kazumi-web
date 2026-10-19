@@ -7,6 +7,7 @@ import {
 } from './updates.js';
 import { createOfficialRulesCatalog } from './catalog.js';
 import { RULE_API_VERSION, ruleCompatibility } from './validation.js';
+import { parseImport } from './store.js';
 import { createRuleSearch } from './search.js';
 
 export function registerRuleRoutes(app, { http, store, engine, interactive }) {
@@ -30,7 +31,7 @@ export function registerRuleRoutes(app, { http, store, engine, interactive }) {
   });
   app.get('/api/rules/catalog', async (req, res) => res.json({ rules: await officialRules() }));
   app.post('/api/rules/validate', async (req, res) => {
-    const rules = await store.validationOptions.core.validate(req.body?.content);
+    const rules = parseImport(req.body?.content, options);
     res.json({
       compatibility: rules.map((rule) => ({
         name: rule.name,

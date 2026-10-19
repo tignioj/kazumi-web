@@ -9,5 +9,8 @@ playwright-report
 output/playwright
 *.log
 .playwright-cli
-services/kazumi-core/.dart_tool
-services/kazumi-core/build
+test/reference/kazumi-core/.dart_tool
+test/reference/kazumi-core/build
+
+# Official Flutter application is only a development oracle.
+test/reference/

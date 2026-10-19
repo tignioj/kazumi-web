@@ -100,9 +100,7 @@ export class RuleStore {
     return operation;
   }
   async import(content) {
-    const incoming = (await this.validationOptions.core.validate(content)).map((rule) =>
-      normalizeRule(rule),
-    );
+    const incoming = parseImport(content, this.validationOptions);
     return this.update((existing) => {
       const map = new Map(existing.map((rule) => [rule.name.toLowerCase(), rule]));
       for (const rule of incoming) map.set(rule.name.toLowerCase(), rule);
@@ -110,9 +108,7 @@ export class RuleStore {
     });
   }
   async replace(name, input) {
-    const [replacement] = (await this.validationOptions.core.validate(input)).map((rule) =>
-      normalizeRule(rule),
-    );
+    const [replacement] = parseImport(input, this.validationOptions);
     return this.update((rules) => {
       const index = rules.findIndex((rule) => rule.name.toLowerCase() === name.toLowerCase());
       if (index < 0) throw new HttpError('找不到指定规则', 404);

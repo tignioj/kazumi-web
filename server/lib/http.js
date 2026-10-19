@@ -296,6 +296,7 @@ export function createHttpClient({
           502,
         );
         if (usingEch) failure.echAccepted = error.echAccepted === true;
+        failure.cause = error;
         failure.routing = proxy?.routing;
         throw failure;
       }

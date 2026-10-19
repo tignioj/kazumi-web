@@ -50,8 +50,6 @@ jobs:
         image:
           - name: kazumi-web
             context: .
-          - name: kazumi-core
-            context: services/kazumi-core
         platform:
           - arch: amd64
             runner: ubuntu-24.04
@@ -103,7 +101,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [kazumi-web, kazumi-core]
+        image: [kazumi-web]
     steps:
       - uses: docker/setup-buildx-action@v3
       - name: Log in to Docker Hub

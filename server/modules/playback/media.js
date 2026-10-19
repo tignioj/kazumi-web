@@ -2,15 +2,9 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { HttpError, checkedUrl, readLimited } from '../../lib/http.js';
+import { LocalSourceResolver } from './source-resolver.js';
+import { mediaType } from './extract-media.js';
 import { headersForSession, MediaSessionStore } from './session-store.js';
-
-export function mediaType(url) {
-  // An HTML parser's query or fragment can contain a media URL of its own.
-  const path = url.split(/[?#]/, 1)[0];
-  if (/\.m3u8$/i.test(path)) return 'hls';
-  if (/\.(?:mp4|m4v|webm|mov|mp3|m4a|ogg|ogv)$/i.test(path)) return 'video';
-  return null;
-}
 
 export function rewritePlaylist(text, playlistUrl, makeUrl) {
   if (!text.trimStart().startsWith('#EXTM3U'))
@@ -43,11 +37,11 @@ export class MediaService {
   constructor(
     http,
     secret = process.env.MEDIA_SECRET || randomBytes(32).toString('hex'),
-    { core, sessionOptions } = {},
+    { resolver, browserResolver, sessionOptions } = {},
   ) {
     this.http = http;
     this.secret = secret;
-    this.core = core;
+    this.resolver = resolver || new LocalSourceResolver(http, { browserResolver });
     this.sessions = new MediaSessionStore(sessionOptions);
   }
   signature(value) {
@@ -91,9 +85,9 @@ export class MediaService {
     originalUrl = checkedUrl(new URL(originalUrl, rule.baseURL).href, {
       allowPrivate: this.http.allowPrivate,
     }).href;
-    const result = await this.core.resolve(rule, originalUrl, options);
+    const result = await this.resolver.resolve(rule, originalUrl, options);
     if (!result || !['hls', 'video'].includes(result.type))
-      throw new HttpError('Kazumi 未返回可播放的视频地址', 422);
+      throw new HttpError('未解析到可播放的视频地址', 422);
     checkedUrl(result.url, { allowPrivate: this.http.allowPrivate });
     const session = this.sessions.create({ ...result, adBlocker: rule.adBlocker === true });
     // Native players detect stream formats themselves. Browser playback needs a
@@ -224,3 +218,5 @@ export class MediaService {
     }
   }
 }
+
+export { extractMedia, mediaType } from './extract-media.js';

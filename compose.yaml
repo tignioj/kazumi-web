@@ -20,12 +20,6 @@ services:
       COMMENTS_CACHE_MAX_BYTES: '${COMMENTS_CACHE_MAX_BYTES:-52428800}'
       ALLOW_PRIVATE_NETWORK: 'false'
       DNS_OVER_HTTPS_URL: '${DNS_OVER_HTTPS_URL:-}'
-      KAZUMI_CORE_URL: http://kazumi-core:7331
-      KAZUMI_EGRESS_HOST: 0.0.0.0
-      KAZUMI_EGRESS_PORT: 7332
-    depends_on:
-      kazumi-core:
-        condition: service_healthy
     volumes:
       - kazumi-data:/app/data
     read_only: true
@@ -38,19 +32,5 @@ services:
       - no-new-privileges:true
     stop_grace_period: 15s
 
-  kazumi-core:
-    build: ./services/kazumi-core
-    image: kazumi-core:local
-    restart: unless-stopped
-    environment:
-      KAZUMI_EGRESS_PROXY: http://kazumi:7332
-    volumes:
-      - kazumi-core-data:/data
-    shm_size: 256m
-    security_opt:
-      - no-new-privileges:true
-    stop_grace_period: 15s
-
 volumes:
   kazumi-data:
-  kazumi-core-data:
