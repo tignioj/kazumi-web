@@ -1,6 +1,6 @@
 {
   "name": "kazumi-web",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Kazumi 的 Web 移植版，支持 Docker Compose 部署",
   "type": "module",

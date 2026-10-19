@@ -112,8 +112,20 @@ export class MetadataService {
       headers: { 'user-agent': process.env.BANGUMI_USER_AGENT || USER_AGENT, ...options.headers },
     });
   }
+  async readLocal(method, ...args) {
+    if (!this.local) return null;
+    try {
+      return await this.local[method](...args);
+    } catch (error) {
+      // Invalid requests remain errors; missing or unreadable archive data can
+      // use the online API. Retry local on every request so imports take effect.
+      if (error instanceof HttpError && error.status < 500 && error.status !== 404) throw error;
+      return null;
+    }
+  }
   async search(keyword, { sort = 'match', page = 1, tags = [], airDate = [] } = {}) {
-    if (this.local) return this.local.search(keyword, { sort, page, tags, airDate });
+    const local = await this.readLocal('search', keyword, { sort, page, tags, airDate });
+    if (local) return local;
     return this.cached(
       `search:${JSON.stringify([keyword, sort, page, tags, airDate])}`,
       async () => {
@@ -140,7 +152,8 @@ export class MetadataService {
   }
   async catalog(sort, page) {
     if (sort !== 'trending') return this.search('', { sort: 'rank', page });
-    if (this.local) return this.local.trending(page);
+    const local = await this.readLocal('trending', page);
+    if (local) return local;
     return this.cached(`trending:${page}`, async () => {
       const data = await this.get(
         `${this.nextUrl}/p1/trending/subjects?type=2&limit=24&offset=${(page - 1) * 24}`,
@@ -152,7 +165,8 @@ export class MetadataService {
     });
   }
   async calendar() {
-    if (this.local) return this.local.calendar();
+    const local = await this.readLocal('calendar');
+    if (local) return local;
     return this.cached('calendar', async () => {
       let data;
       try {
@@ -173,8 +187,10 @@ export class MetadataService {
     });
   }
   async subject(id) {
-    if (this.local) return this.local.subject(id);
-    if (!/^\d+$/.test(String(id))) throw new HttpError('条目 ID 无效');
+    if (!/^[1-9]\d*$/.test(String(id)) || !Number.isSafeInteger(Number(id)))
+      throw new HttpError('条目 ID 无效');
+    const local = await this.readLocal('subject', id);
+    if (local) return local;
     return this.cached(`subject:${id}`, async () => {
       const data = await this.get(`${this.apiUrl}/v0/subjects/${id}`);
       const subject = normalizeSubject(data);

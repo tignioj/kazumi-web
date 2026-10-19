@@ -103,7 +103,7 @@ docker compose exec kazumi npm run metadata:update -- --status
 docker compose exec kazumi npm run metadata:update
 ```
 
-更新失败继续读取旧资料。`METADATA_AUTO_UPDATE=false` 关闭自动更新；`METADATA_MODE=remote` 使用远程 Bangumi API。封面经过同源图片缓存，与原有数据卷兼容。
+查询优先使用本地资料；首次导入未完成、本地读取失败或详情未收录时，自动回退到在线 Bangumi API，沿用 API 代理及 ECH 设置。导入完成后的新请求自动使用本地资料，无需重启。更新失败继续读取旧资料。`METADATA_AUTO_UPDATE=false` 关闭自动更新；`METADATA_MODE=remote` 使用远程 Bangumi API。封面经过同源图片缓存，与原有数据卷兼容。
 
 详情页「番剧讨论」提供 Bangumi 短评和按集选择的剧集评论（含回复）；播放页下方可展开「剧集评论」。播放源名称中有明确集数且与 Bangumi 正篇唯一匹配时自动选中，否则手动选择对应剧集。评论只读，可通过链接前往 Bangumi 查看或参与讨论。
 

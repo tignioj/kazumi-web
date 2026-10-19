@@ -11,6 +11,7 @@ import { ArchiveManager } from '../../server/modules/metadata/archive-manager.js
 import { MetadataService, categorySearchOptions } from '../../server/modules/metadata/service.js';
 import { createApp } from '../../server/index.js';
 import { createCoverResolver } from '../../server/modules/images/cover-resolver.js';
+import { HttpError } from '../../server/lib/http.js';
 import { archiveZip, zipFiles, subjects, episodes } from './fixtures/archive.js';
 
 async function fixture(t, { now } = {}) {
@@ -81,8 +82,182 @@ test('official archive import powers local Chinese/alias search, AND filters, so
     ['第一话', '第二话'],
   );
   assert.equal(detail.image, 'https://api.bgm.tv/v0/subjects/1/image?type=large');
-  await assert.rejects(metadata.subject(3), { status: 404 });
+  await assert.rejects(store.subject(3), { status: 404 });
   await assert.rejects(metadata.subject('1 OR 1=1'), { status: 400 });
+});
+
+test('REST metadata routes fall back online during first import and prefer local data as soon as it is ready', async (t) => {
+  const { directory, http, archive, cleanup } = await fixture(t);
+  const bytes = await readFile(archive);
+  const requests = [];
+  const onlineSubject = {
+    id: 1,
+    name: 'Online Story',
+    name_cn: '在线故事',
+    images: { large: 'https://lain.bgm.tv/pic/cover/l/online.jpg' },
+    rating: { score: 8.5, rank: 5 },
+  };
+  http.json = async (url, options) => {
+    if (new URL(url).pathname === '/latest.json')
+      return {
+        browser_download_url: 'https://github.com/dump-first.zip',
+        name: 'dump-first.zip',
+        size: bytes.length,
+        digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+      };
+    requests.push({ url: new URL(url), options });
+    const path = new URL(url).pathname;
+    if (path === '/v0/subjects/1') return onlineSubject;
+    if (path === '/v0/episodes') return { data: [{ id: 101, name_cn: '在线第一话' }] };
+    if (path === '/p1/calendar') return { 1: [onlineSubject] };
+    if (['/v0/search/subjects', '/p1/trending/subjects'].includes(path))
+      return { data: [onlineSubject], total: 50 };
+    throw new Error(`unexpected upstream request: ${url}`);
+  };
+  const application = await createApp({
+    dataDir: directory,
+    seedRules: [],
+    egress: false,
+    httpClient: http,
+    archiveOptions: { autoUpdate: false, manifestUrl: 'https://example.com/latest.json' },
+  });
+  const server = application.app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  cleanup.push(async () => {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+    await application.close();
+  });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  let startDownload;
+  let finishDownload;
+  const started = new Promise((resolve) => (startDownload = resolve));
+  const downloaded = new Promise((resolve) => (finishDownload = resolve));
+  http.request = async (url) => {
+    assert.equal(url, 'https://github.com/dump-first.zip');
+    startDownload();
+    await downloaded;
+    return { response: new Response(bytes) };
+  };
+  const pending = application.archive.update();
+  cleanup.push(async () => {
+    finishDownload();
+    await pending.catch(() => {});
+  });
+  await started;
+  const status = await (await fetch(base + '/api/metadata/status')).json();
+  assert.equal(status.ready, false);
+  assert.equal(status.updating, true);
+  assert.equal(status.phase, 'downloading');
+
+  const paths = [
+    '/api/categories?tag=日常&format=TV&year=2026&season=1&page=2',
+    '/api/search?q=日常',
+    '/api/subjects/1',
+    '/api/catalog?sort=rank&page=2',
+    '/api/catalog?sort=trending&page=2',
+    '/api/calendar',
+  ];
+  for (const path of paths) {
+    const response = await fetch(base + path);
+    assert.equal(response.status, 200, path);
+    const result = await response.json();
+    const item = Array.isArray(result) ? result[0].items[0] : result.items?.[0] || result;
+    assert.equal(item.name_cn, '在线故事', path);
+    assert.equal(item.score, 8.5, path);
+    if (path === '/api/subjects/1') assert.equal(result.episodes[0].id, 101);
+  }
+  const category = requests[0];
+  assert.equal(category.url.searchParams.get('offset'), '24');
+  assert.equal(category.options.method, 'POST');
+  assert.deepEqual(JSON.parse(category.options.body), {
+    keyword: '',
+    sort: 'heat',
+    filter: { type: [2], tag: ['TV', '日常'], air_date: ['>=2026-01-01', '<2026-04-01'] },
+  });
+  const rank = requests.find(({ options }) => options?.body?.includes('"rank"'));
+  assert.deepEqual(JSON.parse(rank.options.body).filter.rank, ['>0']);
+  const trending = requests.find(({ url }) => url.pathname === '/p1/trending/subjects');
+  assert.equal(trending.url.searchParams.get('offset'), '24');
+  const calls = requests.length;
+  for (const path of paths) assert.equal((await fetch(base + path)).status, 200);
+  assert.equal(requests.length, calls, 'online fallback keeps its normal memory cache');
+
+  finishDownload();
+  await pending;
+  for (const path of paths) {
+    const response = await fetch(base + path);
+    assert.equal(response.status, 200, path);
+    assert.equal((await response.json()).source, 'archive', path);
+  }
+  assert.equal(requests.length, calls, 'ready local data takes priority over cached online data');
+});
+
+test('missing local details fall back online, while empty results and invalid requests stay local', async (t) => {
+  const { store, manager, http, archive } = await fixture(t);
+  await manager.update({ file: archive });
+  const requests = [];
+  http.json = async (url) => {
+    const path = new URL(url).pathname;
+    requests.push(path);
+    if (path === '/v0/subjects/9999') return { id: 9999, name_cn: '归档之外的新番' };
+    if (path === '/v0/episodes') return { data: [{ id: 99999, sort: 1 }] };
+    throw new Error(`unexpected upstream request: ${url}`);
+  };
+  const metadata = new MetadataService(http, { local: store });
+  const detail = await metadata.subject(9999);
+  assert.equal(detail.name_cn, '归档之外的新番');
+  assert.equal(detail.episodes[0].id, 99999);
+  assert.equal((await metadata.subject(1)).source, 'archive');
+  assert.equal((await metadata.search('a missing anime')).total, 0);
+  assert.equal((await metadata.catalog('trending', 1000)).items.length, 0);
+  for (const id of ['0', '-1', '1 OR 1=1', '9007199254740992'])
+    await assert.rejects(metadata.subject(id), { status: 400 });
+  await assert.rejects(metadata.search('', { sort: 'invalid' }), { status: 400 });
+  await assert.rejects(metadata.catalog('trending', 0), { status: 400 });
+  assert.deepEqual(requests, ['/v0/subjects/9999', '/v0/episodes']);
+});
+
+test('local database read failures fall back online and recover without waiting for the online cache', async (t) => {
+  const { store, manager, http, archive } = await fixture(t);
+  await manager.update({ file: archive });
+  let requests = 0;
+  http.json = async () => {
+    requests++;
+    return { data: [{ id: 1, name_cn: '在线故事' }], total: 1 };
+  };
+  const metadata = new MetadataService(http, { local: store });
+  const prepare = t.mock.method(store.db, 'prepare', () => {
+    throw new Error('database disk image is malformed');
+  });
+  assert.equal((await metadata.search('日常')).items[0].name_cn, '在线故事');
+  prepare.mock.restore();
+  assert.equal((await metadata.search('日常')).items[0].name_cn, '日常故事');
+  assert.equal(requests, 1);
+});
+
+test('failed online fallbacks return the upstream error and can retry; calendar also falls back from Next to BGM', async (t) => {
+  const { store, http } = await fixture(t);
+  const failure = new HttpError('上游请求超时', 502);
+  let requests = 0;
+  http.json = async () => {
+    requests++;
+    if (requests === 1) throw failure;
+    return { data: [{ id: 1, name_cn: '在线故事' }], total: 1 };
+  };
+  const metadata = new MetadataService(http, { local: store });
+  await assert.rejects(metadata.search('日常'), (error) => error === failure);
+  assert.equal((await metadata.search('日常')).items[0].name_cn, '在线故事');
+  assert.equal(requests, 2);
+  const paths = [];
+  http.json = async (url) => {
+    const path = new URL(url).pathname;
+    paths.push(path);
+    if (path === '/p1/calendar') throw failure;
+    return [{ weekday: { id: 1, cn: '星期一' }, items: [{ id: 1, name_cn: '在线故事' }] }];
+  };
+  assert.equal((await metadata.calendar())[0].items[0].name_cn, '在线故事');
+  assert.deepEqual(paths, ['/p1/calendar', '/calendar']);
 });
 
 test('local recent popularity filters the last 365 days and paginates archive favorites without upstream requests', async (t) => {

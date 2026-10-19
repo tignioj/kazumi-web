@@ -44,7 +44,7 @@ export function MetadataSettings({ notify }) {
         <BookOpen size={19} />
         <div>
           <h2>本地番剧资料</h2>
-          <p>番剧浏览、热门榜单与放送日历使用本地资料</p>
+          <p>番剧浏览、热门榜单与放送日历优先使用本地资料</p>
         </div>
       </div>
       {request.error ? (
@@ -92,7 +92,7 @@ export function MetadataSettings({ notify }) {
             {status.autoUpdate
               ? `每 ${status.intervalHours} 小时自动检查更新。`
               : '自动更新已关闭，可手动检查。'}
-            官方归档每周更新，更新期间仍可浏览已有资料。热门按近一年开播作品的累计收藏人数排序，日历依据已记录的章节日期；封面按需加载并缓存。
+            官方归档每周更新，更新期间仍可浏览已有资料。本地资料未就绪、读取失败或详情未收录时自动请求在线服务。本地热门按近一年开播作品的累计收藏人数排序，日历依据已记录的章节日期；封面按需加载并缓存。
           </p>
           {(error || status.lastError) && (
             <Notice>
