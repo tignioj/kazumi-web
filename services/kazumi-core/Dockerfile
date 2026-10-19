@@ -34,6 +34,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb xauth tini dbus-x11 fonts-noto-cjk ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 kazumi && mkdir /data && chown kazumi:kazumi /data
+# Give WebKit an alternate issuer chain when a server sends the retired AAA
+# cross-sign. Verify it against Ubuntu's existing roots before installing it.
+COPY certificates/sslcom-tls-issuing-rsa-r1.crt /tmp/sslcom-tls-issuing-rsa-r1.crt
+RUN openssl verify -purpose sslserver -CAfile /etc/ssl/certs/ca-certificates.crt \
+      /tmp/sslcom-tls-issuing-rsa-r1.crt \
+    && cp /tmp/sslcom-tls-issuing-rsa-r1.crt /usr/local/share/ca-certificates/ \
+    && update-ca-certificates \
+    && rm /tmp/sslcom-tls-issuing-rsa-r1.crt
 WORKDIR /app
 COPY --from=build /bundle/ ./
 ENV XDG_DATA_HOME=/data LIBGL_ALWAYS_SOFTWARE=1 HOST=0.0.0.0 PORT=7331

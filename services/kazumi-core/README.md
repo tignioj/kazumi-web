@@ -12,7 +12,9 @@ certificates only when that target actually uses an enabled proxy. It reads the
 effective route from the internal egress before each connection, including
 redirects; direct routes keep certificate verification. Requests use separate
 clients so concurrent searches and settings changes cannot reuse relaxed TLS
-connections. No source-specific intermediate certificates are installed.
+connections. Linux WebKit also uses a verified public issuer certificate for
+[alternate chain compatibility](certificates/README.md) when servers send an
+obsolete cross-sign. Certificate and hostname verification remain enabled.
 
 Build and test with `docker build -t kazumi-core:local services/kazumi-core`.
 The runtime includes GStreamer H.264/AAC plugins: source players need WebKit's

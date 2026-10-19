@@ -51,7 +51,7 @@ HLS 在线去广告使用 Kazumi 原生播放器的 FFmpeg `hls_ad_filter` 补�
 
 规则源请求及 Linux WebView 使用 Node 的 DNS 校验出口，沿用片源代理设置和私网访问限制。Bangumi、规则仓库、图片与归档仍使用各自的网络设置。验证码 Cookie 保存在服务端，媒体凭据不放进前端可读链接。
 
-代理请求沿用原版 Kazumi 的证书策略：目标实际走已启用的代理时，允许 HTTPS 证书校验失败；关闭代理或命中直连规则时，仍执行正常校验。此行为适用于所有来源，不添加 AGE 专用证书。
+代理请求沿用原版 Kazumi 的证书策略：目标实际走已启用的代理时，允许 HTTPS 证书校验失败；关闭代理或命中直连规则时，仍执行正常校验。Linux WebView 镜像补充[经过系统根证书验证的公共中间证书](services/kazumi-core/certificates/README.md)，兼容仍发送旧交叉签名链的站点，保留证书及域名校验。
 
 升级时修改原版 Git ref，更新并提交 `pubspec.lock`，对齐所需 Flutter SDK，然后运行服务测试和网页联调。当前固定提交和 SDK 见服务目录及 Dockerfile。
 
