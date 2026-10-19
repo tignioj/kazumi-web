@@ -1,12 +1,15 @@
 name: Verify
 on:
   push:
+    branches:
+      - '**'
   pull_request:
   workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 concurrency:
-  group: verify-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  group: verify-${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 jobs:
   test:
@@ -29,8 +32,8 @@ jobs:
           context: services/kazumi-core
           load: true
           tags: kazumi-core:ci
-          cache-from: type=gha,scope=kazumi-core
-          cache-to: type=gha,scope=kazumi-core,mode=max
+          cache-from: type=gha,scope=kazumi-core-amd64
+          cache-to: type=gha,scope=kazumi-core-amd64,mode=max
       - name: Start the real Kazumi core
         run: |
           docker run --detach --name kazumi-core-ci --network host --shm-size 256m \
