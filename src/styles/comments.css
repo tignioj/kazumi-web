@@ -1,0 +1,193 @@
+.comments-section {
+  margin-top: 36px;
+  padding-top: 28px;
+  border-top: 1px solid var(--line);
+  min-width: 0;
+}
+.comment-tabs {
+  display: flex;
+  gap: 20px;
+  border-bottom: 1px solid var(--line);
+}
+.comment-tabs button {
+  padding: 12px 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  border-bottom: 2px solid transparent;
+}
+.comment-tabs button[aria-selected='true'] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.comment-actions,
+.comment-info,
+.comment-meta,
+.comment-pagination {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.comment-actions {
+  justify-content: flex-end;
+  padding: 18px 0 12px;
+  font-size: 12px;
+}
+.comment-info {
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--muted);
+  padding-bottom: 8px;
+  line-height: 1.8;
+}
+.comment-info .comment-stale {
+  color: var(--accent);
+}
+.comment-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  padding: 22px 0;
+  border-bottom: 1px solid var(--line);
+}
+.comment-avatar {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--surface-soft);
+  color: var(--accent);
+  font-size: 13px;
+}
+.comment-body {
+  flex: 1;
+  min-width: 0;
+}
+.comment-meta {
+  font-size: 12px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.comment-meta a:hover {
+  color: var(--accent);
+}
+.comment-meta time {
+  font-size: 10px;
+  color: var(--muted);
+  margin-left: auto;
+}
+.comment-rating {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--accent);
+}
+.comment-text {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.9;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.comment-text:not(.expanded) {
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.comment-expand {
+  font-size: 11px;
+  margin-top: 8px;
+}
+.comment-replies {
+  margin-top: 12px;
+  padding: 12px 14px;
+  background: var(--surface-soft);
+  border-radius: 6px;
+}
+.comment-replies summary {
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.comment-replies .comment-card {
+  padding: 16px 0;
+}
+.comment-replies .comment-card:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.comment-pagination {
+  justify-content: center;
+  padding-top: 22px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.comment-empty {
+  padding: 28px 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.8;
+}
+.comment-episode-select {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.comment-episode-select select {
+  flex: 1;
+  max-width: 480px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  background: var(--surface);
+  font-size: 12px;
+}
+.player-comments > summary {
+  cursor: pointer;
+  font-size: 17px;
+  line-height: 1.8;
+}
+.player-comments > summary small {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: 12px;
+  font-weight: normal;
+}
+@media (max-width: 600px) {
+  .comment-card {
+    gap: 9px;
+  }
+  .comment-avatar {
+    width: 28px;
+    height: 28px;
+  }
+  .comment-meta {
+    gap: 6px;
+  }
+  .comment-meta time {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+  .comment-replies {
+    padding: 10px;
+  }
+  .comment-episode-select {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .comment-episode-select select {
+    width: 100%;
+  }
+  .player-comments > summary small {
+    display: block;
+    margin-left: 16px;
+  }
+}

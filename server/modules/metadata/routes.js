@@ -2,7 +2,20 @@ import { HttpError } from '../../lib/http.js';
 import { inputText, pageNumber } from '../../lib/validation.js';
 import { categorySearchOptions } from './service.js';
 
-export function registerMetadataRoutes(app, { metadata, archive }) {
+export function registerMetadataRoutes(app, { metadata, archive, comments }) {
+  for (const kind of ['subjects', 'episodes']) {
+    app.get(`/api/${kind}/:id/comments`, async (req, res) => {
+      if (req.query.refresh !== undefined && !['0', '1'].includes(req.query.refresh))
+        throw new HttpError('刷新参数无效');
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(
+        await comments.read(kind, req.params.id, {
+          page: pageNumber(req.query.page),
+          refresh: req.query.refresh === '1',
+        }),
+      );
+    });
+  }
   app.get('/api/catalog', async (req, res) => {
     const sort = req.query.sort || 'trending';
     if (!['rank', 'trending'].includes(sort)) throw new HttpError('排序参数无效');

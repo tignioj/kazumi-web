@@ -2,6 +2,8 @@
 
 React + Node.js 网页端，直接依赖 [原版 Kazumi](https://github.com/Predidit/Kazumi) 的 Dart 核心，支持 Docker Compose 部署。规则执行、XPath/API 解析、视频嗅探和规则验证码均调用原版实现；网页播放使用 [ArtPlayer](https://github.com/zhw2590582/ArtPlayer) 与 hls.js。
 
+接口、上游地址、缓存策略和存储位置见 [API 与持久化](docs/api.md)。
+
 ## 部署
 
 ```bash
@@ -15,7 +17,7 @@ Compose 启动两个服务：
 - `kazumi`：网页、规则管理、元数据、收藏历史、媒体代理和下载缓存。
 - `kazumi-core`：Flutter 服务适配层，直接通过 Git 依赖固定提交的原版 Kazumi。Linux WebView 在 Xvfb 虚拟显示中运行。此服务及其网络出口端口仅在容器网络内使用。
 
-`kazumi-data` 保留原有规则、收藏、历史、图片、下载和番剧元数据库；新增的 `kazumi-core-data` 保存适配服务的初始化设置。迁移沿用原有数据格式。日常停止使用 `docker compose down`，更新使用 `docker compose up -d --build`。
+`kazumi-data` 保留规则、收藏、历史、图片、下载、番剧元数据库和评论缓存；`kazumi-core-data` 保存适配服务的初始化设置。迁移沿用原有数据格式。日常停止使用 `docker compose down`，更新使用 `docker compose up -d --build`。
 
 ## 使用
 
@@ -97,6 +99,12 @@ docker compose exec kazumi npm run metadata:update
 
 更新失败继续读取旧资料。`METADATA_AUTO_UPDATE=false` 关闭自动更新；`METADATA_MODE=remote` 使用远程 Bangumi API。封面经过同源图片缓存，与原有数据卷兼容。
 
+详情页「番剧讨论」提供 Bangumi 短评和按集选择的剧集评论（含回复）；播放页下方可展开「剧集评论」。播放源名称中有明确集数且与 Bangumi 正篇唯一匹配时自动选中，否则手动选择对应剧集。评论只读，可通过链接前往 Bangumi 查看或参与讨论。
+
+评论通过 Bangumi Next API 获取，与本地归档模式独立，沿用「Bangumi API 请求代理」及 API ECH 设置。短评按页缓存；剧集评论由上游一次返回全部讨论及回复，在本地分页。已获取的数据持久保存在 `DATA_DIR/comments/comments.sqlite`（Docker 的 `kazumi-data` 卷），重启和更新元数据后仍可读取。默认缓存 30 分钟，过期或点击「刷新评论」时重新获取；网络失败时继续显示旧缓存和更新时间，未缓存的页面提示重试。首次获取和更新仍需访问 Bangumi。
+
+`COMMENTS_CACHE_TTL_MINUTES` 设置有效时间（默认 `30`，大于 0）；`COMMENTS_CACHE_MAX_BYTES` 设置缓存内容容量（默认 `52428800`，即 50 MiB，大于 0）。超过容量或 2000 个缓存条目时淘汰最早更新的内容；SQLite 复用已分配的磁盘空间。完整迁移时随数据目录或数据卷备份。`BANGUMI_NEXT_URL` 可覆盖上游基址；评论缓存按上游地址隔离。
+
 ## 视频下载与缓存
 
 - 打开剧集，完成 MP4/HLS 解析后点击缓存按钮。任务由服务端执行，关闭网页不影响下载；同一来源、同一剧集不会重复创建任务。
@@ -129,7 +137,7 @@ docker compose exec kazumi npm run metadata:update
 
 - 「视频源请求代理」：片源搜索、剧集解析、视频流、视频缓存下载，以及动态解析和人工验证浏览器中的请求。右上角「视频代理」快捷开关仅控制这一类，立即保存，不改动图片或 API 设置。
 - 「番剧图片请求代理」：Bangumi 原图、wsrv.nl 图片镜像及封面地址查询；不受视频或 API 代理开关影响。
-- 「Bangumi API 请求代理」：分类、搜索、详情、章节、日历等 Bangumi API 请求；代理关闭后按 API ECH 开关连接。
+- 「Bangumi API 请求代理」：评论及远程资料模式下的分类、搜索、详情、章节、日历等 Bangumi API 请求；代理关闭后按 API ECH 开关连接。本地资料查询不访问 Bangumi API。
 - 「规则仓库请求代理」：官方规则目录、规则安装和规则更新，包括 GitHub 原始文件及重定向后的地址。
 - 「资料归档下载代理」：官方归档版本检查和 ZIP 下载，适用于自动更新、网页手动更新和 `npm run metadata:update` 命令行更新。
 

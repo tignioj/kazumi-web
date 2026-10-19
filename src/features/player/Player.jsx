@@ -13,6 +13,7 @@ import {
 import { api } from '../../lib/api.js';
 import { Notice, Spinner } from '../../components/feedback.jsx';
 import { PlayerCachePanel } from './PlayerCachePanel.jsx';
+import { PlayerComments } from '../comments/Comments.jsx';
 
 export function Player({ context, settings, onClose, onProgress, notify, navigate }) {
   const [roads, setRoads] = useState(context.roads || []);
@@ -276,6 +277,11 @@ export function Player({ context, settings, onClose, onProgress, notify, navigat
           ))}
         </div>
       </section>
+      <PlayerComments
+        key={`${context.subjectId}:${episode?.url}`}
+        subjectId={context.subjectId}
+        episodeName={episode?.name}
+      />
     </div>
   );
 }

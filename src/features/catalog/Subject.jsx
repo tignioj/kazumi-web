@@ -7,6 +7,7 @@ import { titleOf } from '../../lib/format.js';
 import { useRequest } from '../../hooks/use-request.js';
 import { Notice, Spinner } from '../../components/feedback.jsx';
 import { SourceSearch } from '../sources/SourceSearch.jsx';
+import { SubjectComments } from '../comments/Comments.jsx';
 
 export function Subject({
   id,
@@ -126,6 +127,7 @@ export function Subject({
           navigate={navigate}
         />
       </section>
+      <SubjectComments key={subject.id} subject={subject} />
     </>
   );
 }

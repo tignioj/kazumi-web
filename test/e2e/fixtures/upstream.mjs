@@ -95,6 +95,36 @@ export async function createUpstream() {
       });
     if (url.pathname === '/v0/search/subjects' || url.pathname === '/v0/subjects')
       return json({ data: [subject, secondSubject], total: 2, limit: 20, offset: 0 });
+    if (/^\/p1\/subjects\/\d+\/comments$/.test(url.pathname)) {
+      const offset = Number(url.searchParams.get('offset') || 0);
+      return json({
+        total: 21,
+        data: Array.from({ length: offset === 0 ? 20 : offset === 20 ? 1 : 0 }, (_, index) => ({
+          id: offset + index + 1,
+          user: { username: 'reader', nickname: '测试读者' },
+          comment: `测试短评 ${offset + index + 1}`,
+          rate: 8,
+          updatedAt: 1792382400,
+        })),
+      });
+    }
+    if (/^\/p1\/episodes\/\d+\/comments$/.test(url.pathname))
+      return json([
+        {
+          id: 201,
+          user: { username: 'watcher', nickname: '测试观众' },
+          content: `剧集 ${url.pathname.split('/')[3]} 的讨论`,
+          createdAt: 1792382400,
+          replies: [
+            {
+              id: 202,
+              user: { username: 'reply', nickname: '回复观众' },
+              content: '这是一条剧集回复',
+              createdAt: 1792382500,
+            },
+          ],
+        },
+      ]);
     if (/^\/(v0|p1)\/subjects\/\d+$/.test(url.pathname))
       return json(url.pathname.endsWith('102') ? secondSubject : subject);
     if (url.pathname === '/v0/episodes')

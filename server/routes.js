@@ -16,6 +16,7 @@ export function registerRoutes(
     watchStore,
     verification,
     metadata,
+    comments,
     archive,
     store,
     engine,
@@ -29,7 +30,7 @@ export function registerRoutes(
   registerWatchRoutes(app, { watchStore });
   registerNetworkRoutes(app, { network, http });
   registerVerificationRoutes(app, { verification });
-  registerMetadataRoutes(app, { metadata, archive });
+  registerMetadataRoutes(app, { metadata, archive, comments });
   registerRuleRoutes(app, { http, store, engine, interactive });
   registerResolveRoute(app, { store, media, downloads, interactive });
   registerDownloadRoutes(app, { downloads, store });

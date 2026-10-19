@@ -16,6 +16,7 @@ import { NativeHlsService, registerNativeHlsRoutes } from './modules/playback/na
 import { ImageCache } from './modules/images/cache.js';
 import { createCoverResolver } from './modules/images/cover-resolver.js';
 import { MetadataService } from './modules/metadata/service.js';
+import { CommentService } from './modules/metadata/comments.js';
 import { VerificationTasks } from './modules/verification/tasks.js';
 import { DownloadManager } from './modules/downloads/manager.js';
 import { secureRequests } from './middleware/security.js';
@@ -53,6 +54,13 @@ export async function createApp(options = {}) {
     ? new ArchiveManager({ store: localMetadata, http: archiveHttp, ...options.archiveOptions })
     : null;
   const metadata = options.metadata || new MetadataService(bangumiHttp, { local: localMetadata });
+  const comments =
+    options.comments ||
+    (await new CommentService({
+      directory: resolve(dataDir, 'comments'),
+      http: bangumiHttp,
+      ...options.commentOptions,
+    }).init());
   const initialRules =
     options.seedRules ??
     (await Promise.all(
@@ -104,6 +112,7 @@ export async function createApp(options = {}) {
     network,
     verification,
     metadata,
+    comments,
     archive,
     store,
     engine,
@@ -122,10 +131,12 @@ export async function createApp(options = {}) {
     downloads,
     archive,
     localMetadata,
+    comments,
     core,
     egress,
     async close() {
       await archive?.close();
+      await comments.close?.();
       localMetadata?.close();
       verification.close();
       await watchStore.pending;
