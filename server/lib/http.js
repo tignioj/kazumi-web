@@ -203,49 +203,49 @@ export function createHttpClient({
   }
   const tunnels = createProxyTunnels({ lookup: dnsLookup.lookup });
   const tlsConnector = buildConnector({ timeout: 15000 });
-  let proxyDispatcher;
-  let proxyKey;
+  const proxyDispatchers = new Map();
   const retiring = new Set();
   function requestDispatcher(settings) {
-    const key = settings?.enabled ? JSON.stringify(settings) : '';
-    if (key !== proxyKey) {
-      if (proxyDispatcher) {
-        const closing = proxyDispatcher.close().catch(() => {});
-        retiring.add(closing);
-        void closing.finally(() => retiring.delete(closing));
-      }
-      proxyKey = key;
-      proxyDispatcher = key
-        ? new Agent({
-            headersTimeout: timeout,
-            bodyTimeout: 60000,
-            connect(options, callback) {
-              const hostname = options.hostname.replace(/^\[|\]$/g, '');
-              tunnels
-                .connect(
-                  settings,
-                  hostname,
-                  Number(options.port) || (options.protocol === 'https:' ? 443 : 80),
-                )
-                .then(
-                  (socket) => {
-                    if (options.protocol !== 'https:') return callback(null, socket);
-                    tlsConnector({ ...options, httpSocket: socket }, (error, secure) => {
-                      if (error) socket.destroy();
-                      callback(error, secure);
-                    });
-                  },
-                  (error) => callback(error, null),
-                );
-            },
-          })
-        : null;
+    if (!settings?.enabled) return dispatcher;
+    const key = JSON.stringify([settings.url, settings.username, settings.password]);
+    let selected = proxyDispatchers.get(key);
+    if (selected) proxyDispatchers.delete(key);
+    else {
+      selected = new Agent({
+        headersTimeout: timeout,
+        bodyTimeout: 60000,
+        connect(options, callback) {
+          const hostname = options.hostname.replace(/^\[|\]$/g, '');
+          tunnels
+            .connect(
+              settings,
+              hostname,
+              Number(options.port) || (options.protocol === 'https:' ? 443 : 80),
+            )
+            .then(
+              (socket) => {
+                if (options.protocol !== 'https:') return callback(null, socket);
+                tlsConnector({ ...options, httpSocket: socket }, (error, secure) => {
+                  if (error) socket.destroy();
+                  callback(error, secure);
+                });
+              },
+              (error) => callback(error, null),
+            );
+        },
+      });
     }
-    return proxyDispatcher || dispatcher;
+    proxyDispatchers.set(key, selected);
+    if (proxyDispatchers.size > 32) {
+      const [oldKey, old] = proxyDispatchers.entries().next().value;
+      proxyDispatchers.delete(oldKey);
+      const closing = old.close().catch(() => {});
+      retiring.add(closing);
+      void closing.finally(() => retiring.delete(closing));
+    }
+    return selected;
   }
   async function request(input, options = {}) {
-    const proxy = getProxySettings();
-    const activeDispatcher = requestDispatcher(proxy);
     let url = checkedUrl(input, { allowPrivate });
     let method = options.method || 'GET';
     let body = options.body;
@@ -253,6 +253,8 @@ export function createHttpClient({
     let dropContentType = false;
     for (let redirects = 0; redirects <= 5; redirects++) {
       options.validateUrl?.(url.href);
+      const proxy = getProxySettings(url.href);
+      const activeDispatcher = requestDispatcher(proxy);
       // Session-aware callers select cookies for every URL, including a
       // redirect to another path on the same origin. The callback returns the
       // complete header set, preserving Range and other caller headers itself.
@@ -293,6 +295,7 @@ export function createHttpClient({
           502,
         );
         if (usingEch) failure.echAccepted = error.echAccepted === true;
+        failure.routing = proxy?.routing;
         throw failure;
       }
       if ([301, 302, 303, 307, 308].includes(response.status) && response.headers.get('location')) {
@@ -317,7 +320,12 @@ export function createHttpClient({
         url = next;
         continue;
       }
-      return { response, url: url.href, ...(usingEch && { echAccepted: true }) };
+      return {
+        response,
+        url: url.href,
+        routing: proxy?.routing,
+        ...(usingEch && { echAccepted: true }),
+      };
     }
     throw new HttpError('上游重定向次数过多', 502);
   }
@@ -349,7 +357,7 @@ export function createHttpClient({
       echTransport?.close();
       await Promise.all([
         dispatcher.close(),
-        proxyDispatcher?.close(),
+        ...[...proxyDispatchers.values()].map((client) => client.close()),
         ...retiring,
         dnsLookup.close(),
         ...[...echChannels].map(closeEch),

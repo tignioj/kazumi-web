@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Download, Sun, Upload } from 'lucide-react';
+import { ArrowRight, Download, Network, Sun, Upload } from 'lucide-react';
 import { downloadJSON } from '../../lib/download-json.js';
 import { useRequest } from '../../hooks/use-request.js';
 import { Notice } from '../../components/feedback.jsx';
@@ -7,19 +7,9 @@ import { PageHeading } from '../../components/PageHeading.jsx';
 import { Modal } from '../../components/Modal.jsx';
 import { normalizeBackup } from './backup.js';
 import { MetadataSettings } from './MetadataSettings.jsx';
-import { NetworkSettings } from './NetworkSettings.jsx';
 import { DownloadSettings } from './DownloadSettings.jsx';
 
-export function Settings({
-  network,
-  settings,
-  setSettings,
-  library,
-  history,
-  watchData,
-  notify,
-  navigate,
-}) {
+export function Settings({ settings, setSettings, library, history, watchData, notify, navigate }) {
   const fileRef = useRef();
   const [pending, setPending] = useState(null);
   const [error, setError] = useState('');
@@ -174,7 +164,20 @@ export function Settings({
           {error && <Notice>{error}</Notice>}
         </section>
         <DownloadSettings notify={notify} navigate={navigate} />
-        <NetworkSettings request={network} notify={notify} />
+        <section className="settings-card" aria-label="代理设置入口">
+          <div className="settings-card-heading">
+            <Network size={19} />
+            <div>
+              <h2>代理设置</h2>
+              <p>代理出口、默认请求策略与自定义分流已集中到独立页面</p>
+            </div>
+          </div>
+          <div className="button-group">
+            <button className="button quiet" onClick={() => navigate('/proxy')}>
+              打开代理设置 <ArrowRight size={15} />
+            </button>
+          </div>
+        </section>
         <MetadataSettings notify={notify} />
         <section className="settings-card about-card">
           <div className="about-brand">

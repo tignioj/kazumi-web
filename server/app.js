@@ -36,7 +36,7 @@ export async function createApp(options = {}) {
       options.httpClient ||
       createHttpClient({
         ...options.httpOptions,
-        getProxySettings: () => proxySettingsFor(network.data, scope),
+        getProxySettings: (url) => proxySettingsFor(network.data, scope, { url }),
       });
     clients.add(client);
     return client;
@@ -76,7 +76,7 @@ export async function createApp(options = {}) {
           allowPrivate: videoHttp.allowPrivate,
           host: process.env.KAZUMI_EGRESS_HOST || '127.0.0.1',
           port: Number(process.env.KAZUMI_EGRESS_PORT || 0),
-          getProxySettings: () => proxySettingsFor(network.data, 'video'),
+          getProxySettings: (url) => proxySettingsFor(network.data, 'video', { url }),
         });
   const store = await new RuleStore(dataDir, initialRules, { core }).init();
   const watchStore = await new WatchStore(dataDir).init();

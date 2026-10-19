@@ -6,6 +6,143 @@ import {
   proxySettingsFor,
 } from '../../shared/network-settings.js';
 
+const routeRule = (patch = {}) => ({
+  id: 'route',
+  name: 'AGE 直连',
+  enabled: true,
+  scope: 'video',
+  matchType: 'domainSuffix',
+  value: 'agedm.io',
+  action: 'direct',
+  proxyId: 'default',
+  ...patch,
+});
+
+test('ordered routing overrides category defaults and selects independent proxy credentials', () => {
+  const settings = normalizeNetworkSettings({
+    videoProxy: true,
+    url: 'http://localhost:17893',
+    username: 'main',
+    password: 'main-secret',
+    proxies: [
+      {
+        id: 'other',
+        name: '其他出口',
+        url: 'socks5://localhost:1080',
+        username: 'other',
+        password: 'other-secret',
+      },
+    ],
+    scopeProxies: { image: 'other' },
+    imageProxy: true,
+    routingRules: [
+      routeRule(),
+      routeRule({ id: 'sub', value: 'api.agedm.io', action: 'proxy', proxyId: 'other' }),
+      routeRule({
+        id: 'global',
+        scope: 'all',
+        value: 'github.com',
+        action: 'proxy',
+        proxyId: 'other',
+      }),
+    ],
+  });
+  const pick = (url, scope = 'video', config = settings) =>
+    proxySettingsFor(config, scope, { url });
+  assert.equal(pick('https://api.agedm.io/path').enabled, false);
+  assert.equal(pick('https://www.agedm.io.:443/path').routing.ruleId, 'route');
+  assert.equal(pick('https://agedm.io.evil.test/').routing.ruleId, null);
+  assert.equal(pick('https://another-agedm.io/').enabled, true);
+  assert.equal(pick('https://lain.bgm.tv/', 'image').password, 'other-secret');
+  assert.equal(pick('https://github.com/', 'archive').enabled, true);
+  assert.equal(pick('https://github.com/', 'archive').routing.proxyName, '其他出口');
+  assert.equal(pick('https://www.agedm.io/', 'archive').enabled, false);
+  assert.equal(pick('https://github.com/', undefined).enabled, true); // default function parameter is video
+  assert.equal(
+    proxySettingsFor(settings, undefined, { url: 'https://github.com/' }).enabled,
+    false,
+  );
+  const reordered = {
+    ...settings,
+    routingRules: [settings.routingRules[1], settings.routingRules[0]],
+  };
+  assert.equal(pick('https://api.agedm.io/', 'video', reordered).password, 'other-secret');
+  const disabled = {
+    ...settings,
+    routingRules: settings.routingRules.map((rule) => ({ ...rule, enabled: false })),
+  };
+  assert.equal(pick('https://agedm.io/', 'video', disabled).enabled, true);
+  assert.equal(pick('https://agedm.io/', 'video', disabled).routing.ruleId, null);
+});
+
+test('all matchers normalize domains, respect suffix boundaries and match IPv4/IPv6 literals', () => {
+  for (const [matchType, value, yes, no] of [
+    ['domain', 'WWW.Example.COM.', 'https://www.example.com/', 'https://sub.www.example.com/'],
+    ['domainSuffix', '*.example.com', 'https://api.example.com/', 'https://fakeexample.com/'],
+    ['domainKeyword', 'EXAMPLE', 'https://an-example.test/', 'https://another.test/'],
+    ['cidr', '203.0.113.0/24', 'https://203.0.113.25/', 'https://203.0.114.25/'],
+    ['cidr', '2001:db8::/32', 'https://[2001:db8:1::1]/', 'https://[2001:db9::1]/'],
+    ['all', '', 'https://anything.test/', null],
+  ]) {
+    const settings = normalizeNetworkSettings({
+      url: 'http://localhost:7890',
+      routingRules: [routeRule({ matchType, value, action: 'proxy' })],
+    });
+    assert.equal(proxySettingsFor(settings, 'video', { url: yes }).enabled, true, matchType);
+    if (no)
+      assert.equal(proxySettingsFor(settings, 'video', { url: no }).enabled, false, matchType);
+  }
+});
+
+test('proxy updates preserve secrets by ID and reject dangling routes or malformed inputs', () => {
+  const original = normalizeNetworkSettings({
+    proxies: [
+      { id: 'a', name: 'A', url: 'http://localhost:7890', username: 'a', password: 'secret-a' },
+      { id: 'b', name: 'B', url: 'http://localhost:7891', username: 'b', password: 'secret-b' },
+    ],
+  });
+  const reordered = normalizeNetworkSettings(
+    {
+      proxies: [
+        { id: 'b', name: 'B2', url: 'http://localhost:7892' },
+        { id: 'a', name: 'A2', url: 'http://localhost:7893', password: '' },
+      ],
+    },
+    original,
+  );
+  assert.equal(reordered.proxies[0].password, 'secret-b');
+  assert.equal(reordered.proxies[0].username, 'b');
+  assert.equal(reordered.proxies[1].password, '');
+  for (const patch of [
+    { proxies: [{ id: 'default', url: 'http://localhost' }] },
+    {
+      proxies: [
+        { id: 'a', url: 'http://localhost' },
+        { id: 'a', url: 'http://localhost' },
+      ],
+    },
+    { proxies: [{ id: 'x', url: 'http://user:secret@localhost' }] },
+    { scopeProxies: { video: 'missing' } },
+    { routingRules: [routeRule({ scope: 'invalid' })] },
+    { routingRules: [routeRule({ action: 'invalid' })] },
+    { routingRules: [routeRule({ action: 'proxy', proxyId: 'missing' })] },
+    { routingRules: [routeRule({ value: 'https://agedm.io/' })] },
+    { routingRules: [routeRule({ value: 'user@agedm.io' })] },
+    { routingRules: [routeRule({ value: 'agedm.io:443' })] },
+    { routingRules: [routeRule({ value: 'foo.*.agedm.io' })] },
+    { routingRules: [routeRule({ matchType: 'cidr', value: '1.2.3.4/99' })] },
+    { routingRules: [routeRule(), routeRule()] },
+    { routingRules: Array.from({ length: 201 }, (_, i) => routeRule({ id: `r${i}` })) },
+  ])
+    assert.throws(() => normalizeNetworkSettings(patch, original));
+  const selected = normalizeNetworkSettings(
+    { videoProxy: true, scopeProxies: { video: 'a' } },
+    original,
+  );
+  assert.equal(proxySettingsFor(selected, 'video').url, 'http://localhost:7890/');
+  assert.throws(() => normalizeNetworkSettings({ proxies: [] }, selected), /不存在/);
+});
+
 test('proxy settings accept supported endpoints and reject malformed addresses and credentials', () => {
   for (const url of ['http://127.0.0.1:7890', 'https://proxy.example:8443', 'socks5://[::1]:1080'])
     assert.equal(normalizeNetworkSettings({ videoProxy: true, url }).videoProxy, true);

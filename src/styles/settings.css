@@ -41,6 +41,112 @@
 }
 .network-result {
   margin-top: 16px;
+  overflow-wrap: anywhere;
+}
+.network-default-help {
+  margin-top: 20px;
+}
+.proxy-default-choice {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-shrink: 0;
+}
+.proxy-default-choice select {
+  max-width: 165px;
+}
+.routing-settings {
+  border-top: 1px solid var(--line);
+  padding-top: 22px;
+}
+.routing-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+}
+.routing-heading h3 {
+  font-size: 13px;
+  font-weight: 550;
+}
+.routing-heading h4 {
+  font-size: 12px;
+  font-weight: 500;
+}
+.routing-heading p {
+  margin-top: 7px;
+  line-height: 1.8;
+}
+.routing-heading .button {
+  white-space: nowrap;
+  font-size: 11px;
+}
+.routing-entry {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  display: grid;
+  gap: 16px;
+}
+.routing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.routing-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.routing-entry .routing-enabled {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.routing-enabled input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+}
+.routing-preset {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+.routing-preset .button {
+  min-height: 40px;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.routing-empty {
+  padding: 18px;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+}
+.routing-settings > p {
+  line-height: 1.9;
+}
+.routing-entry button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+@media (max-width: 600px) {
+  .routing-grid,
+  .routing-preset {
+    grid-template-columns: 1fr;
+  }
+  .proxy-default-choice {
+    flex-direction: column;
+    align-items: end;
+    gap: 8px;
+  }
+  .proxy-default-choice select {
+    max-width: 125px;
+  }
+  .routing-heading {
+    flex-wrap: wrap;
+  }
 }
 @media (max-width: 600px) {
   .network-credentials {

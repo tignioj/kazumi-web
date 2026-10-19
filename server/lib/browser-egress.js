@@ -61,7 +61,11 @@ export async function createBrowserEgress({
   const sockets = new Set();
   const agent = new http.Agent({ keepAlive: false, lookup: dns.lookup, maxSockets: 64 });
   agent.createConnection = (options, callback) => {
-    const proxy = getProxySettings();
+    const hostname = options.host.replace(/^\[|\]$/g, '');
+    const url = new URL(
+      `http://${net.isIPv6(hostname) ? `[${hostname}]` : hostname}:${options.port || 80}`,
+    );
+    const proxy = getProxySettings(url.href);
     if (!proxy?.enabled) return net.connect({ ...options, lookup: dns.lookup });
     tunnels
       .connect(proxy, options.host.replace(/^\[|\]$/g, ''), Number(options.port) || 80)
@@ -135,7 +139,7 @@ export async function createBrowserEgress({
       client.end(`HTTP/1.1 ${errorStatus(error)} Rejected\r\nConnection: close\r\n\r\n`);
       return;
     }
-    const proxy = getProxySettings();
+    const proxy = getProxySettings(target.href);
     let remote;
     try {
       remote = track(

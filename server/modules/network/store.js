@@ -35,8 +35,15 @@ export class NetworkStore {
     return this;
   }
   publicSettings(data = this.data) {
-    const { password, ...settings } = data;
-    return { ...settings, hasPassword: Boolean(password) };
+    const { password, proxies, ...settings } = data;
+    return {
+      ...settings,
+      hasPassword: Boolean(password),
+      proxies: proxies.map(({ password, ...proxy }) => ({
+        ...proxy,
+        hasPassword: Boolean(password),
+      })),
+    };
   }
   validate(input) {
     try {

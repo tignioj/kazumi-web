@@ -18,6 +18,7 @@ import {
   DEFAULT_NETWORK_SETTINGS,
   PROXY_SCOPES,
   proxySettingsFor,
+  normalizeNetworkSettings,
 } from '../../shared/network-settings.js';
 import { connectionTestRequest } from '../../server/modules/network/routes.js';
 
@@ -29,6 +30,211 @@ const certificate = await readFile(
 const key = await readFile(new URL('../fixtures/network/localhost-key.pem', import.meta.url));
 const originalCAs = tls.getCACertificates('default');
 tls.setDefaultCACertificates([...originalCAs, certificate.toString()]);
+
+const routingRule = (id, value, proxyId, scope = 'all') => ({
+  id,
+  name: id,
+  enabled: true,
+  scope,
+  matchType: 'domain',
+  value,
+  action: proxyId === 'direct' ? 'direct' : 'proxy',
+  proxyId: proxyId === 'direct' ? 'default' : proxyId,
+});
+
+test('redirects re-evaluate ordered routes across two authenticated proxies and direct transport for every scope', async (t) => {
+  const first = await httpProxy(t);
+  const second = await httpProxy(t);
+  const seen = [];
+  let port;
+  const origin = http.createServer((req, res) => {
+    seen.push({
+      host: req.headers.host,
+      authorization: req.headers.authorization,
+      proxyAuth: req.headers['proxy-authorization'],
+    });
+    if (req.url === '/start')
+      return res.writeHead(302, { location: `http://cdn.fixture:${port}/middle` }).end();
+    if (req.url === '/middle')
+      return res.writeHead(302, { location: `http://plain.fixture:${port}/done` }).end();
+    res.end('routed');
+  });
+  port = await listen(t, origin);
+  const settings = normalizeNetworkSettings({
+    url: first.settings.url,
+    ...credentials,
+    proxies: [{ id: 'second', name: '第二出口', ...second.settings }],
+    routingRules: [
+      routingRule('main', 'main.fixture', 'default'),
+      routingRule('cdn', 'cdn.fixture', 'second'),
+      routingRule('plain', 'plain.fixture', 'direct'),
+    ],
+  });
+  for (const scope of Object.keys(PROXY_SCOPES)) {
+    const client = createHttpClient({
+      allowPrivate: true,
+      dnsOverHttpsUrl: '',
+      resolver: async () => [{ address: '127.0.0.1', family: 4 }],
+      getProxySettings: (url) => proxySettingsFor(settings, scope, { url }),
+    });
+    const beforeFirst = first.calls.length,
+      beforeSecond = second.calls.length;
+    try {
+      const { response, routing } = await client.request(`http://main.fixture:${port}/start`, {
+        headers: { authorization: 'Bearer private' },
+      });
+      assert.equal(await response.text(), 'routed');
+      assert.equal(routing.ruleId, 'plain');
+      assert.equal(routing.action, 'direct');
+      assert.equal(first.calls.length - beforeFirst, 1, scope);
+      assert.equal(second.calls.length - beforeSecond, 1, scope);
+      assert.equal(seen.at(-1).authorization, undefined);
+      assert.equal(seen.at(-2).authorization, undefined);
+      assert.equal(seen.at(-3).authorization, 'Bearer private');
+      assert.ok(seen.every((request) => request.proxyAuth === undefined));
+    } finally {
+      await client.close();
+    }
+  }
+});
+
+test('core/browser HTTP and HTTPS tunnels apply the same domain routes and keep DNS guards', async (t) => {
+  const origin = await upstream(t);
+  const first = await httpProxy(t);
+  const second = await httpProxy(t);
+  let settings = normalizeNetworkSettings({
+    videoProxy: true,
+    url: first.settings.url,
+    ...credentials,
+    proxies: [{ id: 'second', name: '第二出口', ...second.settings }],
+    routingRules: [routingRule('select-second', 'localhost', 'second', 'video')],
+  });
+  const egress = await createBrowserEgress({
+    allowPrivate: true,
+    dnsOverHttpsUrl: '',
+    resolver: async () => [{ address: '127.0.0.1', family: 4 }],
+    getProxySettings: (url) => proxySettingsFor(settings, 'video', { url }),
+  });
+  t.after(() => egress.close());
+  const plain = () =>
+    new Promise((resolve, reject) => {
+      http
+        .get(egress.url, { path: `${origin.url}/browser`, agent: false }, (response) => {
+          response.resume();
+          response.on('end', () => resolve(response.statusCode));
+        })
+        .on('error', reject);
+    });
+  const tunnel = () =>
+    new Promise((resolve, reject) => {
+      const request = http.request(egress.url, {
+        method: 'CONNECT',
+        path: `localhost:${origin.port}`,
+        agent: false,
+      });
+      request.on('connect', (response, socket) => {
+        socket.destroy();
+        resolve(response.statusCode);
+      });
+      request.on('error', reject);
+      request.end();
+    });
+  assert.equal(await plain(), 200);
+  assert.equal(await tunnel(), 200);
+  assert.equal(first.calls.length, 0);
+  assert.equal(second.calls.length, 2);
+  settings = normalizeNetworkSettings(
+    { routingRules: [routingRule('direct', 'localhost', 'direct', 'video')] },
+    settings,
+  );
+  assert.equal(await plain(), 200);
+  assert.equal(await tunnel(), 200);
+  assert.equal(second.calls.length, 2);
+  const guarded = await createBrowserEgress({
+    dnsOverHttpsUrl: '',
+    getProxySettings: (url) => proxySettingsFor(settings, 'video', { url }),
+  });
+  t.after(() => guarded.close());
+  const status = await new Promise((resolve, reject) =>
+    http
+      .get(guarded.url, { path: origin.url, agent: false }, (response) => {
+        response.resume();
+        response.on('end', () => resolve(response.statusCode));
+      })
+      .on('error', reject),
+  );
+  assert.equal(status, 403);
+  assert.equal(second.calls.length, 2);
+});
+
+test('multi-proxy credentials persist by ID, previews use drafts and invalid deletes preserve saved routes', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'kazumi-routing-'));
+  const application = await createApp({
+    dataDir: directory,
+    seedRules: [],
+    metadata: {},
+    egress: false,
+    httpOptions: { allowPrivate: true, dnsOverHttpsUrl: '' },
+  });
+  t.after(async () => {
+    await application.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const port = await listen(t, http.createServer(application.app));
+  const endpoint = `http://127.0.0.1:${port}/api/network-settings`;
+  const request = async (path, body, method = 'POST') => {
+    const response = await fetch(endpoint + path, {
+      method,
+      headers: { 'content-type': 'application/json' },
+      body: body && JSON.stringify(body),
+    });
+    return { status: response.status, data: await response.json() };
+  };
+  const config = {
+    proxies: [
+      { id: 'a', name: 'A', url: 'http://localhost:7890', username: 'a', password: 'private-a' },
+      { id: 'b', name: 'B', url: 'socks5://localhost:7891', username: 'b', password: 'private-b' },
+    ],
+    videoProxy: true,
+    scopeProxies: { video: 'a' },
+    routingRules: [routingRule('rule-b', 'github.com', 'b')],
+  };
+  const saved = await request('', config, 'PUT');
+  assert.equal(saved.status, 200);
+  assert.ok(
+    saved.data.proxies.every((proxy) => proxy.hasPassword && !Object.hasOwn(proxy, 'password')),
+  );
+  assert.doesNotMatch(JSON.stringify(saved.data), /private-[ab]/);
+  const reload = await new NetworkStore(directory).init();
+  assert.equal(reload.data.proxies[0].password, 'private-a');
+  assert.equal(reload.data.proxies[1].password, 'private-b');
+  const draft = await request('/preview', {
+    scope: 'video',
+    url: 'https://github.com/',
+    settings: { routingRules: [routingRule('draft-direct', 'github.com', 'direct')] },
+  });
+  assert.equal(draft.data.routing.action, 'direct');
+  assert.equal(draft.data.routing.ruleName, 'draft-direct');
+  assert.deepEqual(
+    (await request('', undefined, 'GET')).data.routingRules,
+    saved.data.routingRules,
+  );
+  const reordered = await request(
+    '',
+    {
+      proxies: saved.data.proxies
+        .toReversed()
+        .map((proxy, index) => ({ ...proxy, ...(index === 0 && { password: '' }) })),
+    },
+    'PUT',
+  );
+  assert.equal(reordered.data.proxies[0].hasPassword, false);
+  assert.equal(application.network.data.proxies[0].id, 'b');
+  assert.equal(application.network.data.proxies[1].password, 'private-a');
+  const invalid = await request('', { proxies: [] }, 'PUT');
+  assert.equal(invalid.status, 400);
+  assert.deepEqual((await request('', undefined, 'GET')).data, reordered.data);
+});
 
 async function listen(t, server) {
   const sockets = new Set();

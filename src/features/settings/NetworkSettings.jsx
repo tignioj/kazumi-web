@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Network, Save, Wifi } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { Notice } from '../../components/feedback.jsx';
+import { ProxyOptions, ProxyRouting } from './ProxyRouting.jsx';
 
 const imageModes = { mirror: '镜像', ech: 'ECH', direct: '直连' };
 const proxyRows = [
@@ -83,6 +84,9 @@ export function NetworkSettings({ request, notify }) {
       bangumiEch: form.bangumiEch,
       imageAcceleration: form.imageAcceleration,
       echDohUrl: form.echDohUrl,
+      proxies: form.proxies || [],
+      scopeProxies: form.scopeProxies || {},
+      routingRules: form.routingRules || [],
     };
     if (passwordChanged) settings.password = form.password;
     try {
@@ -91,36 +95,47 @@ export function NetworkSettings({ request, notify }) {
         setForm({ ...saved, password: '' });
         setPasswordChanged(false);
         setResult('saved');
-        notify('网络设置已保存');
+        notify('代理设置已保存');
       } else {
-        const tested = await api('/network-settings/test', {
+        const tested = await api(`/network-settings/${action === 'preview' ? 'preview' : 'test'}`, {
           method: 'POST',
           body: JSON.stringify({ settings, scope: testScope, url: testUrl }),
         });
-        const mode = { proxy: '代理', ech: 'ECH', direct: '直连', mirror: '镜像' }[tested.mode];
+        const route = tested.routing?.ruleName
+          ? `命中「${tested.routing.ruleName}」`
+          : '按类型默认策略';
+        const outbound =
+          tested.routing?.action === 'proxy' ? `代理「${tested.routing.proxyName}」` : '应用直连';
+        const mode = { proxy: '代理', ech: 'ECH', direct: '应用直连', mirror: '镜像' }[tested.mode];
         setResult(
-          `${testLabel} · ${mode}${tested.mirror && tested.mode === 'proxy' ? ' / 镜像' : ''}测试成功 · HTTP ${tested.status} · ${tested.elapsedMs} ms。测试不会保存设置。`,
+          action === 'preview'
+            ? `${testLabel} · ${route} · ${outbound} · 目标 ${tested.routing.hostname}。仅预览，不发起连接或保存设置。`
+            : `${testLabel} · ${route} · ${outbound} · ${mode}${tested.mirror && tested.mode === 'proxy' ? ' / 镜像' : ''}测试成功 · HTTP ${tested.status} · ${tested.elapsedMs} ms。测试不会保存设置。`,
         );
       }
     } catch (error) {
-      setError(action === 'test' ? `${testLabel}测试失败：${error.message}` : error.message);
+      setError(
+        action !== 'save'
+          ? `${testLabel}${action === 'preview' ? '分流预览' : '测试'}失败：${error.message}`
+          : error.message,
+      );
     } finally {
       setBusy('');
     }
   };
   return (
-    <section id="network-settings" className="settings-card" aria-label="网络设置">
+    <section id="network-settings" className="settings-card" aria-label="代理与网络配置">
       <div className="settings-card-heading">
         <Network size={19} />
         <div>
-          <h2>网络设置</h2>
+          <h2>代理与分流</h2>
           <p>服务器共享设置，适用于所有连接此服务器的设备</p>
         </div>
       </div>
       {request.error ? (
         <Notice onRetry={request.retry}>{request.error}</Notice>
       ) : !form ? (
-        <p className="muted small">正在读取网络设置…</p>
+        <p className="muted small">正在读取代理设置…</p>
       ) : (
         <form
           className="network-form"
@@ -129,28 +144,43 @@ export function NetworkSettings({ request, notify }) {
             void submit('save');
           }}
         >
-          {proxyRows.map(({ key, label, help }) => (
+          <p className="network-default-help muted small">
+            以下开关和代理选择作为类型默认策略，自定义分流规则优先。
+          </p>
+          {proxyRows.map(({ scope, key, label, help }) => (
             <div className="setting-row" key={key}>
               <div>
                 <h3>{label}</h3>
                 <p>{help}</p>
               </div>
-              <button
-                type="button"
-                className={`switch ${form[key] ? 'on' : ''}`}
-                role="switch"
-                aria-checked={form[key]}
-                aria-label={label}
-                disabled={disabled}
-                onClick={() => change(key, !form[key])}
-              >
-                <span />
-              </button>
+              <div className="proxy-default-choice">
+                <select
+                  aria-label={`${label}默认出口`}
+                  disabled={disabled}
+                  value={form.scopeProxies?.[scope] || 'default'}
+                  onChange={(event) =>
+                    change('scopeProxies', { ...form.scopeProxies, [scope]: event.target.value })
+                  }
+                >
+                  <ProxyOptions proxies={form.proxies || []} />
+                </select>
+                <button
+                  type="button"
+                  className={`switch ${form[key] ? 'on' : ''}`}
+                  role="switch"
+                  aria-checked={form[key]}
+                  aria-label={label}
+                  disabled={disabled}
+                  onClick={() => change(key, !form[key])}
+                >
+                  <span />
+                </button>
+              </div>
             </div>
           ))}
           <fieldset disabled={disabled} className="network-fields">
             <label>
-              <span>代理地址</span>
+              <span>默认代理地址</span>
               <input
                 type="text"
                 value={form.url}
@@ -162,7 +192,7 @@ export function NetworkSettings({ request, notify }) {
               />
             </label>
             <p id="proxy-address-help" className="muted small">
-              五类请求共用此代理地址和认证信息，开关分别生效。支持 http://、https:// 和
+              选择“默认代理”时使用此地址和认证信息，其他出口在下方添加。支持 http://、https:// 和
               socks5://。Docker 中的本机地址指向容器自身，访问宿主机可使用 host.docker.internal。
             </p>
             <div className="network-credentials">
@@ -193,10 +223,11 @@ export function NetworkSettings({ request, notify }) {
               </button>
             )}
           </fieldset>
+          <ProxyRouting form={form} change={change} scopes={proxyRows} disabled={disabled} />
           <div className="setting-row">
             <div>
               <h3>启用 Bangumi API ECH</h3>
-              <p>API 代理关闭时按此开关连接。封面单独设置，ECH 失败时会报告错误。</p>
+              <p>API 请求分流至应用直连时按此开关连接。封面单独设置，ECH 失败时会报告错误。</p>
             </div>
             <button
               type="button"
@@ -214,7 +245,8 @@ export function NetworkSettings({ request, notify }) {
             <div>
               <h3 id="image-acceleration-label">封面请求方式</h3>
               <p id="image-acceleration-help">
-                镜像通过 wsrv.nl 加载，ECH 加密握手，直连加载原图。图片代理开启时优先使用代理。
+                镜像通过 wsrv.nl 加载，ECH
+                加密握手，直连加载原图。按实际目标域名应用分流，分流至代理时优先使用代理。
               </p>
             </div>
             <select
@@ -285,12 +317,20 @@ export function NetworkSettings({ request, notify }) {
           </fieldset>
           <p className="muted small">
             保存后新请求即时生效，无需重启，已有连接可能继续使用原设置，封面缓存继续复用。
-            右上角仅控制视频请求代理。
+            右上角仅控制视频请求的默认代理，命中的自定义规则仍优先。
           </p>
           <div className="button-group">
             <button type="submit" className="button primary" disabled={disabled}>
               <Save size={15} />
-              {busy === 'save' ? '正在保存…' : '保存网络设置'}
+              {busy === 'save' ? '正在保存…' : '保存代理设置'}
+            </button>
+            <button
+              type="button"
+              className="button quiet"
+              disabled={disabled || !testUrl.trim()}
+              onClick={() => submit('preview')}
+            >
+              {busy === 'preview' ? '正在查看…' : '查看分流'}
             </button>
             <button
               type="button"
@@ -305,7 +345,7 @@ export function NetworkSettings({ request, notify }) {
           {result && (
             <p className="network-result muted small" role="status">
               {result === 'saved'
-                ? `已保存。${proxyRows.map(({ key, label }) => `${label}：${request.data[key] ? '开' : '关'}`).join('；')}。`
+                ? `已保存 ${1 + (request.data.proxies?.length || 0)} 个代理出口、${request.data.routingRules?.length || 0} 条分流规则。未命中规则时使用五类默认设置。`
                 : result}
             </p>
           )}

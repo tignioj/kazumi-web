@@ -16,7 +16,7 @@ for (let i = 0; i < args.length; i++) {
 }
 const network = await new NetworkStore(resolve(process.env.DATA_DIR || 'data')).init();
 const http = createHttpClient({
-  getProxySettings: () => proxySettingsFor(network.data, 'archive'),
+  getProxySettings: (url) => proxySettingsFor(network.data, 'archive', { url }),
 });
 const store = await new LocalMetadataStore(
   resolve(process.env.DATA_DIR || 'data', 'metadata'),

@@ -25,16 +25,32 @@ export function registerNetworkRoutes(app, { network, http }) {
   app.put('/api/network-settings', async (req, res) => {
     res.set('Cache-Control', 'no-store').json(await network.save(req.body));
   });
-  app.post('/api/network-settings/test', async (req, res) => {
+  const prepare = (req) => {
     const settings = network.validate(req.body?.settings);
     const scope = req.body?.scope ?? 'bangumi';
     if (!Object.hasOwn(PROXY_SCOPES, scope)) throw new HttpError('请选择有效的代理测试范围');
-    const proxy = proxySettingsFor(settings, scope);
     const target = checkedUrl(req.body?.url, { allowPrivate: http.allowPrivate });
     const test = connectionTestRequest(settings, scope, target.href);
+    return { settings, scope, test };
+  };
+  app.post('/api/network-settings/preview', (req, res) => {
+    const { settings, scope, test } = prepare(req);
+    res.json({
+      routing: proxySettingsFor(settings, scope, { url: test.url }).routing,
+      target: test.url,
+      mirror: test.mirror,
+    });
+  });
+  app.post('/api/network-settings/test', async (req, res) => {
+    const { settings, scope, test } = prepare(req);
+    let routing = proxySettingsFor(settings, scope, { url: test.url }).routing;
     const client = createHttpClient({
       allowPrivate: http.allowPrivate,
-      getProxySettings: () => proxy,
+      getProxySettings: (url) => {
+        const proxy = proxySettingsFor(settings, scope, { url });
+        routing = proxy.routing;
+        return proxy;
+      },
       timeout: 10000,
     });
     const started = Date.now();
@@ -50,9 +66,23 @@ export function registerNetworkRoutes(app, { network, http }) {
         elapsedMs: Date.now() - started,
         status: response.status,
         scope,
+        routing,
         mirror: test.mirror,
-        mode: proxy.enabled ? 'proxy' : test.mirror ? 'mirror' : echAccepted ? 'ech' : 'direct',
+        mode:
+          routing.action === 'proxy'
+            ? 'proxy'
+            : test.mirror
+              ? 'mirror'
+              : echAccepted
+                ? 'ech'
+                : 'direct',
       });
+    } catch (error) {
+      const route = routing.ruleName ? `命中「${routing.ruleName}」` : '按类型默认策略';
+      const outbound = routing.action === 'proxy' ? `代理「${routing.proxyName}」` : '应用直连';
+      res
+        .status(error.status || 502)
+        .json({ error: `${route} · ${outbound}：${error.message}`, routing });
     } finally {
       await client.close();
     }

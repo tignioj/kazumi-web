@@ -12,6 +12,7 @@ import {
   LayoutGrid,
   Menu,
   Moon,
+  Network,
   Search,
   Settings2,
   SlidersHorizontal,
@@ -34,6 +35,7 @@ import { Downloads } from './features/downloads/Downloads.jsx';
 import { Sources } from './features/sources/Sources.jsx';
 import { Rules } from './features/rules/Rules.jsx';
 import { Settings } from './features/settings/Settings.jsx';
+import { ProxySettings } from './features/settings/ProxySettings.jsx';
 import { Player } from './features/player/Player.jsx';
 
 const NAV = [
@@ -51,7 +53,8 @@ export default function App() {
     origin: null,
     scrollY: null,
   }));
-  const { route, origin } = navigation;
+  const route = navigation.route === '/settings?section=network' ? '/proxy' : navigation.route;
+  const { origin } = navigation;
   const watchData = useWatchData(api);
   const network = useNetworkSettings();
   const { library, history, saveProgress } = watchData;
@@ -134,12 +137,9 @@ export default function App() {
       window.scrollTo({ top: navigation.scrollY, behavior: 'instant' });
   }, [navigation]);
   useEffect(() => {
-    if (watchData.loading || network.loading || route !== '/settings?section=network') return;
-    const frame = requestAnimationFrame(() => {
-      document.getElementById('network-settings')?.scrollIntoView({ behavior: 'instant' });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [route, watchData.loading, network.loading]);
+    if (navigation.route === '/settings?section=network')
+      window.history.replaceState(null, '', '#/proxy');
+  }, [navigation.route]);
   useEffect(() => {
     const media = matchMedia('(prefers-color-scheme: dark)');
     const update = () =>
@@ -280,6 +280,17 @@ export default function App() {
             )}
           </a>
           <a
+            className={`nav-item ${section === 'proxy' ? 'active' : ''}`}
+            href="#/proxy"
+            onClick={() => {
+              setSidebarOpen(false);
+              setPlayer(null);
+            }}
+          >
+            <Network size={19} strokeWidth={1.7} />
+            <span>代理设置</span>
+          </a>
+          <a
             className={`nav-item ${section === 'settings' ? 'active' : ''}`}
             href="#/settings"
             onClick={() => {
@@ -314,7 +325,8 @@ export default function App() {
             <Menu size={22} />
           </button>
           <div className="topbar-location">
-            {NAV.find((i) => i.id === section)?.sub || 'YOUR ANIME SPACE'}
+            {NAV.find((i) => i.id === section)?.sub ||
+              (section === 'proxy' ? 'PROXY SETTINGS' : 'YOUR ANIME SPACE')}
           </div>
           <form
             className="global-search"
@@ -332,17 +344,7 @@ export default function App() {
             />
             <kbd>↵</kbd>
           </form>
-          <ProxyToggle
-            network={network}
-            notify={notify}
-            onConfigure={() => {
-              if (route === '/settings?section=network')
-                document
-                  .getElementById('network-settings')
-                  ?.scrollIntoView({ behavior: 'instant' });
-              else navigate('/settings?section=network');
-            }}
-          />
+          <ProxyToggle network={network} notify={notify} onConfigure={() => navigate('/proxy')} />
           <button
             className="theme-toggle icon-button"
             onClick={() =>
@@ -458,9 +460,9 @@ export default function App() {
                   blockedUpdates={ruleUpdates?.blocked || []}
                 />
               )}
+              {section === 'proxy' && <ProxySettings network={network} notify={notify} />}
               {section === 'settings' && (
                 <Settings
-                  network={network}
                   settings={settings}
                   setSettings={setSettings}
                   library={library}
@@ -480,6 +482,7 @@ export default function App() {
                 'subject',
                 'sources',
                 'rules',
+                'proxy',
                 'settings',
               ].includes(section) && (
                 <Empty
