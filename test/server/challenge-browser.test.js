@@ -187,6 +187,66 @@ const automaticRule = (baseURL, config) => ({
   },
 });
 
+for (const automatic of [false, true]) {
+  browserTest(
+    `header-only Cloudflare challenges complete ${automatic ? 'automatic' : 'manual'} POST verification without navigation and reuse clearance`,
+    async (t) => {
+      let grants = 0;
+      const blocked = [];
+      const resultHtml = '<article><a href="/show">Found</a></article>';
+      const gate = `<button onclick="fetch('/grant', {method:'POST'}).then(() => {
+        document.body.innerHTML = ${JSON.stringify(resultHtml).replaceAll('"', '&quot;')};
+        if (window.KazumiCaptcha) window.KazumiCaptcha.done();
+      })">Continue</button>`;
+      const { baseURL, engine, resolver } = await fixture(t, async (request, response) => {
+        if (request.url === '/grant') {
+          grants++;
+          response.setHeader('set-cookie', 'verified=1; Path=/; HttpOnly');
+          return response.end('ok');
+        }
+        if (request.headers.cookie?.includes('verified=1')) return html(response, resultHtml);
+        blocked.push({ method: request.method, body: await body(request) });
+        response.setHeader('cf-mitigated', 'challenge');
+        return html(response, gate, 403);
+      });
+      const rule = {
+        ...automaticRule(
+          baseURL,
+          automatic
+            ? { captchaType: 3, captchaScript: 'document.querySelector("button").click();' }
+            : { ...captchaConfig, captchaDetectType: 2, captchaDetectValue: 'not in the response' },
+        ),
+        usePost: true,
+      };
+      assert.equal(hasChallenge(gate, rule), false, 'the response header is the only detector');
+      let rounds = 0;
+      const options = {
+        sessionOwner: 'cf-header-owner',
+        async onVerification({ page, reason }) {
+          assert.equal(automatic, false, 'automatic rules do not need user interaction');
+          assert.equal(reason, 'challenge');
+          rounds++;
+          await page.locator('button').click();
+        },
+      };
+      const expected = [{ name: 'Found', url: `${baseURL}/show` }];
+      assert.deepEqual(await engine.search(rule, '中文 &', options), expected);
+      assert.deepEqual(await engine.search(rule, '中文 &', options), expected);
+      assert.equal(grants, 1);
+      assert.equal(rounds, automatic ? 0 : 1);
+      assert.equal(blocked.length, 2, 'one HTTP attempt and one browser navigation');
+      assert.ok(
+        blocked.every(
+          ({ method, body }) =>
+            method === 'POST' && new URLSearchParams(body).get('wd') === '中文 &',
+        ),
+      );
+      assert.equal(resolver.active.size, 0);
+      assert.equal(resolver.browser.contexts().length, 0);
+    },
+  );
+}
+
 browserTest(
   'automatic verification detects and clicks hidden XPath controls with an empty detector',
   async (t) => {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { RuleEngine } from '../../server/modules/rules/engine.js';
 import { parseImport } from '../../server/modules/rules/store.js';
-import { buildCases, canonicalRequest, keyword, normalizeOrigin } from './corpus.mjs';
+import { buildCases, canonicalRequest, normalizeOrigin, searchCase } from './corpus.mjs';
 
 const origin = 'http://fixture.example';
 const golden = JSON.parse(await readFile(new URL('./golden.json', import.meta.url)));
@@ -25,8 +25,15 @@ for (const c of buildCases(origin)) {
     const http = {
       async request(url, options) {
         requests.push(canonicalRequest(url, options));
-        const raw = requests.length === 1 ? c.search : c.chapters;
-        return { url, response: typeof raw === 'string' ? new Response(raw) : Response.json(raw) };
+        const search = requests.length === 1;
+        const raw = search ? c.search : c.chapters;
+        return {
+          url,
+          response:
+            typeof raw === 'string'
+              ? new Response(raw, search ? c.searchResponse : undefined)
+              : Response.json(raw),
+        };
       },
       async text(url, options) {
         const { response } = await this.request(url, options);
@@ -37,7 +44,7 @@ for (const c of buildCases(origin)) {
     parseImport(c.rule);
     const actual = {
       id: c.id,
-      search: normalizeOrigin(await engine.search(c.rule, keyword), origin),
+      search: normalizeOrigin(await searchCase(engine, c), origin),
       chapters: normalizeOrigin(await engine.chapters(c.rule, c.source), origin),
       requests: normalizeOrigin(requests, origin),
     };

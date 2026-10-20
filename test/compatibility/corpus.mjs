@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import assert from 'node:assert/strict';
 
 const api9 = JSON.parse(
   await readFile(new URL('../server/fixtures/api9-rules.json', import.meta.url)),
@@ -53,6 +54,44 @@ export function buildCases(origin) {
   cases.push({
     ...xpath('xpath-attributes', { searchName: '//a/@title' }),
     search: '<article><a title=" 标题 " href="../detail/1">名称</a></article>',
+  });
+  cases.push({
+    ...xpath('xpath-mixed-text'),
+    search:
+      '<article><a href="/detail/1">开<span>中</span>尾</a></article>' +
+      '<article><a href="/detail/2"><span>嵌套标题</span></a></article>' +
+      '<article><a href="/empty"></a></article>',
+    chapters: '<ul><a href="/play/1">第 <span>1</span> 集</a></ul>',
+  });
+  cases.push({
+    ...xpath('xpath-encoded-urls'),
+    search: '<article><a href="/detail/%61/%7e?q=%61%2f#%61">编码地址</a></article>',
+    chapters:
+      '<ul><a href="/play/%61/%7e/%2f/%3f/%23/%25/%E4%b8%AD///?q=%61%7e%2f%20%2b#%61%2f">一</a>' +
+      '<a href="/play/%zz?x=%zz#%zz">二</a></ul>',
+  });
+  const postId = 'xpath-post-duplicates';
+  cases.push(
+    xpath(postId, {
+      usePost: true,
+      searchURL: `${origin}/case/${postId}/search?tag=first&tag=last&wd=@keyword&empty`,
+    }),
+  );
+  cases.push({
+    ...xpath('xpath-cf-header'),
+    rule: {
+      ...xpath('xpath-cf-header').rule,
+      antiCrawlerConfig: {
+        enabled: true,
+        captchaType: 2,
+        captchaButton: '//button',
+        captchaDetectType: 2,
+        captchaDetectValue: 'not in the response',
+      },
+    },
+    search: '',
+    searchResponse: { status: 403, headers: { 'cf-mitigated': 'challenge' } },
+    verificationRequired: true,
   });
   for (const original of api9) {
     const id = `official-${original.name}`;
@@ -172,7 +211,44 @@ export function buildCases(origin) {
   cases.at(-1).chapters = {
     data: { roads: [{ name: '线路', episodes: [{ name: '一', url: '/play/1' }] }] },
   };
+  for (const bodyType of ['query', 'form']) {
+    const id = `api-${bodyType}-collections`;
+    const c = api(id, {});
+    const parameters = {
+      tag: ['A', 'B'],
+      filter: { x: 1, tags: ['@keyword', "a~!*'()"] },
+      rows: [{ id: 1 }, { id: 2 }],
+      matrix: [
+        [1, 2],
+        [3, null],
+      ],
+      empty: null,
+      blank: '',
+      zero: 0,
+      false: false,
+      none: [],
+      missing: {},
+    };
+    c.rule.searchApiConfig.request = {
+      url: `${origin}/case/${id}/search?tag=old&tag=older`,
+      ...(bodyType === 'query'
+        ? { query: parameters }
+        : { method: 'POST', bodyType: 'form', body: parameters }),
+    };
+    c.chapters = {
+      data: { roads: [{ episodes: [{ name: '一', url: '/play/%61' }] }] },
+    };
+    cases.push(c);
+  }
   return cases;
+}
+
+// The two transports use different error codes for the same official challenge.
+// Assert each code before comparing their shared verification requirement.
+export async function searchCase(engine, c, verificationCode = 'VERIFICATION_REQUIRED') {
+  if (!c.verificationRequired) return engine.search(c.rule, keyword);
+  await assert.rejects(engine.search(c.rule, keyword), { code: verificationCode });
+  return { verificationRequired: true };
 }
 
 export function canonicalRequest(url, options = {}) {
@@ -183,10 +259,10 @@ export function canonicalRequest(url, options = {}) {
       ? null
       : contentType.includes('json')
         ? JSON.parse(String(options.body))
-        : Object.fromEntries(new URLSearchParams(String(options.body)));
+        : [...new URLSearchParams(String(options.body))];
   return {
     path: parsed.pathname,
-    query: Object.fromEntries(parsed.searchParams),
+    query: [...parsed.searchParams],
     method: options.method || 'GET',
     body,
   };

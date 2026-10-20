@@ -4,7 +4,11 @@ import { createBrowserEgress } from '../../lib/browser-egress.js';
 import { headersForSession } from './session-store.js';
 import { legacyIframeMedia } from './legacy-parser.js';
 import { RuleSessionStore } from '../verification/session-store.js';
-import { inspectBrowserChallenge, verificationRequired } from '../verification/challenge.js';
+import {
+  hasChallengeHeaders,
+  inspectBrowserChallenge,
+  verificationRequired,
+} from '../verification/challenge.js';
 import { automateRuleCaptcha, hasAutomaticCaptcha } from '../verification/automation.js';
 
 const MAX_PLAYLIST_BYTES = 1024 * 1024;
@@ -415,7 +419,14 @@ export class BrowserResolver {
   async read(
     rule,
     request,
-    { signal: callerSignal, onVerification, parse, responseType = 'html', sessionOwner } = {},
+    {
+      signal: callerSignal,
+      onVerification,
+      parse,
+      responseType = 'html',
+      sessionOwner,
+      detectChallengeHeaders = false,
+    } = {},
   ) {
     checkedUrl(request.url, { allowPrivate: this.http.allowPrivate });
     // Playwright navigation header overrides also apply to redirects. Unlike
@@ -473,15 +484,26 @@ export class BrowserResolver {
         if (popup !== page) void popup.close().catch(() => {});
       });
       let pageStatus;
+      let headerChallenge = false;
       page.on('response', (response) => {
-        if (response.request().isNavigationRequest() && response.frame() === page.mainFrame())
+        if (response.request().isNavigationRequest() && response.frame() === page.mainFrame()) {
           pageStatus = response.status();
+          headerChallenge =
+            pageStatus >= 400 &&
+            detectChallengeHeaders &&
+            hasChallengeHeaders(response.headers(), rule);
+        }
       });
       await this.navigateRequest(page, request, rule);
       let attempts = 0;
       let replayed = false;
       while (!signal.aborted) {
-        const challenge = await inspectBrowserChallenge(page, rule);
+        const challenge = headerChallenge
+          ? { detected: true, frame: page.mainFrame() }
+          : await inspectBrowserChallenge(page, rule);
+        // A response header triggers one verification attempt. Completion may
+        // replace the document through AJAX without another navigation.
+        headerChallenge = false;
         let parseError;
         if (!challenge.detected) {
           try {

@@ -4,6 +4,7 @@ import { JSONPath } from 'jsonpath-plus';
 import { HttpError, checkedUrl, readLimited } from '../../lib/http.js';
 import {
   hasChallenge,
+  hasChallengeHeaders,
   inspectStaticChallenge,
   verificationRequired,
 } from '../verification/challenge.js';
@@ -29,7 +30,13 @@ export function normalizeEpisodeUrl(value, base) {
   url.pathname = url.pathname.replace(/\/+$/, '') || '/';
   if (!url.search) url.search = '';
   if (!url.hash) url.hash = '';
-  return url.href;
+  // Dart Uri decodes only unreserved characters and canonicalizes the other
+  // escapes. This is episode identity normalization, never media URL rewriting.
+  return url.href.replace(/%(?:[a-f\d]{2})?/gi, (escape) => {
+    if (escape.length === 1) return '%25';
+    const character = String.fromCharCode(parseInt(escape.slice(1), 16));
+    return /^[A-Za-z\d._~-]$/.test(character) ? character : escape.toUpperCase();
+  });
 }
 
 export function normalizeJsonPath(expression) {
@@ -80,13 +87,52 @@ export function renderValue(value, variables) {
   return value;
 }
 
+const encodeQueryComponent = (value) =>
+  encodeURIComponent(String(value))
+    .replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`)
+    .replaceAll('%20', '+');
+
+// Dio's default ListFormat.multi repeats scalar keys and indexes collections.
+// Null is a bare key; empty maps/lists emit no parameters. Query brackets stay
+// literal, while form brackets are percent-encoded.
+function encodeParameters(parameters, query = false) {
+  const parts = [];
+  const left = query ? '[' : '%5B';
+  const right = query ? ']' : '%5D';
+  const collection = (value) => value !== null && typeof value === 'object';
+  const visit = (value, path) => {
+    if (Array.isArray(value))
+      value.forEach((item, index) =>
+        visit(item, collection(item) ? `${path}${left}${index}${right}` : path),
+      );
+    else if (collection(value))
+      for (const [key, item] of Object.entries(value))
+        visit(
+          item,
+          path ? `${path}${left}${encodeQueryComponent(key)}${right}` : encodeQueryComponent(key),
+        );
+    else parts.push(value == null ? path : `${path}=${encodeQueryComponent(value)}`);
+  };
+  visit(parameters, '');
+  return parts.join('&');
+}
+
 export function prepareApiRequest(config, variables) {
   if (!config?.url) throw new HttpError('API 请求缺少 URL');
   const method = String(config.method || 'GET').toUpperCase();
   if (!['GET', 'POST'].includes(method)) throw new HttpError('API 规则仅支持 GET 或 POST');
   const url = checkedUrl(renderTemplate(config.url, variables, true), { allowPrivate: true });
-  for (const [key, value] of Object.entries(config.query || {}))
-    url.searchParams.set(renderTemplate(key, variables), String(renderValue(value, variables)));
+  const query = encodeParameters(
+    Object.fromEntries(
+      Object.entries(config.query || {}).map(([key, value]) => [
+        renderTemplate(key, variables),
+        renderValue(value, variables),
+      ]),
+    ),
+    true,
+  );
+  // Dio appends its query map to the URL's own query, including duplicate keys.
+  if (query) url.search += `${url.search ? '&' : '?'}${query}`;
   const headers = Object.fromEntries(
     Object.entries(config.headers || {}).map(([key, value]) => [
       renderTemplate(key, variables).toLowerCase(),
@@ -99,7 +145,7 @@ export function prepareApiRequest(config, variables) {
     headers['content-type'] ??= 'application/json';
   }
   if (method === 'POST' && config.bodyType === 'form') {
-    body = new URLSearchParams(renderValue(config.body || {}, variables)).toString();
+    body = encodeParameters(renderValue(config.body || {}, variables));
     headers['content-type'] ??= 'application/x-www-form-urlencoded';
   }
   return { url: url.href, method, headers, body };
@@ -111,7 +157,13 @@ function xpath(document, context, expression) {
   // returns its original context. Official rules use it for a single road.
   if (expression.trim() === '//') return [context];
   // In the Flutter implementation // is scoped to each selected fragment.
-  const query = context !== document && expression.startsWith('//') ? `.${expression}` : expression;
+  // xpath_selector returns the selected element for a text() location step,
+  // even if it has only child elements. Preserve literals inside predicates.
+  const selector = expression.replace(
+    /('[^']*'|"[^"]*")|(\/{1,2})text\(\s*\)(?=\s*(?:\/|\||$))/g,
+    (match, literal, axis) => literal ?? `${axis}self::*`,
+  );
+  const query = context !== document && selector.startsWith('//') ? `.${selector}` : selector;
   try {
     const result = document.evaluate(query, context, null, 0, null);
     if (result.resultType === 2) return [result.stringValue];
@@ -292,7 +344,11 @@ export class RuleEngine {
     this.http = http;
     this.browserResolver = browserResolver;
   }
-  async execute(request, rule, { signal, onVerification, sessionOwner } = {}) {
+  async execute(
+    request,
+    rule,
+    { signal, onVerification, sessionOwner, detectChallengeHeaders = false } = {},
+  ) {
     signal?.throwIfAborted();
     const headers = { ...ruleHeaders(rule), ...request.headers };
     const options = {
@@ -304,8 +360,17 @@ export class RuleEngine {
     };
     // Challenge pages commonly use 403 or 429. Read their bounded body before
     // deciding whether an interactive retry is warranted.
-    if ((onVerification || hasAutomaticCaptcha(rule)) && this.http.request) {
+    if (
+      (onVerification ||
+        hasAutomaticCaptcha(rule) ||
+        (detectChallengeHeaders && rule.antiCrawlerConfig?.enabled === true)) &&
+      this.http.request
+    ) {
       const { response } = await this.http.request(request.url, options);
+      if (!response.ok && detectChallengeHeaders && hasChallengeHeaders(response.headers, rule)) {
+        await response.body?.cancel();
+        throw verificationRequired();
+      }
       const raw = await readLimited(response);
       signal?.throwIfAborted();
       if (!response.ok && !hasChallenge(raw, rule))
@@ -368,11 +433,14 @@ export class RuleEngine {
     const request = { url: url.href, method: 'GET' };
     if (rule.usePost) {
       request.method = 'POST';
-      request.body = url.searchParams.toString();
+      request.body = encodeParameters(Object.fromEntries(url.searchParams));
       request.headers = { 'content-type': 'application/x-www-form-urlencoded' };
       request.url = url.href;
     }
-    return this.parseRequest(request, rule, (raw) => parseXPathSearch(raw, rule), options);
+    return this.parseRequest(request, rule, (raw) => parseXPathSearch(raw, rule), {
+      ...options,
+      detectChallengeHeaders: true,
+    });
   }
   async chapters(rule, source, options = {}) {
     if (rule.chapterMode === 'api') {

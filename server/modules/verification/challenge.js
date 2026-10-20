@@ -8,6 +8,13 @@ export function verificationRequired() {
   return error;
 }
 
+export function hasChallengeHeaders(headers, rule) {
+  return (
+    rule.antiCrawlerConfig?.enabled === true &&
+    new Headers(headers).get('cf-mitigated')?.toLowerCase() === 'challenge'
+  );
+}
+
 // This function also runs inside Chromium. Regex results are supplied by the
 // bounded server matcher, and verification scripts run in a separate step.
 export function inspectChallengeDocument(

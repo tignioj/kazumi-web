@@ -9,8 +9,8 @@ import { performance } from 'node:perf_hooks';
 import {
   buildCases,
   canonicalRequest,
-  keyword,
   normalizeOrigin,
+  searchCase,
 } from '../test/compatibility/corpus.mjs';
 import { createHttpClient } from '../server/lib/http.js';
 import { createBrowserEgress } from '../server/lib/browser-egress.js';
@@ -51,6 +51,11 @@ const server = createServer(async (request, response) => {
     'content-type',
     typeof body === 'string' ? 'text/html; charset=utf-8' : 'application/json',
   );
+  if (phase === 'search' && c?.searchResponse) {
+    response.statusCode = c.searchResponse.status;
+    for (const [name, value] of Object.entries(c.searchResponse.headers))
+      response.setHeader(name, value);
+  }
   response.end(typeof body === 'string' ? body : JSON.stringify(body));
 });
 server.listen(port, '0.0.0.0');
@@ -97,7 +102,7 @@ try {
     observed.length = 0;
     const expected = {
       id: c.id,
-      search: normalizeOrigin(await reference.search(r.rule, keyword), referenceOrigin),
+      search: normalizeOrigin(await searchCase(reference, r, 'CAPTCHA_REQUIRED'), referenceOrigin),
       chapters: normalizeOrigin(await reference.chapters(r.rule, r.source), referenceOrigin),
       requests: normalizeOrigin(observed, referenceOrigin),
     };
@@ -105,7 +110,7 @@ try {
     observed.length = 0;
     const actual = {
       id: c.id,
-      search: normalizeOrigin(await local.search(c.rule, keyword), origin),
+      search: normalizeOrigin(await searchCase(local, c), origin),
       chapters: normalizeOrigin(await local.chapters(c.rule, c.source), origin),
       requests: normalizeOrigin(observed, origin),
     };
@@ -145,7 +150,11 @@ try {
         const engine = name === 'local' ? local : reference,
           c = name === 'local' ? cases[i] : referenceCases[i];
         const start = performance.now();
-        await engine.search(c.rule, keyword);
+        await searchCase(
+          engine,
+          c,
+          name === 'reference' ? 'CAPTCHA_REQUIRED' : 'VERIFICATION_REQUIRED',
+        );
         await engine.chapters(c.rule, c.source);
         if (round >= 0) timings[name].push(performance.now() - start);
       }
