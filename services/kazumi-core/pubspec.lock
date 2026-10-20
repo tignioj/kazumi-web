@@ -740,11 +740,11 @@ packages:
     dependency: "direct main"
     description:
       path: "."
-      ref: "4effe14ee78b790a92c23ed86f969093d2ed376d"
-      resolved-ref: "4effe14ee78b790a92c23ed86f969093d2ed376d"
+      ref: "11671bc0ec61727e99e34810f142a1b5e4121a8e"
+      resolved-ref: "11671bc0ec61727e99e34810f142a1b5e4121a8e"
       url: "https://github.com/Predidit/Kazumi.git"
     source: git
-    version: "2.3.9+20309"
+    version: "2.3.8+20308"
   leak_tracker:
     dependency: transitive
     description:
@@ -853,8 +853,8 @@ packages:
     dependency: transitive
     description:
       path: media_kit
-      ref: "83b7ca63772856e1ea0158916177e136f7b7b0be"
-      resolved-ref: "83b7ca63772856e1ea0158916177e136f7b7b0be"
+      ref: "803c4a27912091db6f839d48d1b984a0d9f588c7"
+      resolved-ref: "803c4a27912091db6f839d48d1b984a0d9f588c7"
       url: "https://github.com/Predidit/media-kit.git"
     source: git
     version: "1.1.11"
@@ -862,8 +862,8 @@ packages:
     dependency: transitive
     description:
       path: media_kit_video
-      ref: "83b7ca63772856e1ea0158916177e136f7b7b0be"
-      resolved-ref: "83b7ca63772856e1ea0158916177e136f7b7b0be"
+      ref: "803c4a27912091db6f839d48d1b984a0d9f588c7"
+      resolved-ref: "803c4a27912091db6f839d48d1b984a0d9f588c7"
       url: "https://github.com/Predidit/media-kit.git"
     source: git
     version: "1.2.5"
@@ -1683,4 +1683,4 @@ packages:
     version: "3.1.4"
 sdks:
   dart: ">=3.13.0 <4.0.0"
-  flutter: ">=3.47.7"
+  flutter: ">=3.47.6"
