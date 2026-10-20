@@ -11,5 +11,9 @@ output/playwright/
 test/reference/kazumi-core/.dart_tool/
 test/reference/kazumi-core/build/
 test/reference/kazumi-core/.flutter-plugins-dependencies
+services/kazumi-core/.idea/
+services/kazumi-core/*.iml
+services/kazumi-core/build/
+services/kazumi-core/linux/flutter/ephemeral/
 
 .playwright-cli/
