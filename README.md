@@ -4,6 +4,8 @@ React + Node.js 网页端，兼容 [Kazumi](https://github.com/Predidit/Kazumi) 
 
 接口、上游地址、缓存策略和存储位置见 [API 与持久化](docs/api.md)。实现边界、官方对照及性能复现见 [本地规则引擎](docs/local-rule-engine.md)。
 
+`main` 是默认开发和发布分支，使用本地规则引擎（原 `codex/local-rule-engine`）。原先直接调用官方 Kazumi 核心的 `main` 保留为 `codex/upstream-core`，供历史参考；后续功能、修复和正式版本均以 `main` 为准。
+
 ## 部署
 
 ```bash
