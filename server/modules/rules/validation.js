@@ -1,7 +1,7 @@
 import { HttpError, checkedUrl } from '../../lib/http.js';
 
 // Version is reported by the pinned core service; this is only the storage envelope.
-export const RULE_API_VERSION = 8;
+export const RULE_API_VERSION = 9;
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 export function normalizeRule(input, { validate = true, ...options } = {}) {
