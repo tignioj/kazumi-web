@@ -53,9 +53,10 @@ export function headersForSession(session, target, now = Date.now()) {
         delete headers[name];
     }
   }
-  // The player decides Range for each request. The browser's probe range and
-  // cookies must not be replayed across every HLS segment or key host.
-  delete headers.range;
+  // Range and cache conditions belong to the current player request. Captured
+  // probe validators must not turn later reads into unrelated 304 responses.
+  for (const name of ['range', 'if-range', 'if-none-match', 'if-modified-since'])
+    delete headers[name];
   delete headers.cookie;
   if (!captured && !sameOrigin) delete headers.authorization;
   const cookie = cookiesForUrl(session.cookies, url, now);

@@ -121,7 +121,13 @@ test('captured headers preserve no-Referer requests and isolate credentials by o
     requestHeaders: [
       {
         url: 'https://cdn.example/no-ref.mp4',
-        headers: { 'user-agent': 'Fixture', range: 'bytes=0-1' },
+        headers: {
+          'user-agent': 'Fixture',
+          range: 'bytes=0-1',
+          'if-range': '"probe"',
+          'if-none-match': '"probe"',
+          'if-modified-since': 'Tue, 20 Oct 2026 12:00:00 GMT',
+        },
       },
       {
         url: 'https://keys.example/key',
@@ -132,6 +138,9 @@ test('captured headers preserve no-Referer requests and isolate credentials by o
   const direct = headersForSession(session, 'https://cdn.example/no-ref.mp4');
   assert.equal(direct.referer, undefined);
   assert.equal(direct.range, undefined);
+  assert.equal(direct['if-range'], undefined);
+  assert.equal(direct['if-none-match'], undefined);
+  assert.equal(direct['if-modified-since'], undefined);
   assert.equal(direct.cookie, 'cdn=cdn-secret');
   assert.equal(
     headersForSession(session, 'https://keys.example/other').authorization,
@@ -139,6 +148,204 @@ test('captured headers preserve no-Referer requests and isolate credentials by o
   );
   const unknown = headersForSession(session, 'https://elsewhere.example/segment.ts');
   assert.deepEqual(unknown, { 'user-agent': 'Fixture' });
+});
+
+test('cached video ranges revalidate from headers without waiting for an upstream body', async () => {
+  const { service, http } = fixture();
+  const resolved = await service.resolve(rule, '/play');
+  const requests = [];
+  let canceled = 0;
+  http.request = async (url, options) => {
+    requests.push(options);
+    return {
+      url,
+      response: new Response(new ReadableStream({ cancel: () => canceled++ }), {
+        status: 206,
+        headers: {
+          'content-type': 'video/mp4',
+          'content-range': 'bytes 2-9/10',
+          'content-length': '8',
+          etag: '"same-video"',
+          'last-modified': 'Tue, 20 Oct 2026 12:00:00 GMT',
+        },
+      }),
+    };
+  };
+  const server = await serve(service);
+  try {
+    const response = await fetch(server.base + resolved.url, {
+      headers: { range: 'bytes=2-', 'if-none-match': '"old", W/"same-video"' },
+      signal: AbortSignal.timeout(2000),
+    });
+    assert.equal(response.status, 304);
+    assert.equal(response.headers.get('etag'), '"same-video"');
+    assert.equal(response.headers.get('last-modified'), 'Tue, 20 Oct 2026 12:00:00 GMT');
+    assert.equal(response.headers.get('cache-control'), 'private, max-age=60');
+    assert.equal(response.headers.get('content-range'), null);
+    assert.equal(response.headers.get('content-length'), null);
+    assert.equal(await response.text(), '');
+    assert.equal(canceled, 1);
+    assert.equal(requests.length, 1);
+    for (const headers of [
+      requests[0].headers,
+      requests[0].headersForUrl('https://elsewhere.example/video.mp4'),
+    ]) {
+      assert.equal(headers.range, 'bytes=2-');
+      assert.equal(headers['if-none-match'], '"old", W/"same-video"');
+    }
+    assert.equal(
+      requests[0].headersForUrl('https://elsewhere.example/video.mp4').authorization,
+      undefined,
+    );
+  } finally {
+    await server.close();
+    service.close();
+  }
+});
+
+test('video cache validators honor ETag precedence, dates, HEAD and upstream 304', async () => {
+  const { service, http } = fixture();
+  const resolved = await service.resolve(rule, '/play');
+  let status = 206;
+  http.request = async (url) => ({
+    url,
+    response: new Response(status === 304 ? null : '2345', {
+      status,
+      headers: {
+        etag: 'W/"current"',
+        'last-modified': 'Tue, 20 Oct 2026 12:00:00 GMT',
+        ...(status === 206 && {
+          'content-type': 'video/mp4',
+          'content-range': 'bytes 2-5/10',
+          'content-length': '4',
+        }),
+      },
+    }),
+  });
+  const server = await serve(service);
+  try {
+    const cases = [
+      { headers: { 'if-none-match': '"current"' }, expected: 304 },
+      { headers: { 'if-none-match': '*' }, expected: 304 },
+      { headers: { 'if-modified-since': 'Tue, 20 Oct 2026 12:00:00 GMT' }, expected: 304 },
+      { headers: { 'if-modified-since': 'Tue, 20 Oct 2026 13:00:00 GMT' }, expected: 304 },
+      { headers: { 'if-modified-since': 'Tue, 20 Oct 2026 11:00:00 GMT' }, expected: 206 },
+      { headers: { 'if-modified-since': 'invalid' }, expected: 206 },
+      {
+        headers: {
+          'if-none-match': '"previous"',
+          'if-modified-since': 'Tue, 20 Oct 2026 13:00:00 GMT',
+        },
+        expected: 206,
+      },
+      { headers: { 'if-none-match': 'W/"current"' }, method: 'HEAD', expected: 304 },
+      { headers: { 'if-none-match': '"previous"' }, upstream: 304, expected: 304 },
+      { headers: { 'if-none-match': '*' }, upstream: 403, expected: 502 },
+    ];
+    for (const check of cases) {
+      status = check.upstream || 206;
+      const response = await fetch(server.base + resolved.url, {
+        method: check.method || 'GET',
+        headers: { range: 'bytes=2-5', ...check.headers },
+        signal: AbortSignal.timeout(2000),
+      });
+      assert.equal(response.status, check.expected, JSON.stringify(check));
+      if (check.expected === 206) {
+        assert.equal(response.headers.get('content-range'), 'bytes 2-5/10');
+        assert.equal(await response.text(), '2345');
+      } else {
+        if (check.expected === 304) assert.equal(await response.text(), '');
+        else await response.body.cancel();
+      }
+    }
+  } finally {
+    await server.close();
+    service.close();
+  }
+});
+
+test('a rejected conditional video range is rechecked without cache conditions before replying', async () => {
+  const { service, http } = fixture();
+  const resolved = await service.resolve(rule, '/play');
+  let attempts = [],
+    canceled = 0,
+    changed = false,
+    unsatisfiable = false;
+  http.request = async (url, options) => {
+    attempts.push(options);
+    if (attempts.length === 1 || unsatisfiable)
+      return {
+        url,
+        response: new Response('rejected', {
+          status: 416,
+          headers: {
+            'content-type': unsatisfiable ? 'video/mp4' : 'text/html',
+            'content-range': 'bytes */10',
+          },
+        }),
+      };
+    return {
+      url,
+      response: new Response(changed ? '2345' : new ReadableStream({ cancel: () => canceled++ }), {
+        status: 206,
+        headers: {
+          'content-type': 'video/mp4',
+          'content-range': 'bytes 2-5/10',
+          'content-length': '4',
+          etag: changed ? '"new"' : '"current"',
+        },
+      }),
+    };
+  };
+  const server = await serve(service);
+  try {
+    const headers = {
+      range: 'bytes=2-5',
+      'if-none-match': '"current"',
+      'if-modified-since': 'Tue, 20 Oct 2026 12:00:00 GMT',
+    };
+    const request = () =>
+      fetch(server.base + resolved.url, {
+        headers,
+        signal: AbortSignal.timeout(2000),
+      });
+    const matched = await request();
+    assert.equal(matched.status, 304);
+    assert.equal(await matched.text(), '');
+    assert.equal(canceled, 1);
+    assert.equal(attempts.length, 2);
+    assert.equal(attempts[0].headers['if-none-match'], '"current"');
+    for (const retried of [
+      attempts[1].headers,
+      attempts[1].headersForUrl('https://elsewhere.example/movie.mp4'),
+    ]) {
+      assert.equal(retried.range, 'bytes=2-5');
+      assert.equal(retried['if-none-match'], undefined);
+      assert.equal(retried['if-modified-since'], undefined);
+    }
+    assert.equal(attempts[1].headers.cookie, 'cdn=cdn-secret');
+    assert.equal(
+      attempts[1].headersForUrl('https://elsewhere.example/movie.mp4').cookie,
+      undefined,
+    );
+
+    attempts = [];
+    changed = true;
+    const modified = await request();
+    assert.equal(modified.status, 206);
+    assert.equal(modified.headers.get('etag'), '"new"');
+    assert.equal(await modified.text(), '2345');
+
+    attempts = [];
+    unsatisfiable = true;
+    const invalid = await request();
+    assert.equal(invalid.status, 416);
+    assert.equal(attempts.length, 2, 'an invalid range cannot loop or become a false 304');
+    await invalid.body.cancel();
+  } finally {
+    await server.close();
+    service.close();
+  }
 });
 
 test('session store evicts old entries, expires sessions and releases all state on close', () => {

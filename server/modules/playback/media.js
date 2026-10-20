@@ -13,6 +13,23 @@ export function mediaType(url) {
   return null;
 }
 
+function notModified(headers, response) {
+  const noneMatch = headers['if-none-match'];
+  if (noneMatch !== undefined) {
+    if (noneMatch.trim() === '*') return true;
+    const etag = response.headers.get('etag')?.replace(/^W\//, '');
+    return Boolean(
+      etag &&
+      [...noneMatch.matchAll(/(?:W\/)?"[^"\r\n]*"/g)].some(
+        ([candidate]) => candidate.replace(/^W\//, '') === etag,
+      ),
+    );
+  }
+  const since = Date.parse(headers['if-modified-since']);
+  const modified = Date.parse(response.headers.get('last-modified'));
+  return Number.isFinite(since) && Number.isFinite(modified) && modified <= since;
+}
+
 export function rewritePlaylist(text, playlistUrl, makeUrl) {
   if (!text.trimStart().startsWith('#EXTM3U'))
     throw new HttpError('上游返回的播放列表格式无效', 502);
@@ -171,24 +188,64 @@ export class MediaService {
     });
     try {
       const headers = session ? headersForSession(session, data.url) : { ...data.headers };
-      if (req.headers.range) headers.range = req.headers.range;
-      if (req.headers['if-range']) headers['if-range'] = req.headers['if-range'];
+      const transportHeaders = {};
+      for (const name of ['range', 'if-range', 'if-none-match', 'if-modified-since']) {
+        if (req.headers[name] !== undefined) transportHeaders[name] = req.headers[name];
+      }
+      Object.assign(headers, transportHeaders);
+      const revalidating =
+        req.headers['if-none-match'] !== undefined ||
+        req.headers['if-modified-since'] !== undefined;
       const options = {
         headers,
         ...(session && {
           headersForUrl: (target) => ({
             ...headersForSession(session, target),
-            ...(req.headers.range && { range: req.headers.range }),
-            ...(req.headers['if-range'] && { 'if-range': req.headers['if-range'] }),
+            ...transportHeaders,
           }),
         }),
         signal: controller.signal,
       };
-      const { response, url } =
-        data.kind === 'video' && req.method !== 'HEAD'
+      let result =
+        // Cached partial responses are revalidated after an idle pause. This
+        // decision needs only current headers, not a buffered video piece.
+        data.kind === 'video' && req.method !== 'HEAD' && !revalidating
           ? await requestVideoRange(this.http, data.url, options, () => clearTimeout(deadline))
           : await this.http.request(data.url, options);
+      if (revalidating && data.kind === 'video' && result.response.status === 416) {
+        // Some CDNs sporadically reject a cached range's conditions even when
+        // the byte range is valid. Read fresh headers without those conditions;
+        // only matching validators may turn this response into a local 304.
+        await result.response.body?.cancel();
+        const unconditional = (headers) => {
+          const next = { ...headers };
+          delete next['if-none-match'];
+          delete next['if-modified-since'];
+          return next;
+        };
+        result = await this.http.request(data.url, {
+          ...options,
+          headers: unconditional(options.headers),
+          ...(options.headersForUrl && {
+            headersForUrl: (target) => unconditional(options.headersForUrl(target)),
+          }),
+        });
+      }
+      const { response, url } = result;
       clearTimeout(deadline);
+      if (
+        response.status === 304 ||
+        (revalidating && [200, 206].includes(response.status) && notModified(req.headers, response))
+      ) {
+        await response.body?.cancel();
+        res.status(304).set('Cache-Control', 'private, max-age=60');
+        for (const name of ['etag', 'last-modified']) {
+          const value = response.headers.get(name);
+          if (value) res.set(name, value);
+        }
+        res.end();
+        return;
+      }
       if (![200, 206, 416].includes(response.status)) {
         await response.body?.cancel();
         throw new HttpError(`媒体服务器返回 HTTP ${response.status}`, 502);
