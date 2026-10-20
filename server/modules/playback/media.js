@@ -3,6 +3,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { HttpError, checkedUrl, readLimited } from '../../lib/http.js';
 import { headersForSession, MediaSessionStore } from './session-store.js';
+import { requestVideoRange } from './range-transport.js';
 
 export function mediaType(url) {
   // An HTML parser's query or fragment can contain a media URL of its own.
@@ -171,16 +172,22 @@ export class MediaService {
     try {
       const headers = session ? headersForSession(session, data.url) : { ...data.headers };
       if (req.headers.range) headers.range = req.headers.range;
-      const { response, url } = await this.http.request(data.url, {
+      if (req.headers['if-range']) headers['if-range'] = req.headers['if-range'];
+      const options = {
         headers,
         ...(session && {
           headersForUrl: (target) => ({
             ...headersForSession(session, target),
             ...(req.headers.range && { range: req.headers.range }),
+            ...(req.headers['if-range'] && { 'if-range': req.headers['if-range'] }),
           }),
         }),
         signal: controller.signal,
-      });
+      };
+      const { response, url } =
+        data.kind === 'video' && req.method !== 'HEAD'
+          ? await requestVideoRange(this.http, data.url, options, () => clearTimeout(deadline))
+          : await this.http.request(data.url, options);
       clearTimeout(deadline);
       if (![200, 206, 416].includes(response.status)) {
         await response.body?.cancel();
@@ -221,6 +228,7 @@ export class MediaService {
       await pipeline(Readable.fromWeb(response.body), res);
     } finally {
       clearTimeout(deadline);
+      controller.abort();
     }
   }
 }

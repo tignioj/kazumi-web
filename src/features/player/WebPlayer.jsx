@@ -2,8 +2,9 @@ import React, { useEffect, useRef } from 'react';
 import Artplayer from 'artplayer';
 import Hls from 'hls.js';
 import { attachNativePlayback } from './native-playback.js';
+import { attachVideoRecovery } from './video-recovery.js';
 
-// Only application events are adapted here. ArtPlayer owns controls and playback.
+// ArtPlayer owns controls; transport adapters handle stream loading and recovery.
 export function WebPlayer({ source, resume = 0, autoplay, onProgress, onEnded, onError }) {
   const container = useRef(null);
   const callbacks = useRef({ onEnded, onError });
@@ -48,6 +49,19 @@ export function WebPlayer({ source, resume = 0, autoplay, onProgress, onEnded, o
         },
       },
     });
+    const recovery =
+      source.type === 'video'
+        ? attachVideoRecovery(art.video, {
+            onRecover: () => {
+              art.notice.show = '连接停滞，正在恢复播放…';
+            },
+            onError: (message) => callbacks.current.onError?.(message),
+          })
+        : undefined;
+    if (recovery) {
+      art.on('pause', () => recovery.setPlaying(false));
+      art.on('play', () => recovery.setPlaying(true));
+    }
     const save = () => {
       if (art.video.readyState > 0) onProgress?.(art.currentTime, art.duration);
     };
@@ -72,6 +86,7 @@ export function WebPlayer({ source, resume = 0, autoplay, onProgress, onEnded, o
     window.addEventListener('pagehide', save);
     return () => {
       save();
+      recovery?.stop();
       window.removeEventListener('pagehide', save);
       art.destroy(false);
     };

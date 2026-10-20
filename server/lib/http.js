@@ -146,6 +146,8 @@ export function cleanHeaders(input = {}) {
 export function createHttpClient({
   allowPrivate = process.env.ALLOW_PRIVATE_NETWORK === 'true',
   timeout = 20000,
+  bodyTimeout = 60000,
+  allowH2 = true,
   dnsOverHttpsUrl = process.env.DNS_OVER_HTTPS_URL,
   bangumiEch = DEFAULT_NETWORK_SETTINGS.bangumiEch,
   echDohUrl = DEFAULT_NETWORK_SETTINGS.echDohUrl,
@@ -156,9 +158,10 @@ export function createHttpClient({
 } = {}) {
   const dnsLookup = createSafeLookup({ allowPrivate, dnsOverHttpsUrl, resolver });
   const dispatcher = new Agent({
+    allowH2,
     connect: { lookup: dnsLookup.lookup, timeout: 15000 },
     headersTimeout: timeout,
-    bodyTimeout: 60000,
+    bodyTimeout,
   });
   let ech;
   const echChannels = new Set();
@@ -203,7 +206,7 @@ export function createHttpClient({
   }
   const tunnels = createProxyTunnels({ lookup: dnsLookup.lookup });
   // Match Kazumi's proxy mode. Direct connections retain the default TLS checks.
-  const tlsConnector = buildConnector({ timeout: 15000, rejectUnauthorized: false });
+  const tlsConnector = buildConnector({ timeout: 15000, rejectUnauthorized: false, allowH2 });
   const proxyDispatchers = new Map();
   const retiring = new Set();
   function requestDispatcher(settings) {
@@ -213,8 +216,9 @@ export function createHttpClient({
     if (selected) proxyDispatchers.delete(key);
     else {
       selected = new Agent({
+        allowH2,
         headersTimeout: timeout,
-        bodyTimeout: 60000,
+        bodyTimeout,
         connect(options, callback) {
           const hostname = options.hostname.replace(/^\[|\]$/g, '');
           tunnels

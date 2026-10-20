@@ -36,6 +36,10 @@ export async function createApp(options = {}) {
       options.httpClient ||
       createHttpClient({
         ...options.httpOptions,
+        // Undici's HTTP/2 body timeout also fires while a response is paused by
+        // downstream backpressure. Media readers pause and cancel ranges during
+        // playback/seeks; HTTP/1.1 suspends that timeout while its parser is paused.
+        ...(scope === 'video' && { allowH2: false }),
         getProxySettings: (url) => proxySettingsFor(network.data, scope, { url }),
       });
     clients.add(client);
