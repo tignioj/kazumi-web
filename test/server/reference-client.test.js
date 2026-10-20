@@ -139,7 +139,7 @@ test('native resolution feeds the media proxy without exposing cookies and prese
   assert.deepEqual(Buffer.from(await response.arrayBuffer()), f.bytes.subarray(2));
   assert.equal(f.mediaHeaders[0].cookie, 'verified=cookie-secret');
   assert.equal(f.mediaHeaders[0].referer, 'https://source.example/');
-  assert.equal(f.mediaHeaders[0].range, 'bytes=2-');
+  assert.equal(f.mediaHeaders[0].range, 'bytes=2-524289');
 });
 
 test('HLS manifests stay on the existing same-origin transport', async (t) => {

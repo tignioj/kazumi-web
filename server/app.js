@@ -32,11 +32,12 @@ export async function createApp(options = {}) {
   const dataDir = options.dataDir || process.env.DATA_DIR || resolve(directory, '../data');
   const network = await new NetworkStore(dataDir).init();
   const clients = new Set();
-  const clientFor = (scope) => {
+  const clientFor = (scope, transport = {}) => {
     const client =
       options.httpClient ||
       createHttpClient({
         ...options.httpOptions,
+        ...transport,
         getProxySettings: (url) => proxySettingsFor(network.data, scope, { url }),
       });
     clients.add(client);
@@ -45,6 +46,10 @@ export async function createApp(options = {}) {
   const rulesHttp = clientFor('rules');
   const archiveHttp = clientFor('archive');
   const videoHttp = clientFor('video');
+  // Rule execution and source discovery keep their normal HTTP negotiation.
+  // Media readers pause under downstream backpressure; HTTP/1.1 avoids Undici's
+  // HTTP/2 body timeout firing while a response is paused with unread data.
+  const mediaHttp = clientFor('video', { allowH2: false });
   const imageHttp = clientFor('image');
   const bangumiHttp = clientFor('bangumi');
   const localMetadata =
@@ -87,10 +92,10 @@ export async function createApp(options = {}) {
   const engine = options.engine || new RuleEngine(videoHttp, { browserResolver });
   const resolver =
     options.sourceResolver || new LocalSourceResolver(videoHttp, { browserResolver });
-  const media = new MediaService(videoHttp, undefined, { resolver });
+  const media = new MediaService(mediaHttp, undefined, { resolver });
   const downloads = await new DownloadManager({
     directory: resolve(dataDir, 'downloads'),
-    http: videoHttp,
+    http: mediaHttp,
     media,
     getRule: (name) => store.get(name),
     maxBytes: Math.floor(Number(process.env.VIDEO_CACHE_MAX_GB || 10) * 1024 ** 3),
