@@ -77,6 +77,38 @@ test('a dropped or failed search leaves published results available to the calle
   }
 });
 
+test('resolution diagnostics arrive before completion and survive a failed stream', async (t) => {
+  const s = stream();
+  const published = Promise.withResolvers();
+  const seen = [];
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (url === '/api/verification-session') return Response.json({ ok: true });
+    assert.equal(url, '/api/resolve');
+    assert.equal(options.headers.Accept, 'application/x-ndjson');
+    assert.equal(options.onDiagnostic, undefined);
+    return s.response;
+  });
+  const result = api('/resolve', {
+    onDiagnostic(event) {
+      seen.push(event);
+      published.resolve();
+    },
+  });
+  const diagnostic = {
+    time: 1234,
+    phase: 'resolve',
+    level: 'info',
+    scope: '规则匹配',
+    message: '扫描视频标签',
+  };
+  for (const byte of encode({ type: 'diagnostic', diagnostic })) s.bytes(Uint8Array.of(byte));
+  await published.promise;
+  assert.deepEqual(seen, [diagnostic]);
+  s.close();
+  await assert.rejects(result, /解析连接已中断/);
+  assert.deepEqual(seen, [diagnostic]);
+});
+
 test('stopping a search cancels its reader without clearing published results', async () => {
   const s = stream();
   const controller = new AbortController();

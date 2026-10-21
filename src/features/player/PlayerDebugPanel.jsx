@@ -21,11 +21,13 @@ export function PlayerDebugPanel({
   notify,
 }) {
   const { metrics, logs } = useSyncExternalStore(diagnostics.subscribe, diagnostics.getSnapshot);
-  const [tab, setTab] = useState('overview');
+  const [tab, setTab] = useState('resolve');
   const [level, setLevel] = useState('all');
   const logList = useRef(null);
   const following = useRef(true);
-  const filtered = logs.filter((entry) => level === 'all' || entry.level === level);
+  const resolutionLogs = logs.filter((entry) => entry.phase === 'resolve');
+  const visibleLogs = tab === 'resolve' ? resolutionLogs : logs;
+  const filtered = visibleLogs.filter((entry) => level === 'all' || entry.level === level);
   const latestId = filtered.at(-1)?.id;
   useEffect(() => {
     if (following.current && logList.current)
@@ -90,8 +92,9 @@ export function PlayerDebugPanel({
     environment: navigator.userAgent,
     source: Object.fromEntries(sourceFields),
     metrics,
-    logs: logs.map(({ time, level, scope, message }) => ({
+    logs: logs.map(({ time, phase, level, scope, message }) => ({
       time: new Date(time).toISOString(),
+      ...(phase && { phase }),
       level,
       scope,
       message,
@@ -125,6 +128,15 @@ export function PlayerDebugPanel({
           onClick={() => setTab('overview')}
         >
           概览
+        </button>
+        <button
+          role="tab"
+          id="player-debug-resolve-tab"
+          aria-selected={tab === 'resolve'}
+          aria-controls="player-debug-resolve"
+          onClick={() => setTab('resolve')}
+        >
+          解析过程 <span>{resolutionLogs.length}</span>
         </button>
         <button
           role="tab"
@@ -169,8 +181,8 @@ export function PlayerDebugPanel({
         <div
           className="player-debug-log-panel"
           role="tabpanel"
-          id="player-debug-logs"
-          aria-labelledby="player-debug-logs-tab"
+          id={`player-debug-${tab}`}
+          aria-labelledby={`player-debug-${tab}-tab`}
         >
           <div className="player-debug-log-toolbar">
             <select
@@ -201,7 +213,7 @@ export function PlayerDebugPanel({
             className="player-debug-logs"
             ref={logList}
             tabIndex={0}
-            aria-label="播放日志"
+            aria-label={tab === 'resolve' ? '视频解析过程' : '播放日志'}
             onScroll={(event) => {
               const node = event.currentTarget;
               following.current = node.scrollHeight - node.scrollTop - node.clientHeight < 40;
@@ -221,7 +233,11 @@ export function PlayerDebugPanel({
               ))
             ) : (
               <p className="player-debug-empty">
-                {logs.length ? '当前级别没有日志' : '暂无日志，后续播放事件会显示在这里'}
+                {visibleLogs.length
+                  ? '当前级别没有日志'
+                  : tab === 'resolve'
+                    ? '暂无解析日志，选择剧集或重新解析后会显示在这里'
+                    : '暂无日志，后续播放事件会显示在这里'}
               </p>
             )}
           </div>

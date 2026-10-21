@@ -1,3 +1,6 @@
+import { sanitizeDiagnosticText } from '../../../shared/diagnostic-text.js';
+export { sanitizeDiagnosticText } from '../../../shared/diagnostic-text.js';
+
 export const MAX_PLAYER_LOGS = 300;
 
 export const emptyPlaybackMetrics = {
@@ -21,19 +24,6 @@ export const emptyPlaybackMetrics = {
   resolveMs: null,
 };
 
-// Reports can be shared without including signed media URLs or query credentials.
-export function sanitizeDiagnosticText(value) {
-  return String(value).replace(/(?:https?:\/\/|\/api\/)[^\s<>"']+/gi, (address) => {
-    try {
-      const url = new URL(address, 'https://diagnostics.invalid');
-      const relative = address.startsWith('/');
-      return `${relative ? '' : url.origin}${url.pathname}${url.search ? '?[已隐藏参数]' : ''}`;
-    } catch {
-      return '[地址已隐藏]';
-    }
-  });
-}
-
 export function createPlayerDiagnostics() {
   let snapshot = { metrics: { ...emptyPlaybackMetrics }, logs: [] };
   let sequence = 0;
@@ -49,14 +39,15 @@ export function createPlayerDiagnostics() {
       snapshot = { ...snapshot, metrics: { ...snapshot.metrics, ...metrics } };
       publish();
     },
-    log(level, scope, message) {
+    log(level, scope, message, time = Date.now(), phase) {
       snapshot = {
         ...snapshot,
         logs: [
           ...snapshot.logs,
           {
             id: ++sequence,
-            time: Date.now(),
+            time: Number.isFinite(time) ? time : Date.now(),
+            ...(phase && { phase }),
             level,
             scope,
             message: sanitizeDiagnosticText(message),

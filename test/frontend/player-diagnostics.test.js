@@ -78,6 +78,21 @@ test('log retention stays bounded and subscribers detach without clearing metric
   assert.equal(diagnostics.getSnapshot().logs.length, 0);
 });
 
+test('resolution diagnostics retain server timestamps and redact source URLs', () => {
+  const diagnostics = createPlayerDiagnostics();
+  diagnostics.log(
+    'info',
+    '规则匹配',
+    'https://user:secret@cdn.example/movie.mp4?token=private',
+    1234,
+    'resolve',
+  );
+  const [entry] = diagnostics.getSnapshot().logs;
+  assert.equal(entry.time, 1234);
+  assert.equal(entry.phase, 'resolve');
+  assert.equal(entry.message, 'https://cdn.example/movie.mp4?[已隐藏参数]');
+});
+
 test('playback events report errors and paused seeks accurately and stop sampling after teardown', (t) => {
   t.mock.timers.enable({ apis: ['setInterval'] });
   const video = new Video();

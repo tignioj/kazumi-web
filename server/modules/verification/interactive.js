@@ -22,7 +22,17 @@ export function verificationOwner(req, res, create = false) {
 }
 
 export function createInteractive(verification) {
-  async function interactive(req, res, run, { stream = false, onTimeout } = {}) {
+  async function interactive(
+    req,
+    res,
+    run,
+    {
+      stream = false,
+      diagnostics = false,
+      onTimeout,
+      errorMessage = '搜索中断，请重试未完成的片源',
+    } = {},
+  ) {
     const controller = new AbortController();
     let task;
     const cancel = () => {
@@ -52,6 +62,9 @@ export function createInteractive(verification) {
           run({
             ...options,
             ...(stream ? { onResult: (result) => write({ type: 'result', result }) } : {}),
+            ...(stream && diagnostics
+              ? { onDiagnostic: (diagnostic) => write({ type: 'diagnostic', diagnostic }) }
+              : {}),
           }),
         { signal: controller.signal, onTimeout },
       );
@@ -74,7 +87,7 @@ export function createInteractive(verification) {
       if (!res.destroyed) {
         write({
           type: 'error',
-          error: error.status ? error.message : '搜索中断，请重试未完成的片源',
+          error: error.status ? error.message : errorMessage,
         });
         res.end();
       }

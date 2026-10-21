@@ -3,6 +3,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { HttpError, checkedUrl, readLimited } from '../../lib/http.js';
 import { LocalSourceResolver } from './source-resolver.js';
+import { createResolutionLogger } from './diagnostics.js';
 import { mediaType } from './extract-media.js';
 import { headersForSession, MediaSessionStore } from './session-store.js';
 import { requestVideoRange } from './range-transport.js';
@@ -100,6 +101,7 @@ export class MediaService {
     return data;
   }
   async resolve(rule, originalUrl, options = {}) {
+    const log = createResolutionLogger(options);
     originalUrl = checkedUrl(new URL(originalUrl, rule.baseURL).href, {
       allowPrivate: this.http.allowPrivate,
     }).href;
@@ -111,6 +113,7 @@ export class MediaService {
     // Native players detect stream formats themselves. Browser playback needs a
     // transport hint for signed, extensionless media URLs; no source HTML is read.
     if (result.type === 'video' && !mediaType(result.url)) {
+      log('媒体代理', `探测无扩展名媒体的播放格式 · ${result.url}`);
       const signal = AbortSignal.any([
         ...(options.signal ? [options.signal] : []),
         AbortSignal.timeout(12000),
@@ -150,6 +153,10 @@ export class MediaService {
         }
       }
     }
+    log(
+      '媒体代理',
+      `已创建同源媒体代理 · ${result.type}${result.type === 'hls' && rule.adBlocker === true ? ' · 启用原生去广告' : ''} · ${result.url}`,
+    );
     return {
       type: result.type,
       nativePlayback: result.type === 'hls' && rule.adBlocker === true,
