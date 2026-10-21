@@ -8,6 +8,7 @@ import {
   discoverRulesUpdate,
   readCatalog,
   verifyCatalog,
+  rulesUpgradeBody,
 } from '../../scripts/lib/kazumi-rules.mjs';
 
 const previous = 'a'.repeat(40),
@@ -49,6 +50,11 @@ test('catalog updates capture additions, deletions and same-version content chan
     removed: ['Removed'],
   });
   assert.ok(calls.some((path) => path.includes(encodeURIComponent('新增 空格'))));
+  const body = rulesUpgradeBody(update);
+  assert.match(body, /searchList/);
+  assert.match(body, /\/\/article/);
+  assert.match(body, /\/\/section/);
+  assert.match(body, /不修改用户已安装规则/);
   const root = await mkdtemp(join(tmpdir(), 'kazumi-catalog-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, 'test/compatibility'), { recursive: true });

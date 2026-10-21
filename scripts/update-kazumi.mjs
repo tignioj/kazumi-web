@@ -8,6 +8,7 @@ import {
   discoverMainUpdate,
   readPinnedKazumi,
   upgradeBody,
+  upgradeTitle,
   verifyPins,
 } from './lib/kazumi-upstream.mjs';
 import {
@@ -53,7 +54,7 @@ if (values.verify) {
       await appendFile(
         process.env.GITHUB_OUTPUT,
         `branch=${update.branch}\nversion=${update.version || 'catalog'}\ncommit=${update.commit}\n` +
-          `title=${values.source === 'rules' ? 'chore(rules): refresh official compatibility catalog' : values.source === 'main' ? 'chore(core): review upstream main changes' : `chore(core): upgrade Kazumi to ${update.version}`}\n`,
+          `title=${values.source === 'rules' ? 'chore(rules): refresh official compatibility catalog' : upgradeTitle(update)}\n`,
       );
       await writeFile(
         `${process.env.RUNNER_TEMP}/kazumi-upgrade-body.md`,
