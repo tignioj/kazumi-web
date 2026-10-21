@@ -8,8 +8,10 @@ import {
   applyUpdate,
   compareVersions,
   discoverUpdate,
+  discoverMainUpdate,
   readPinnedKazumi,
   verifyPins,
+  upgradeBody,
 } from '../../scripts/lib/kazumi-upstream.mjs';
 import { checkCore } from '../../scripts/check-kazumi-core.mjs';
 
@@ -59,6 +61,69 @@ test('stable version comparison ignores build numbers and rejects prereleases or
   for (const version of ['2.4.0-beta.1', '2.4.0;echo token', 'latest']) {
     assert.throws(() => compareVersions(version, '2.3.9'), /Unsupported stable version/);
   }
+});
+
+function mainApi({
+  changed = ['lib/services/plugin/rule_engine.dart'],
+  status = 'ahead',
+  truncated = false,
+  head = commit,
+} = {}) {
+  const release = releaseApi();
+  const calls = [];
+  const api = async (path, options) => {
+    calls.push(path);
+    if (path.endsWith('/commits/main')) return { sha: head };
+    if (path.includes('/contents/pubspec.yaml'))
+      return 'version: 2.3.9+20309\nenvironment:\n  flutter: 3.47.7\n';
+    if (path.includes('/compare/')) return { status };
+    if (path.includes('/git/trees/'))
+      return {
+        truncated,
+        tree: changed.map((name) => ({
+          path: name,
+          type: 'blob',
+          sha: path.includes(previous) ? previous : commit,
+        })),
+      };
+    return release.api(path, options);
+  };
+  return { api, calls };
+}
+
+test('main monitoring detects unreleased behavior changes even when the version is unchanged', async () => {
+  const changed = [
+    'lib/webview/captcha/impl/new.dart',
+    'lib/services/video_source/parser.dart',
+    'README.md',
+  ];
+  const { api } = mainApi({ changed });
+  const update = await discoverMainUpdate(pinned(), api);
+  assert.equal(update.source, 'main');
+  assert.equal(update.commit, commit);
+  assert.equal(update.version, pinned().version);
+  assert.deepEqual(update.changedPaths, changed.filter((path) => path !== 'README.md').sort());
+  assert.equal(update.branch, `codex/kazumi-main-${commit.slice(0, 12)}`);
+  assert.match(upgradeBody(update), /No automatic merging/);
+  assert.match(upgradeBody(update), /captcha/);
+});
+
+test('main ignores unchanged pins and unrelated files without proposing upgrade PRs', async () => {
+  for (const config of [{ head: previous }, { changed: ['README.md', 'lib/pages/about.dart'] }]) {
+    const { api, calls } = mainApi(config);
+    assert.equal((await discoverMainUpdate(pinned(), api)).available, false);
+    assert.ok(!calls.some((path) => path.includes('/contents/')));
+  }
+});
+
+test('main detects removed watched files using complete trees and fails on truncated or rewritten history', async () => {
+  const { api } = mainApi();
+  const update = await discoverMainUpdate(pinned(), (path, options) =>
+    path.includes(`/git/trees/${commit}`) ? { tree: [], truncated: false } : api(path, options),
+  );
+  assert.deepEqual(update.changedPaths, ['lib/services/plugin/rule_engine.dart']);
+  for (const config of [{ truncated: true }, { status: 'diverged' }, { head: 'main' }])
+    await assert.rejects(discoverMainUpdate(pinned(), mainApi(config).api));
 });
 
 test('an equal or older stable release never rolls back a pin containing newer fixes', async () => {
@@ -137,6 +202,7 @@ test('updating sources leaves lock generation to Flutter and verifies the result
     'test/reference/kazumi-core/lib/core.dart',
     'test/reference/kazumi-core/flutter-sdk.json',
     'test/reference/capabilities.js',
+    'server/modules/rules/validation.js',
   ];
   for (const path of paths) {
     await mkdir(dirname(join(directory, path)), { recursive: true });
@@ -153,6 +219,11 @@ test('updating sources leaves lock generation to Flutter and verifies the result
   assert.equal(updated.apiLevel, 10);
   assert.equal(await readFile(join(directory, paths[1]), 'utf8'), pins.sources.lock);
   assert.throws(() => verifyPins(updated), /pubspec.lock/);
+  assert.equal(
+    await readFile(join(directory, 'server/modules/rules/validation.js'), 'utf8'),
+    await readFile(join(root, 'server/modules/rules/validation.js'), 'utf8'),
+    'Reference upgrades must not raise the local API level',
+  );
 });
 
 test('core readiness retries startup but rejects a stale binary or a mismatched API', async () => {

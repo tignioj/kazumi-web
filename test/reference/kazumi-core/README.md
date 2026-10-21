@@ -30,7 +30,10 @@ then run the Dart tests and complete HTTP/browser checks.
 `flutter-sdk.json` pins the Flutter revision and the version required by Kazumi.
 The `toolchain` Docker stage exposes that SDK without resolving application
 dependencies, so the release-update workflow can regenerate the lockfile. Normal
-image builds enforce the committed lockfile. The daily `Check Kazumi reference releases`
-workflow proposes newer stable releases as pinned PRs; `Official rule compatibility` builds this image,
+image builds enforce the committed lockfile. The daily `Check Kazumi upstream updates`
+workflow proposes stable releases and relevant upstream main changes as pinned PRs, and separately tracks the complete official rule catalog; `Official rule compatibility` builds this image,
 starts a fresh core container, checks its revision/API, and compares recorded requests and outputs
-against its real rule engine before a maintainer merges.
+against its real rule engine. It also compares dynamic MP4/HLS resolution, captcha flows,
+POST replay, clearance reuse and cancellation with Chromium using local fixture pages.
+Golden updates and local API changes require explicit review. Verify and official
+compatibility must pass before a maintainer merges; the updater never merges PRs.

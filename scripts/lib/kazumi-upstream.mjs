@@ -3,6 +3,23 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export const upstreamRepository = 'Predidit/Kazumi';
+export const watchedPaths = [
+  'lib/plugins/',
+  'lib/services/plugin/',
+  'lib/modules/plugin/',
+  'lib/services/network/',
+  'lib/services/video_source/',
+  'lib/webview/',
+  'lib/request/',
+  'lib/utils/',
+  'test/rule_engine_test.dart',
+  'test/api_rule_engine_test.dart',
+  'test/plugin',
+  'test/video_source',
+  'test/captcha',
+  'pubspec.yaml',
+  'pubspec.lock',
+];
 const shaPattern = /^[a-f0-9]{40}$/;
 const files = {
   pubspec: 'test/reference/kazumi-core/pubspec.yaml',
@@ -98,6 +115,15 @@ export async function discoverUpdate(pins, api = github) {
     'ahead',
     'Release is not a descendant of the current pin; review manually',
   );
+  return describeReferenceUpdate(pins, sha, api, {
+    source: 'release',
+    tag: release.tag_name,
+    releaseUrl: `https://github.com/${upstreamRepository}/releases/tag/${encodeURIComponent(release.tag_name)}`,
+    branch: `codex/kazumi-${sha.slice(0, 12)}`,
+  });
+}
+
+async function describeReferenceUpdate(pins, sha, api, details) {
   const source = (path) =>
     api(`repos/${upstreamRepository}/contents/${path}?ref=${sha}`, { raw: true });
   const [pubspec, endpoints] = await Promise.all([
@@ -105,11 +131,12 @@ export async function discoverUpdate(pins, api = github) {
     source('lib/request/config/api_endpoints.dart'),
   ]);
   const version = capture(pubspec, /^version:\s*['"]?([^\s'"\r\n]+)/m, 'release package version');
-  assert.equal(
-    compareVersions(version, release.tag_name),
-    0,
-    'Release tag and package version differ',
-  );
+  if (details.tag)
+    assert.equal(
+      compareVersions(version, details.tag),
+      0,
+      'Release tag and package version differ',
+    );
   const flutter = capture(
     pubspec,
     /^  flutter:\s*['"]?(\d+\.\d+\.\d+)['"]?\s*$/m,
@@ -126,16 +153,42 @@ export async function discoverUpdate(pins, api = github) {
     currentVersion: pins.version,
     previous: pins.ref,
     version,
-    tag: release.tag_name,
     commit: sha,
     sdk,
     apiLevel: Number(
       capture(endpoints, /static const int apiLevel = (\d+);/, 'upstream rule API level'),
     ),
-    branch: `codex/kazumi-${sha.slice(0, 12)}`,
-    releaseUrl: `https://github.com/${upstreamRepository}/releases/tag/${encodeURIComponent(release.tag_name)}`,
     compareUrl: `https://github.com/${upstreamRepository}/compare/${pins.ref}...${sha}`,
+    ...details,
   };
+}
+
+export async function discoverMainUpdate(pins, api = github) {
+  verifyPins(pins);
+  const { sha } = await api(`repos/${upstreamRepository}/commits/main`);
+  assert.match(sha, shaPattern, 'Main must resolve to an immutable commit');
+  if (sha === pins.ref) return { available: false, source: 'main', commit: sha };
+  const comparison = await api(`repos/${upstreamRepository}/compare/${pins.ref}...${sha}`);
+  assert.equal(comparison.status, 'ahead', 'Main history changed; review manually');
+  // Compare full trees: the compare API only returns up to 300 changed files.
+  const trees = await Promise.all(
+    [pins.ref, sha].map((ref) => api(`repos/${upstreamRepository}/git/trees/${ref}?recursive=1`)),
+  );
+  for (const tree of trees) assert.equal(tree.truncated, false, 'Incomplete upstream tree');
+  const entries = trees.map(
+    ({ tree }) =>
+      new Map(tree.filter((item) => item.type === 'blob').map((item) => [item.path, item.sha])),
+  );
+  const changedPaths = [...new Set([...entries[0].keys(), ...entries[1].keys()])]
+    .filter((path) => entries[0].get(path) !== entries[1].get(path))
+    .filter((path) => watchedPaths.some((watched) => path.startsWith(watched)))
+    .sort();
+  if (!changedPaths.length) return { available: false, source: 'main', commit: sha };
+  return describeReferenceUpdate(pins, sha, api, {
+    source: 'main',
+    changedPaths,
+    branch: `codex/kazumi-main-${sha.slice(0, 12)}`,
+  });
 }
 
 export async function applyUpdate(root, pins, update) {
@@ -160,14 +213,20 @@ export async function applyUpdate(root, pins, update) {
 
 export function upgradeBody(update) {
   return (
-    `Upgrade the development Kazumi reference from ${update.currentVersion} to ${update.version}.\n\n` +
-    `- Official release: ${update.releaseUrl}\n` +
+    `Upgrade the development Kazumi reference from ${update.currentVersion} to ${update.version}` +
+    (update.source === 'main' ? ' to review changes on upstream main.\n\n' : '.\n\n') +
+    (update.releaseUrl ? `- Official release: ${update.releaseUrl}\n` : '') +
     `- Changes: ${update.compareUrl}\n` +
     `- Pinned commit: \`${update.commit}\`\n` +
     `- Flutter: ${update.sdk.version} (\`${update.sdk.revision}\`)\n` +
     `- Rule API: ${update.apiLevel}\n\n` +
     `The lockfile is resolved with the pinned Flutter toolchain. Official rule compatibility is dispatched explicitly ` +
-    `on this branch to build and start the real core, check its revision, and run the browser suite. ` +
-    `Review and merge only after Official rule compatibility passes; this PR does not enable automatic merging.\n`
+    `on this branch to compare rule requests, dynamic playback and captcha flows with the real core.\n\n` +
+    (update.changedPaths
+      ? `Changed watched files:\n${update.changedPaths.map((path) => `- \`${path}\``).join('\n')}\n\n`
+      : '') +
+    `Review upstream changes, add fixtures for new behavior, and port relevant fixes to the local engine. ` +
+    `Run compare:engines -- --record against this reference after resolving differences, and commit the reviewed golden corpus. ` +
+    `The local API level is not raised automatically. Merge only after Verify and Official rule compatibility pass and a maintainer reviews this PR. No automatic merging.\n`
   );
 }

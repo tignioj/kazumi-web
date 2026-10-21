@@ -4,10 +4,17 @@ on:
   pull_request:
     paths:
       - 'server/modules/rules/**'
+      - 'server/modules/playback/**'
+      - 'server/modules/verification/**'
+      - 'server/lib/**'
       - 'test/compatibility/**'
       - 'test/reference/**'
-      - 'scripts/compare-rule-engines.mjs'
+      - 'scripts/compare-*-engines.mjs'
+      - 'scripts/lib/kazumi-*.mjs'
+      - 'scripts/update-kazumi.mjs'
+      - 'package*.json'
       - '.github/workflows/compatibility.yml'
+      - '.github/workflows/kazumi-update.yml'
 permissions:
   contents: read
 jobs:
@@ -21,6 +28,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: npx playwright install --with-deps chromium
       - run: node scripts/update-kazumi.mjs --verify
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
@@ -31,11 +39,18 @@ jobs:
           cache-from: type=gha,scope=kazumi-reference-amd64
           cache-to: type=gha,scope=kazumi-reference-amd64,mode=max
       - name: Start the development reference
+        id: core
         run: |
           docker run --detach --name kazumi-reference --network host --shm-size 256m \
             --env KAZUMI_EGRESS_PROXY=http://127.0.0.1:17332 kazumi-core:reference
           KAZUMI_CORE_URL=http://127.0.0.1:7331 node scripts/check-kazumi-core.mjs
+      - name: Compare dynamic playback and captcha behavior
+        env:
+          KAZUMI_REFERENCE_URL: http://127.0.0.1:7331
+          COMPAT_REFERENCE_ORIGIN: http://127.0.0.1:17334
+        run: npm run compare:browser-engines -- --output test-results/browser-comparison.json
       - name: Compare actual official requests and outputs
+        if: "!cancelled() && steps.core.outcome == 'success'"
         env:
           KAZUMI_REFERENCE_URL: http://127.0.0.1:7331
           COMPAT_REFERENCE_ORIGIN: http://127.0.0.1:17334

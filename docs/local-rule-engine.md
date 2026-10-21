@@ -32,7 +32,7 @@ URL/私网限制、禁止 JSONPath 求值、脚本语法检查、规则字段类
 [测试目录](../test/compatibility) 保存两类固定输入：
 
 1. 官方规则仓库提交 `ba8e10b35b0c3a56bbb6032a12356b0473844c64` 的完整 17 条规则，校验 JSON 与分享链接导入。
-2. 23 组人工 HTML/API 样本，覆盖 XPath 作用域、混合 HTML 的 `text()`/属性、空结果、空线路、POST 重复参数、URL 编码归一化、仅响应头的 Cloudflare 挑战、五条真实 API 9 规则、JSON/form、集合参数、opaque ID、模板编码、变量捕获、嵌套与分隔章节。
+2. 26 组人工 HTML/API 样本，覆盖 XPath 作用域、混合 HTML 的 `text()`/属性、空结果、空线路、POST 重复参数、URL 编码归一化、仅响应头的 Cloudflare 挑战、全部八条官方 API 规则、JSON/form、集合参数、opaque ID、模板编码、变量捕获、嵌套与分隔章节。官方 API 场景直接读取上述快照，更新选择器和模板会进入执行测试；遇到尚无响应样本的新 API 规则会明确失败，要求补充样本。
 
 [golden.json](../test/compatibility/golden.json) 来自真实官方服务 `4effe14ee78b790a92c23ed86f969093d2ed376d` 的输出及实际发出的请求。请求比较包含方法、路径、解码后的查询参数和请求体。查询参数及 form 请求体保存为有序键值对，保留重复键、空值和顺序，避免转为普通对象后隐藏差异；JSON 请求体保留原有类型。验证错误分别检查官方与本地错误码，再比较是否需要验证。没有将不同运行时的默认 User-Agent 当作规则语义。
 
@@ -42,6 +42,7 @@ URL/私网限制、禁止 JSONPath 求值、脚本语法检查、规则字段类
 npm ci
 npx playwright install chromium
 npm run check
+npm run test:compat:browser
 npm run test:e2e
 ```
 
@@ -65,12 +66,27 @@ docker run -d --name kazumi-engine-reference \
   kazumi-core:engine-reference
 KAZUMI_CORE_URL=http://127.0.0.1:17331 node scripts/check-kazumi-core.mjs
 npm run compare:engines
+npm run compare:browser-engines -- --output test-results/browser-comparison.json
 docker rm -f kazumi-engine-reference
 ```
 
 比较程序临时在 17332 启动允许测试私网的出口，在 17334 启动固定响应站点。它校验官方 SHA/API、全部规则导入，以及每组请求和输出。`--record` 仅在两边一致时更新 golden；参考版本或结果改变时必须显式审查、更新样本。Linux CI 的 host 网络配置见 [官方对照工作流](../.github/workflows/compatibility.yml)。
 
 官方版本更新工作流只升级参考服务及参考 API 声明，不自动提高本地引擎的 API 等级。生产发布和普通 `Verify` 不依赖 Flutter；官方对照作为独立检查。
+
+### 主分支、规则快照与审查
+
+每日工作流同时检查稳定版、`Predidit/Kazumi` 的 `main` 和 `Predidit/KazumiRules` 默认分支。主分支按 `scripts/lib/kazumi-upstream.mjs` 的关键路径比较两次完整 Git 树，识别新增、删除及未发布修复；树被截断或历史分叉时检查失败，留待人工处理。规则快照从同一不可变提交读取索引和所有规则，校验名称、版本、重名和完整下载；忽略仅文档或目录排序变化。下载失败保留原快照。快照升级不会修改用户已安装的规则。
+
+机器人为每种更新来源保留一个待审查 PR，等待审查期间仍只读检查后续变化并写入工作流摘要，保留维护者修改；已关闭的相同提交不再提出。通过 `workflow_dispatch` 显式触发完整 Verify 和官方对照，避免机器人 push 不触发检查。PR 要求审查上游代码与规则差异，为新语义补充 HTML/API 或浏览器场景；现有 XPath 规则全部验证 JSON/分享链接导入，只有已有固定响应样本的规则执行离线站点解析，不把导入成功当作真实站点可用。
+
+更改参考提交或规则快照后，golden 元数据也会变化，首次官方对照因此可能失败。先处理实际行为差异，再对已经启动的新参考执行 `npm run compare:engines -- --record`，审查并提交 golden，重新运行两项检查。机器人不录制 golden、不提高本地 API 等级，也不合并 PR。仓库分支保护应要求维护者审查和两项检查通过。
+
+### 动态播放和验证码对照
+
+`compare:browser-engines` 使用本地固定页面，启动真实 Chromium，并与上述官方参考的 Linux WebKit 执行相同的十组场景：延迟 MP4、嵌套 iframe HLS、无扩展名视频、图片验证码、POST 搜索验证码、自动点击、自定义验证脚本、Cloudflare 响应头挑战、取消验证、取消视频解析后恢复。验证媒体 URL、类型、签名编码和实际 MP4/HLS 字节；验证错误答案不获授权、原 POST 参数重放、Cookie 与浏览器 UA 复用、访问者隔离和会话清理。结果写入 CI artifact；任一引擎失败或结果不同都会失败，缺少 Chromium 不会跳过。
+
+官方 XPath 章节请求明确不附验证 Cookie；Web 已有的章节 Cookie 复用属于额外能力，在本地路径单独断言，不削弱它以迎合官方限制。公共站点、真实 Cloudflare 服务和人工验证码供应商不参与固定场景，仍需对受影响来源进行人工抽查。普通 `Verify` 运行同一套本地浏览器场景；官方工作流运行双引擎对照，播放、验证码、网络和测试脚本修改均会触发。
 
 ## 2026-10-20 性能结果
 

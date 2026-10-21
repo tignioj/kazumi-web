@@ -89,6 +89,13 @@ try {
     parseImport(catalog.rules).map((rule) => rule.name),
     accepted,
   );
+  for (const rule of catalog.rules) {
+    const share = `kazumi://${Buffer.from(JSON.stringify(rule)).toString('base64url')}`;
+    assert.deepEqual(
+      parseImport(share).map((item) => item.name),
+      (await reference.validate(share)).map((item) => item.name),
+    );
+  }
   const golden = {
     upstream: pins.ref,
     apiLevel: pins.apiLevel,

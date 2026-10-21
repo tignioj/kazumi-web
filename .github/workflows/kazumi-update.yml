@@ -1,4 +1,4 @@
-name: Check Kazumi reference releases
+name: Check Kazumi upstream updates
 on:
   schedule:
     # Daily at 09:17 Asia/Shanghai.
@@ -7,12 +7,23 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: kazumi-release-update
+  group: kazumi-upstream-update
   cancel-in-progress: false
 jobs:
   update:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - source: release
+            pattern: '^codex/kazumi-[0-9a-f]{12}$'
+          - source: main
+            pattern: '^codex/kazumi-main-'
+          - source: rules
+            pattern: '^codex/kazumi-rules-'
     permissions:
       contents: write
       pull-requests: write
@@ -24,14 +35,38 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Check the latest official stable release
+      - name: Keep one review in progress per update source
+        id: pending
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH_PATTERN: ${{ matrix.pattern }}
+        run: |
+          pending_branch="$(gh pr list --state open --limit 100 --json headRefName \
+            --jq '[.[] | select(.headRefName | test(env.BRANCH_PATTERN))][0].headRefName // empty')"
+          if [ -n "$pending_branch" ]; then
+            echo 'exists=true' >> "$GITHUB_OUTPUT"
+            echo "Awaiting review of $pending_branch; preserving maintainer changes." >> "$GITHUB_STEP_SUMMARY"
+            for workflow in ci.yml compatibility.yml; do
+              dispatched="$(gh run list --workflow "$workflow" --branch "$pending_branch" \
+                --event workflow_dispatch --limit 1 --json databaseId --jq length)"
+              if [ "$dispatched" -eq 0 ]; then
+                gh workflow run "$workflow" --ref "$pending_branch"
+              fi
+            done
+          fi
+      - name: Check a pinned upstream snapshot
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/update-kazumi.mjs --write
+          UPDATE_SOURCE: ${{ matrix.source }}
+          REVIEW_PENDING: ${{ steps.pending.outputs.exists }}
+        run: |
+          arguments=(--source "$UPDATE_SOURCE")
+          if [ "$REVIEW_PENDING" != 'true' ]; then arguments+=(--write); fi
+          node scripts/update-kazumi.mjs "${arguments[@]}"
       - name: Avoid duplicate or previously closed upgrade PRs
         id: existing
-        if: steps.release.outputs.available == 'true'
+        if: steps.pending.outputs.exists != 'true' && steps.release.outputs.available == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           UPDATE_BRANCH: ${{ steps.release.outputs.branch }}
@@ -49,26 +84,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           UPDATE_BRANCH: ${{ steps.release.outputs.branch }}
         run: |
-          dispatched="$(gh run list --workflow compatibility.yml --branch "$UPDATE_BRANCH" \
-            --event workflow_dispatch --limit 1 --json databaseId --jq length)"
-          if [ "$dispatched" -eq 0 ]; then
-            gh workflow run compatibility.yml --ref "$UPDATE_BRANCH"
-            echo 'Recovered compatibility dispatch for the existing upgrade PR.' >> "$GITHUB_STEP_SUMMARY"
-          fi
+          for workflow in ci.yml compatibility.yml; do
+            dispatched="$(gh run list --workflow "$workflow" --branch "$UPDATE_BRANCH" \
+              --event workflow_dispatch --limit 1 --json databaseId --jq length)"
+            if [ "$dispatched" -eq 0 ]; then
+              gh workflow run "$workflow" --ref "$UPDATE_BRANCH"
+            fi
+          done
       - name: Resolve the lockfile with the pinned Flutter SDK
-        if: steps.release.outputs.available == 'true' && steps.existing.outputs.exists != 'true'
+        if: steps.pending.outputs.exists != 'true' && matrix.source != 'rules' && steps.release.outputs.available == 'true' && steps.existing.outputs.exists != 'true'
         run: |
           docker build --target toolchain --tag kazumi-core-toolchain:update test/reference/kazumi-core
           docker run --rm --volume "$PWD/test/reference/kazumi-core:/service" --workdir /service \
             kazumi-core-toolchain:update flutter pub get
           node scripts/update-kazumi.mjs --verify
       - name: Publish the pinned upgrade PR and dispatch compatibility checks
-        if: steps.release.outputs.available == 'true' && steps.existing.outputs.exists != 'true'
+        if: steps.pending.outputs.exists != 'true' && steps.release.outputs.available == 'true' && steps.existing.outputs.exists != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           UPDATE_BRANCH: ${{ steps.release.outputs.branch }}
-          UPDATE_VERSION: ${{ steps.release.outputs.version }}
           UPDATE_COMMIT: ${{ steps.release.outputs.commit }}
+          UPDATE_TITLE: ${{ steps.release.outputs.title }}
+          UPDATE_SOURCE: ${{ matrix.source }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           git config user.name 'github-actions[bot]'
@@ -79,22 +116,24 @@ jobs:
             # Reuse the remote branch, including any maintainer changes; never force push.
             git fetch origin "$UPDATE_BRANCH"
             git switch --discard-changes --create "$UPDATE_BRANCH" FETCH_HEAD
-            node scripts/update-kazumi.mjs --verify --expected-commit "$UPDATE_COMMIT"
+            node scripts/update-kazumi.mjs --source "$UPDATE_SOURCE" --verify --expected-commit "$UPDATE_COMMIT"
           else
             git switch --create "$UPDATE_BRANCH"
             git add test/reference/kazumi-core/pubspec.yaml test/reference/kazumi-core/pubspec.lock \
               test/reference/kazumi-core/lib/core.dart test/reference/kazumi-core/flutter-sdk.json \
-              test/reference/kazumi-core/linux/flutter/generated* test/reference/capabilities.js
-            git commit --message "chore(core): upgrade Kazumi to $UPDATE_VERSION"
+              test/reference/kazumi-core/linux/flutter/generated* test/reference/capabilities.js \
+              test/compatibility/official-rules.json
+            git commit --message "$UPDATE_TITLE"
             git push origin "HEAD:refs/heads/$UPDATE_BRANCH"
           fi
           pr_url="$(gh pr create --base "$DEFAULT_BRANCH" --head "$UPDATE_BRANCH" \
-            --title "chore(core): upgrade Kazumi to $UPDATE_VERSION" \
+            --title "$UPDATE_TITLE" \
             --body-file "$RUNNER_TEMP/kazumi-upgrade-body.md")"
           echo "Upgrade PR: $pr_url" >> "$GITHUB_STEP_SUMMARY"
           # GITHUB_TOKEN pushes do not start push CI. Explicit dispatch needs no PAT.
           gh workflow run compatibility.yml --ref "$UPDATE_BRANCH"
-          echo 'Compatibility checks dispatched on the pinned upgrade commit; merge only after it passes.' >> "$GITHUB_STEP_SUMMARY"
+          gh workflow run ci.yml --ref "$UPDATE_BRANCH"
+          echo 'Verify and official compatibility dispatched; maintainer review is required. No automatic merge.' >> "$GITHUB_STEP_SUMMARY"
       - name: Report no update
-        if: steps.release.outputs.available != 'true'
-        run: echo 'No newer official stable Kazumi release; current commit pin is unchanged.' >> "$GITHUB_STEP_SUMMARY"
+        if: steps.pending.outputs.exists != 'true' && steps.release.outputs.available != 'true'
+        run: echo 'No unreviewed upstream changes to propose for this source.' >> "$GITHUB_STEP_SUMMARY"
