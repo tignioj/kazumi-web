@@ -454,6 +454,47 @@
       ]
     },
     {
+      "id": "official-dalvdm",
+      "search": [
+        {
+          "name": "番剧",
+          "url": "https://fixture.example/index.php/vod/detail/id/a%2Fb%20%2B%E4%B8%AD.html"
+        },
+        {
+          "name": "数字 ID",
+          "url": "https://fixture.example/index.php/vod/detail/id/7.html"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "第1集",
+              "url": "https://fixture.example/index.php/vod/play/123/sid/1/nid/1.html"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/official-dalvdm/search",
+          "query": [
+            ["mid", "1"],
+            ["wd", "番剧 & a/b+中"]
+          ],
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/case/official-dalvdm/detail",
+          "query": [],
+          "method": "GET",
+          "body": null
+        }
+      ]
+    },
+    {
       "id": "official-giriGiriLove",
       "search": [
         {
@@ -495,15 +536,15 @@
       ]
     },
     {
-      "id": "official-mutefun",
+      "id": "official-LMM",
       "search": [
         {
           "name": "番剧",
-          "url": "a/b +中"
+          "url": "https://fixture.example/index.php/vod/detail/id/a%2Fb%20%2B%E4%B8%AD.html"
         },
         {
           "name": "数字 ID",
-          "url": "7"
+          "url": "https://fixture.example/index.php/vod/detail/id/7.html"
         }
       ],
       "chapters": [
@@ -519,7 +560,7 @@
       ],
       "requests": [
         {
-          "path": "/case/official-mutefun/search",
+          "path": "/case/official-LMM/search",
           "query": [
             ["mid", "1"],
             ["wd", "番剧 & a/b+中"]
@@ -528,7 +569,7 @@
           "body": null
         },
         {
-          "path": "/case/official-mutefun/detail",
+          "path": "/case/official-LMM/detail",
           "query": [],
           "method": "GET",
           "body": null
@@ -577,56 +618,15 @@
       ]
     },
     {
-      "id": "official-dalvdm",
+      "id": "official-moonci",
       "search": [
         {
           "name": "番剧",
-          "url": "https://fixture.example/index.php/vod/detail/id/a%2Fb%20%2B%E4%B8%AD.html"
+          "url": "https://fixture.example/anime/a%2Fb%20%2B%E4%B8%AD.html"
         },
         {
           "name": "数字 ID",
-          "url": "https://fixture.example/index.php/vod/detail/id/7.html"
-        }
-      ],
-      "chapters": [
-        {
-          "name": "播放线路1",
-          "episodes": [
-            {
-              "name": "第1集",
-              "url": "https://fixture.example/index.php/vod/play/123/sid/1/nid/1.html"
-            }
-          ]
-        }
-      ],
-      "requests": [
-        {
-          "path": "/case/official-dalvdm/search",
-          "query": [
-            ["mid", "1"],
-            ["wd", "番剧 & a/b+中"]
-          ],
-          "method": "GET",
-          "body": null
-        },
-        {
-          "path": "/case/official-dalvdm/detail",
-          "query": [],
-          "method": "GET",
-          "body": null
-        }
-      ]
-    },
-    {
-      "id": "official-LMM",
-      "search": [
-        {
-          "name": "番剧",
-          "url": "https://fixture.example/index.php/vod/detail/id/a%2Fb%20%2B%E4%B8%AD.html"
-        },
-        {
-          "name": "数字 ID",
-          "url": "https://fixture.example/index.php/vod/detail/id/7.html"
+          "url": "https://fixture.example/anime/7.html"
         }
       ],
       "chapters": [
@@ -642,7 +642,7 @@
       ],
       "requests": [
         {
-          "path": "/case/official-LMM/search",
+          "path": "/case/official-moonci/search",
           "query": [
             ["mid", "1"],
             ["wd", "番剧 & a/b+中"]
@@ -651,10 +651,148 @@
           "body": null
         },
         {
-          "path": "/case/official-LMM/detail",
+          "path": "/case/official-moonci/detail",
           "query": [],
           "method": "GET",
           "body": null
+        }
+      ]
+    },
+    {
+      "id": "official-mutefun",
+      "search": [
+        {
+          "name": "番剧",
+          "url": "a/b +中"
+        },
+        {
+          "name": "数字 ID",
+          "url": "7"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "第1集",
+              "url": "https://fixture.example/play/1"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/official-mutefun/search",
+          "query": [
+            ["mid", "1"],
+            ["wd", "番剧 & a/b+中"]
+          ],
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/case/official-mutefun/detail",
+          "query": [],
+          "method": "GET",
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "official-sorani",
+      "search": [
+        {
+          "name": "番剧",
+          "url": "a/b +中"
+        },
+        {
+          "name": "数字 ID",
+          "url": "7"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "一",
+              "url": "https://fixture.example/anime/mal/opaque%2Fa%252Fb/episode/1"
+            },
+            {
+              "name": "二",
+              "url": "https://fixture.example/anime/mal/opaque%2Fa%252Fb/episode/2"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/official-sorani/search",
+          "query": [
+            ["page", "1"],
+            ["size", "50"],
+            ["keyword", "番剧 & a/b+中"],
+            ["enabled", "true"],
+            ["sortMode", "latest"],
+            ["sortDesc", "false"]
+          ],
+          "method": "GET",
+          "body": null
+        },
+        {
+          "path": "/case/official-sorani/chapters/opaque%2Fa%252Fb",
+          "query": [],
+          "method": "GET",
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "official-xfdmnext",
+      "search": [
+        {
+          "name": "番剧",
+          "url": "a/b +中"
+        },
+        {
+          "name": "数字 ID",
+          "url": "7"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "线路",
+          "episodes": [
+            {
+              "name": "一",
+              "url": "https://fixture.example/anime/opaque%2Fa%252Fb/play/episode%2Fa"
+            },
+            {
+              "name": "二",
+              "url": "https://fixture.example/anime/opaque%2Fa%252Fb/play/2"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/official-xfdmnext/search",
+          "query": [],
+          "method": "POST",
+          "body": {
+            "search_term": "番剧 & a/b+中",
+            "page_number": 1,
+            "items_per_page": 24
+          }
+        },
+        {
+          "path": "/case/official-xfdmnext/chapters",
+          "query": [],
+          "method": "POST",
+          "body": {
+            "p_id": "opaque/a%2Fb"
+          }
         }
       ]
     },

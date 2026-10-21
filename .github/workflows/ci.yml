@@ -31,6 +31,7 @@ jobs:
         working-directory: native/ech
       - run: npx playwright install --with-deps chromium
       - run: npm run check
+      - run: npm run test:compat:browser
       - run: npm run test:e2e
       - run: docker compose config --quiet
       - run: docker build -t kazumi-web:test .

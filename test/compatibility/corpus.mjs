@@ -1,8 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 
-const api9 = JSON.parse(
-  await readFile(new URL('../server/fixtures/api9-rules.json', import.meta.url)),
+const { rules: officialRules } = JSON.parse(
+  await readFile(new URL('./official-rules.json', import.meta.url)),
+);
+const api9 = officialRules.filter(
+  (rule) => rule.searchMode === 'api' || rule.chapterMode === 'api',
 );
 const chapterHtml = {
   LMM: '<div class="module-player-list"><a href="/play/1">第 1 集</a></div>',
@@ -10,6 +13,8 @@ const chapterHtml = {
   mutefun:
     '<div class="module-play-list-content"><a class="module-play-list-link" href="/play/1">第 1 集</a></div>',
   mgnacg: '<ul class="anthology-list-play size"><li><a href="/play/1">第 1 集</a></li></ul>',
+  moonci:
+    '<div class="hl-play-source"><ul class="hl-plays-list"><li><a href="/play/1">第 1 集</a></li></ul></div>',
   dalvdm:
     '<div id="playlist1" class="lists-box"><a href="/index.php/vod/play/123/sid/1/nid/1.html">第 1 集</a></div>',
 };
@@ -94,6 +99,11 @@ export function buildCases(origin) {
     verificationRequired: true,
   });
   for (const original of api9) {
+    assert.equal(original.searchMode, 'api', `Add an executable fixture for ${original.name}`);
+    assert.ok(
+      chapterHtml[original.name] || ['sorani', 'xfdmnext'].includes(original.name),
+      `Add an executable fixture for ${original.name}`,
+    );
     const id = `official-${original.name}`;
     const rule = structuredClone(original);
     rule.baseURL = origin;
@@ -103,14 +113,64 @@ export function buildCases(origin) {
         new URL(original.baseURL).origin,
         origin,
       );
+    if (rule.chapterMode === 'api') {
+      rule.chapterApiConfig.request.url =
+        `${origin}/case/${id}/chapters` + (original.name === 'sorani' ? '/@source' : '');
+      rule.chapterApiConfig.episodePage.url = rule.chapterApiConfig.episodePage.url.replace(
+        new URL(original.baseURL).origin,
+        origin,
+      );
+    }
+    if (rule.referer) rule.referer = origin;
     cases.push({
       id,
       rule,
-      search: {
-        list: [{ id: 'a/b +中', name: '番剧' }, { id: 7, name: '数字 ID' }, { name: '缺少 ID' }],
-      },
-      chapters: chapterHtml[original.name],
-      source: `${origin}/case/${id}/detail`,
+      search:
+        original.name === 'sorani'
+          ? {
+              data: {
+                records: [
+                  { id: 'a/b +中', title: '番剧' },
+                  { id: 7, title: '数字 ID' },
+                ],
+              },
+            }
+          : original.name === 'xfdmnext'
+            ? [
+                { id: 'a/b +中', title: '番剧' },
+                { id: 7, title: '数字 ID' },
+              ]
+            : {
+                list: [
+                  { id: 'a/b +中', name: '番剧' },
+                  { id: 7, name: '数字 ID' },
+                  { name: '缺少 ID' },
+                ],
+              },
+      chapters:
+        original.name === 'sorani'
+          ? {
+              data: {
+                episodes: [
+                  { episodeLabel: '一', episodeOrder: 1 },
+                  { episodeLabel: '二', episodeOrder: 2 },
+                ],
+              },
+            }
+          : original.name === 'xfdmnext'
+            ? {
+                sources: [
+                  {
+                    name: '线路',
+                    episodes: [
+                      { title: '一', id: 'episode/a' },
+                      { title: '二', id: 2 },
+                    ],
+                  },
+                ],
+              }
+            : chapterHtml[original.name],
+      source: rule.chapterMode === 'api' ? 'opaque/a%2Fb' : `${origin}/case/${id}/detail`,
     });
   }
   const api = (id, chapterApiConfig, extra = {}) => ({

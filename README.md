@@ -46,16 +46,20 @@ HLS 在线去广告使用 Kazumi 原生播放器的 FFmpeg `hls_ad_filter` 补�
 
 目标实际走代理时允许证书校验失败；直连与重定向后的直连目标保留正常校验。镜像继续验证并安装 [公共中间证书](server/certificates/README.md)，供 Node 和 Chromium 使用。Chromium 默认在无任务 30 秒后关闭，已验证的访问者 Cookie 会话保留在 Node 内存中。
 
-### 官方参考版本更新
+### 上游跟进与兼容性升级
 
-`Check Kazumi reference releases` 每天北京时间 09:17 检查官方稳定版本，创建固定提交、锁文件和 Flutter SDK 的参考升级 PR，并派发官方兼容性工作流。它只更新开发参考的 API 等级，不提高本地引擎声明的能力。维护者需审查差异、更新兼容样本并通过测试后合并；不自动合并。FFmpeg 及补丁按 `native/hls/README.md` 独立升级。
+`Check Kazumi upstream updates` 每天北京时间 09:17 分别检查官方稳定版本、主分支关键代码和官方规则仓库。主分支监控覆盖规则、网络、视频解析、WebView/验证码及依赖；与当前参考比较完整 Git 树，包含新增和删除，不受 compare 接口的文件数量上限影响。规则更新下载同一固定提交的完整 JSON 目录，在 PR 中列出新增、修改和删除；版本号不变的规则内容修改也会被发现。
+
+每类更新至多保留一个待审查 PR，待审期间仍只读检查后续变化并写入工作流摘要，不覆盖维护者修改，也不重复提出已关闭的同一提交。参考升级固定官方提交、锁文件、Flutter SDK 和参考 API；本地引擎 API 等级由实现决定。机器人显式派发 `Verify` 和 `Official rule compatibility`，后者比较规则请求、结果、动态播放和验证码行为。维护者审查上游差异、补充固定响应样本、移植相关修复，并在两边一致后显式更新 golden；测试通过后经 PR 审查合并，不自动合并。FFmpeg 及补丁按 `native/hls/README.md` 独立升级。
 
 ```bash
 node scripts/update-kazumi.mjs
+node scripts/update-kazumi.mjs --source main
+node scripts/update-kazumi.mjs --source rules
 node scripts/update-kazumi.mjs --verify
 ```
 
-工作流需要仓库允许 Actions 创建 PR。机器人显式派发兼容性工作流，避免 `GITHUB_TOKEN` push 不触发 CI 的限制。
+以上检查默认只读，工作流使用 `--write` 准备 PR。需要仓库允许 Actions 创建 PR；维护者应在分支保护中要求审查，以及 `Verify` 和官方兼容性检查通过。
 
 ## 本地开发与验证
 
@@ -66,6 +70,7 @@ npm ci
 npx playwright install chromium
 npm run dev
 npm run check
+npm run test:compat:browser
 npm run test:e2e
 ```
 
