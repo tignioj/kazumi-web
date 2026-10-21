@@ -3,6 +3,7 @@ import { WebPlayer } from './WebPlayer.jsx';
 import { watchKey } from '../../../shared/watch-data.js';
 import {
   ArrowLeft,
+  Bug,
   ChevronRight,
   CircleAlert,
   Clock3,
@@ -14,6 +15,9 @@ import { api } from '../../lib/api.js';
 import { Notice, Spinner } from '../../components/feedback.jsx';
 import { PlayerCachePanel } from './PlayerCachePanel.jsx';
 import { PlayerComments } from '../comments/Comments.jsx';
+import { useStored } from '../../hooks/use-stored.js';
+import { PlayerDebugPanel } from './PlayerDebugPanel.jsx';
+import { createPlayerDiagnostics, emptyPlaybackMetrics } from './player-diagnostics.js';
 
 export function Player({ context, settings, onClose, onProgress, notify, navigate }) {
   const [roads, setRoads] = useState(context.roads || []);
@@ -25,6 +29,16 @@ export function Player({ context, settings, onClose, onProgress, notify, navigat
   const [error, setError] = useState('');
   const [playError, setPlayError] = useState('');
   const [attempt, setAttempt] = useState(0);
+  const [diagnostics] = useState(createPlayerDiagnostics);
+  const [showDebug, setShowDebug] = useStored('kazumi:player-debug', false);
+  const reportDiagnostic = useCallback(
+    (event) => {
+      if (event.metrics) diagnostics.update(event.metrics);
+      if (event.message)
+        diagnostics.log(event.level || 'info', event.scope || '播放器', event.message);
+    },
+    [diagnostics],
+  );
   const positionRef = useRef(context.resume || 0);
   const autoPlayRef = useRef(false);
   const progressRef = useRef(onProgress);
@@ -46,6 +60,7 @@ export function Player({ context, settings, onClose, onProgress, notify, navigat
     const controller = new AbortController();
     setLoading(true);
     setError('');
+    diagnostics.log('info', '选集', `获取剧集列表 · ${context.ruleName}`);
     api('/rules/chapters', {
       method: 'POST',
       signal: controller.signal,
@@ -56,6 +71,7 @@ export function Player({ context, settings, onClose, onProgress, notify, navigat
         if (!data.roads?.some((r) => r.episodes?.length))
           throw new Error('此片源没有可播放的剧集。');
         setRoads(data.roads);
+        diagnostics.log('info', '选集', `已获取 ${data.roads.length} 条线路`);
         const oldRoad = data.roads[context.roadIndex || 0];
         const index = oldRoad?.episodes?.findIndex((e) => e.url === context.episodeUrl);
         if (index >= 0) setEpisodeIndex(index);
@@ -73,6 +89,8 @@ export function Player({ context, settings, onClose, onProgress, notify, navigat
       .catch((e) => {
         if (alive && e.name !== 'AbortError') {
           setError(e.message);
+          diagnostics.log('error', '选集', e.message);
+          diagnostics.update({ status: '获取剧集失败' });
           setLoading(false);
         }
       });
@@ -84,6 +102,13 @@ export function Player({ context, settings, onClose, onProgress, notify, navigat
   useEffect(() => {
     if (!episode) return;
     const controller = new AbortController();
+    const started = performance.now();
+    diagnostics.update({ ...emptyPlaybackMetrics, status: '正在解析' });
+    diagnostics.log(
+      'info',
+      '解析',
+      `开始解析 · ${context.ruleName} · ${episode.name || '当前剧集'}`,
+    );
     setLoading(true);
     setError('');
     setPlayError('');
@@ -95,11 +120,24 @@ export function Player({ context, settings, onClose, onProgress, notify, navigat
     })
       .then((data) => {
         if (controller.signal.aborted) return;
+        const resolveMs = performance.now() - started;
+        diagnostics.update({
+          resolveMs,
+          status: '等待加载',
+          ...(data.type === 'iframe' && { engine: '站点内嵌播放器' }),
+        });
+        diagnostics.log(
+          'info',
+          '解析',
+          `解析完成 · ${data.type} · ${(resolveMs / 1000).toFixed(2)} 秒${data.cached ? ' · 命中本地缓存' : ''}${data.nativePlayback ? ' · 原生过滤流' : ''}`,
+        );
         setResolved({ ...data, episodeUrl: episode.url });
         setLoading(false);
       })
       .catch((e) => {
-        if (e.name !== 'AbortError') {
+        if (!controller.signal.aborted && e.name !== 'AbortError') {
+          diagnostics.update({ resolveMs: performance.now() - started, status: '解析失败' });
+          diagnostics.log('error', '解析', e.message);
           setError(e.message);
           setLoading(false);
         }
@@ -129,6 +167,11 @@ export function Player({ context, settings, onClose, onProgress, notify, navigat
   );
   const select = (index, road = roadIndex) => {
     if (index === episodeIndex && road === roadIndex) return;
+    diagnostics.log(
+      'info',
+      '选集',
+      `切换至 ${roads[road]?.name || `线路 ${road + 1}`} · ${roads[road]?.episodes[index]?.name || `第 ${index + 1} 话`}`,
+    );
     positionRef.current = 0;
     autoPlayRef.current = true;
     setEpisodeIndex(index);
@@ -146,59 +189,97 @@ export function Player({ context, settings, onClose, onProgress, notify, navigat
           <h1>{context.title}</h1>
           <p>{episode?.name || '正在获取剧集'}</p>
         </div>
-        {episode && (
-          <a
-            className="button quiet"
-            href={resolved?.originalUrl || episode.url}
-            target="_blank"
-            rel="noreferrer"
+        <div className="player-heading-actions">
+          <button
+            className={`button quiet${showDebug ? ' selected' : ''}`}
+            aria-expanded={showDebug}
+            aria-controls="player-debug-panel"
+            onClick={() => setShowDebug(!showDebug)}
           >
-            来源页面
-            <ExternalLink size={14} />
-          </a>
-        )}
+            <Bug size={14} />
+            调试信息
+          </button>
+          {episode && (
+            <a
+              className="button quiet"
+              href={resolved?.originalUrl || episode.url}
+              target="_blank"
+              rel="noreferrer"
+            >
+              来源页面
+              <ExternalLink size={14} />
+            </a>
+          )}
+        </div>
       </div>
-      <div className="video-stage">
-        {loading ? (
-          <Spinner text={slowResolve ? '片源响应较慢，正在继续解析并验证视频…' : '正在解析片源…'} />
-        ) : error ? (
-          <div className="player-error">
-            <CircleAlert size={32} />
-            <h3>暂时无法播放</h3>
-            <p>{error}</p>
-            <button className="button primary" onClick={() => setAttempt((p) => p + 1)}>
-              <RefreshCw size={15} />
-              重新解析
-            </button>
+      <div className={`player-workspace${showDebug ? ' with-debug' : ''}`}>
+        <div className="video-stage">
+          {loading ? (
+            <Spinner
+              text={slowResolve ? '片源响应较慢，正在继续解析并验证视频…' : '正在解析片源…'}
+            />
+          ) : error ? (
+            <div className="player-error">
+              <CircleAlert size={32} />
+              <h3>暂时无法播放</h3>
+              <p>{error}</p>
+              <button className="button primary" onClick={() => setAttempt((p) => p + 1)}>
+                <RefreshCw size={15} />
+                重新解析
+              </button>
+            </div>
+          ) : resolved?.type === 'iframe' ? (
+            <iframe
+              key={resolved.url}
+              title={`${context.title} ${episode?.name || ''} 站点播放器`}
+              src={resolved.url}
+              referrerPolicy="no-referrer"
+              allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
+              allowFullScreen
+              sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+              onLoad={() => {
+                diagnostics.update({ status: '内嵌页面已加载' });
+                diagnostics.log('info', '内嵌页面', '播放器页面已加载；内部播放状态由来源站点管理');
+              }}
+              onError={() => {
+                diagnostics.update({ status: '内嵌页面加载失败' });
+                diagnostics.log('error', '内嵌页面', '播放器页面加载失败，请尝试打开来源页面');
+              }}
+            />
+          ) : resolved ? (
+            <WebPlayer
+              source={resolved}
+              resume={positionRef.current}
+              autoplay={autoPlayRef.current}
+              onProgress={(position, duration) => {
+                if (activeEpisodeRef.current === resolved.episodeUrl)
+                  positionRef.current = position;
+                record(position, duration);
+              }}
+              onError={setPlayError}
+              onDebug={reportDiagnostic}
+              onEnded={() => {
+                if (settings.autoNext && hasNext) {
+                  notify('正在播放下一话');
+                  select(episodeIndex + 1);
+                }
+              }}
+            />
+          ) : null}
+        </div>
+        {showDebug && (
+          <div id="player-debug-panel" className="player-debug-slot">
+            <PlayerDebugPanel
+              diagnostics={diagnostics}
+              context={context}
+              episode={episode}
+              roadName={roads[roadIndex]?.name || `线路 ${roadIndex + 1}`}
+              resolved={resolved}
+              onClose={() => setShowDebug(false)}
+              notify={notify}
+            />
           </div>
-        ) : resolved?.type === 'iframe' ? (
-          <iframe
-            key={resolved.url}
-            title={`${context.title} ${episode?.name || ''} 站点播放器`}
-            src={resolved.url}
-            referrerPolicy="no-referrer"
-            allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
-            allowFullScreen
-            sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
-          />
-        ) : resolved ? (
-          <WebPlayer
-            source={resolved}
-            resume={positionRef.current}
-            autoplay={autoPlayRef.current}
-            onProgress={(position, duration) => {
-              if (activeEpisodeRef.current === resolved.episodeUrl) positionRef.current = position;
-              record(position, duration);
-            }}
-            onError={setPlayError}
-            onEnded={() => {
-              if (settings.autoNext && hasNext) {
-                notify('正在播放下一话');
-                select(episodeIndex + 1);
-              }
-            }}
-          />
-        ) : null}
+        )}
       </div>
       {playError && <Notice onRetry={() => setAttempt((p) => p + 1)}>{playError}</Notice>}
       {resolved?.type === 'iframe' && (
