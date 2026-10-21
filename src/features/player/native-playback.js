@@ -38,7 +38,7 @@ async function response(url, signal) {
 }
 
 // MSE transport for the native FFmpeg output. Ad detection stays upstream.
-export function attachNativePlayback(video, source, { resume = 0, onError } = {}) {
+export function attachNativePlayback(video, source, { resume = 0, onError, onDebug } = {}) {
   const lifetime = new AbortController();
   const MediaSourceClass = window.MediaSource || window.ManagedMediaSource;
   if (!MediaSourceClass) {
@@ -105,6 +105,12 @@ export function attachNativePlayback(video, source, { resume = 0, onError } = {}
           }
           if (!MediaSourceClass.isTypeSupported(mime))
             throw new Error('当前浏览器不支持此视频的编码，请切换线路。');
+          onDebug?.({
+            level: 'info',
+            scope: '原生流',
+            message: `已识别编码 · ${mime}`,
+            metrics: { codecs: mime },
+          });
           if (!buffer) buffer = media.addSourceBuffer(mime);
           else if (buffer.changeType) buffer.changeType(mime);
           buffer.timestampOffset = 0;
@@ -148,6 +154,11 @@ export function attachNativePlayback(video, source, { resume = 0, onError } = {}
     }
   }
   function restart(start) {
+    onDebug?.({
+      level: 'info',
+      scope: '原生流',
+      message: `请求视频流 · 起点 ${start.toFixed(1)} 秒`,
+    });
     pendingStart = start;
     stream?.abort();
     const previous = task;
@@ -182,6 +193,11 @@ export function attachNativePlayback(video, source, { resume = 0, onError } = {}
     ]);
     lifetime.signal.throwIfAborted();
     duration = info.duration;
+    onDebug?.({
+      level: 'info',
+      scope: '原生流',
+      message: `媒体信息已就绪 · 时长 ${duration.toFixed(1)} 秒`,
+    });
     parserFactory = library.createFile;
     restart(Math.max(0, Math.min(resume, duration - 0.1)));
   })().catch((error) => {
