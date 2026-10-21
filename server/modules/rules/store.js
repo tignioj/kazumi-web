@@ -107,6 +107,14 @@ export class RuleStore {
       return [...map.values()];
     });
   }
+  async create(input) {
+    const rule = normalizeRule(input, this.validationOptions);
+    return this.update((rules) => {
+      if (rules.some((existing) => existing.name.toLowerCase() === rule.name.toLowerCase()))
+        throw new HttpError('规则名称已存在，请使用其他名称或编辑现有规则', 409);
+      return [...rules, rule];
+    });
+  }
   async replace(name, input) {
     const [replacement] = parseImport(input, this.validationOptions);
     return this.update((rules) => {

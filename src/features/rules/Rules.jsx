@@ -18,6 +18,7 @@ import { useRequest } from '../../hooks/use-request.js';
 import { Notice, Empty, Spinner } from '../../components/feedback.jsx';
 import { PageHeading } from '../../components/PageHeading.jsx';
 import { Modal } from '../../components/Modal.jsx';
+import { RuleEditor } from './RuleEditor.jsx';
 
 export function Rules({
   rules,
@@ -51,15 +52,10 @@ export function Rules({
     setBusy(true);
     setFormError('');
     try {
-      if (modal.type === 'edit')
-        await api(`/rules/${encodeURIComponent(modal.rule.name)}`, {
-          method: 'PUT',
-          body: JSON.stringify(JSON.parse(content)),
-        });
-      else await api('/rules/import', { method: 'POST', body: JSON.stringify({ content }) });
+      await api('/rules/import', { method: 'POST', body: JSON.stringify({ content }) });
       await reload();
       setModal(null);
-      notify(modal.type === 'edit' ? '规则已更新' : '规则已导入');
+      notify('规则已导入');
     } catch (e) {
       setFormError(e.message);
     } finally {
@@ -135,10 +131,16 @@ export function Rules({
         title="规则，连接故事"
         description="管理用于搜索与播放的站点规则。已安装规则由部署服务共享。"
       >
-        <button className="button primary" onClick={openImport}>
-          <Plus size={17} />
-          导入规则
-        </button>
+        <div className="button-group">
+          <button className="button quiet" onClick={openImport}>
+            <Upload size={17} />
+            导入规则
+          </button>
+          <button className="button primary" onClick={() => setModal({ type: 'create' })}>
+            <Plus size={17} />
+            新建规则
+          </button>
+        </div>
       </PageHeading>
       <div className="collection-toolbar">
         <div className="filter-tabs">
@@ -221,11 +223,7 @@ export function Rules({
                   <div className="rule-card-actions">
                     <button
                       className="text-button"
-                      onClick={() => {
-                        setModal({ type: 'edit', rule });
-                        setContent(JSON.stringify(rule, null, 2));
-                        setFormError('');
-                      }}
+                      onClick={() => setModal({ type: 'edit', rule })}
                     >
                       <SlidersHorizontal size={14} />
                       编辑规则
@@ -272,6 +270,9 @@ export function Rules({
                 </button>
                 <button className="button quiet" onClick={openImport}>
                   手动导入
+                </button>
+                <button className="button quiet" onClick={() => setModal({ type: 'create' })}>
+                  新建规则
                 </button>
               </div>
             }
@@ -346,38 +347,43 @@ export function Rules({
           规则描述了如何读取来源站点，并不包含视频内容。请仅使用你有权访问的片源；来源失效时可编辑或更新规则。
         </p>
       </div>
-      {modal && (
-        <Modal
-          wide
-          title={modal.type === 'edit' ? `编辑规则 · ${modal.rule.name}` : '导入 Kazumi 规则'}
-          onClose={() => !busy && setModal(null)}
-        >
+      {modal && modal.type !== 'import' && (
+        <RuleEditor
+          rule={modal.rule}
+          onClose={() => setModal(null)}
+          onSaved={async () => {
+            await reload();
+            setModal(null);
+            notify(modal.type === 'edit' ? '规则已更新' : '规则已创建');
+          }}
+        />
+      )}
+      {modal?.type === 'import' && (
+        <Modal wide title="导入 Kazumi 规则" onClose={() => !busy && setModal(null)}>
           <p className="muted">
-            {modal.type === 'edit'
-              ? '编辑完整的规则 JSON，保存后立即生效。'
-              : '粘贴完整规则、规则数组或 kazumi:// 分享链接，也可以选择本地 JSON 文件。保存前可检查兼容性。'}
+            粘贴完整规则、规则数组或 kazumi:// 分享链接，也可以选择本地 JSON
+            文件。保存前可检查兼容性。
           </p>
-          {modal.type === 'import' && (
-            <>
-              <input
-                type="file"
-                accept=".json,.txt,application/json"
-                ref={fileRef}
-                hidden
-                onChange={readFile}
-              />
-              <button
-                className="button quiet upload-button"
-                onClick={() => fileRef.current.click()}
-              >
-                <Upload size={16} />
-                选择本地文件
-              </button>
-            </>
-          )}
+          <input
+            type="file"
+            accept=".json,.txt,application/json"
+            ref={fileRef}
+            hidden
+            disabled={busy}
+            onChange={readFile}
+          />
+          <button
+            className="button quiet upload-button"
+            disabled={busy}
+            onClick={() => fileRef.current.click()}
+          >
+            <Upload size={16} />
+            选择本地文件
+          </button>
           <textarea
             className="code-input"
             spellCheck="false"
+            disabled={busy}
             aria-label="规则 JSON 或分享链接"
             placeholder={'{\n  "name": "我的规则",\n  "baseURL": "https://…"\n}'}
             value={content}
@@ -393,7 +399,7 @@ export function Rules({
             </button>
             <button className="button primary" disabled={busy || !content.trim()} onClick={save}>
               {busy && <LoaderCircle size={15} className="spin" />}
-              {modal.type === 'edit' ? '保存规则' : '导入规则'}
+              导入规则
             </button>
           </div>
         </Modal>

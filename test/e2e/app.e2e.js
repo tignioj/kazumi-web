@@ -105,7 +105,8 @@ test('rules can be imported, edited, exported and removed using the interface', 
   await expect(card.getByText('API 8', { exact: true })).toBeVisible();
   await card.getByRole('button', { name: '编辑规则', exact: true }).click();
   const editor = page.getByRole('dialog', { name: `编辑规则 · ${rule.name}`, exact: true });
-  await editor.getByLabel('规则 JSON 或分享链接').fill(
+  await editor.getByRole('button', { name: 'JSON 编辑', exact: true }).click();
+  await editor.getByLabel('规则 JSON', { exact: true }).fill(
     JSON.stringify({
       ...rule,
       version: '2.0',
@@ -119,9 +120,10 @@ test('rules can be imported, edited, exported and removed using the interface', 
   );
   expect(preserved.version).toBe('1.0');
   expect(preserved.antiCrawlerConfig.enabled).toBe(false);
-  await editor
-    .getByLabel('规则 JSON 或分享链接')
-    .fill(JSON.stringify({ ...rule, version: '2.0' }, null, 2));
+  await editor.getByRole('button', { name: '表单编辑', exact: true }).click();
+  await expect(editor.getByLabel('规则名称', { exact: true })).toHaveValue(rule.name);
+  await editor.getByLabel('API 版本', { exact: true }).fill(rule.api);
+  await editor.getByLabel('规则版本', { exact: true }).fill('2.0');
   await editor.getByRole('button', { name: '保存规则', exact: true }).click();
   await expect(editor).toBeHidden();
   await page.route('**/api/rules/updates', (route) =>
@@ -225,6 +227,14 @@ test('mobile pages and rule editor fit the viewport', async ({ page, request }, 
   await page.goto('/#/rules');
   await page.getByRole('button', { name: '导入规则', exact: true }).click();
   await page.getByLabel('规则 JSON 或分享链接').fill(JSON.stringify(fixtureRule, null, 2));
+  await page.getByRole('button', { name: '取消', exact: true }).click();
+  await page
+    .locator('article')
+    .filter({ has: page.getByRole('heading', { name: fixtureRule.name, exact: true }) })
+    .getByRole('button', { name: '编辑规则', exact: true })
+    .click();
+  await expect(page.getByLabel('规则名称', { exact: true })).toHaveValue(fixtureRule.name);
+  await expect(page.getByRole('button', { name: '保存规则', exact: true })).toBeInViewport();
   await page.screenshot({ path: testInfo.outputPath('mobile-rule-editor.png') });
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth),

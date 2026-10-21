@@ -29,6 +29,9 @@ export function registerRuleRoutes(app, { http, store, engine, interactive }) {
     const catalog = await officialRules();
     res.json(await checkInstalledRuleUpdates(store, http, repository, catalog, options));
   });
+  app.post('/api/rules', async (req, res) =>
+    res.status(201).json({ rules: await store.create(req.body) }),
+  );
   app.get('/api/rules/catalog', async (req, res) => res.json({ rules: await officialRules() }));
   app.post('/api/rules/validate', async (req, res) => {
     const rules = parseImport(req.body?.content, options);
