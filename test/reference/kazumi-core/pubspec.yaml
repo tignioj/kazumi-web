@@ -10,7 +10,7 @@ dependencies:
   kazumi:
     git:
       url: https://github.com/Predidit/Kazumi.git
-      ref: 4effe14ee78b790a92c23ed86f969093d2ed376d
+      ref: 184f8db535f9b4098ada763fcefea8e602126dc7
   dio: ^5.11.0
   hive_ce_flutter: ^2.3.3
   path_provider: ^2.1.5
