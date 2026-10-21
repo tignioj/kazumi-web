@@ -1,6 +1,14 @@
 import { awaitVerification } from './verification.js';
 
-export async function readSearchStream(response, { signal, onResult }) {
+export async function readSearchStream(
+  response,
+  {
+    signal,
+    onResult,
+    onDiagnostic,
+    interruptedMessage = '搜索连接已中断，已保留收到的结果，请重试未完成的片源。',
+  },
+) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   const verification = new AbortController();
@@ -15,6 +23,7 @@ export async function readSearchStream(response, { signal, onResult }) {
     if (!line.trim()) return;
     const event = JSON.parse(line);
     if (event.type === 'result') onResult?.(event.result);
+    if (event.type === 'diagnostic') onDiagnostic?.(event.diagnostic);
     if (event.type === 'error') throw new Error(event.error);
     if (event.type === 'verification') {
       void awaitVerification(
@@ -47,7 +56,7 @@ export async function readSearchStream(response, { signal, onResult }) {
         const result = consume(line);
         if (complete) return result;
       }
-      if (done) throw new Error('搜索连接已中断，已保留收到的结果，请重试未完成的片源。');
+      if (done) throw new Error(interruptedMessage);
     }
   } finally {
     complete = true;

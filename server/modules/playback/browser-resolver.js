@@ -10,6 +10,7 @@ import {
   verificationRequired,
 } from '../verification/challenge.js';
 import { automateRuleCaptcha, hasAutomaticCaptcha } from '../verification/automation.js';
+import { createResolutionLogger } from './diagnostics.js';
 
 const MAX_PLAYLIST_BYTES = 1024 * 1024;
 const HEADER_NAMES = new Set([
@@ -155,6 +156,7 @@ function installObservers({ legacy = false } = {}) {
       /* closing frame */
     }
   };
+  send({ diagnostic: 'installed' });
   const originalText = Response.prototype.text;
   Response.prototype.text = async function (...args) {
     const text = await originalText.apply(this, args);
@@ -176,7 +178,13 @@ function installObservers({ legacy = false } = {}) {
     });
     return originalOpen.apply(this, args);
   };
+  let scanned = false;
+  let blobSeen = false;
   const scan = () => {
+    if (!scanned) {
+      scanned = true;
+      send({ diagnostic: 'scan' });
+    }
     if (legacy) {
       for (const iframe of document.querySelectorAll('iframe[src]'))
         send({ url: iframe.src, iframe: true });
@@ -192,6 +200,10 @@ function installObservers({ legacy = false } = {}) {
         video.src,
         ...Array.from(video.querySelectorAll('source'), (node) => node.src),
       ]) {
+        if (url.startsWith('blob:') && !blobSeen) {
+          blobSeen = true;
+          send({ diagnostic: 'blob' });
+        }
         if (/^https?:\/\//i.test(url))
           send({ url, dom: true, ad, area: Math.max(0, rect.width * rect.height) });
       }
@@ -597,11 +609,13 @@ export class BrowserResolver {
     }
   }
 
-  async validate(candidate, session, signal) {
+  async validate(candidate, session, signal, options = {}) {
+    const log = createResolutionLogger(options);
     let url = candidate.url;
     let kind = candidate.type;
     for (let depth = 0; depth < 4; depth++) {
       checkedUrl(url, { allowPrivate: this.http.allowPrivate });
+      log('视频验证', `读取媒体内容 · ${kind} · ${url}`);
       const headers = headersForSession(session, url);
       const { response, url: finalUrl } = await this.http.request(url, {
         headers: { ...headers, ...(kind === 'hls' ? {} : { range: 'bytes=0-4095' }) },
@@ -616,6 +630,10 @@ export class BrowserResolver {
         throw new HttpError(`动态解析的视频验证失败：上游返回 HTTP ${response.status}`, 502);
       }
       const contentType = response.headers.get('content-type') || '';
+      log(
+        '视频验证',
+        `媒体响应 · HTTP ${response.status} · ${contentType || '未知内容类型'} · ${finalUrl}`,
+      );
       if (kind === 'hls' || /mpegurl/i.test(contentType)) {
         const raw = await readLimited(response, MAX_PLAYLIST_BYTES);
         const text = raw;
@@ -634,6 +652,7 @@ export class BrowserResolver {
           const keyPath = /URI="([^"]+)"/.exec(encryption)?.[1];
           if (!keyPath) throw new HttpError('HLS 加密播放列表缺少密钥地址', 422);
           const keyUrl = new URL(keyPath, finalUrl).href;
+          log('视频验证', `验证 HLS AES-128 密钥 · ${keyUrl}`);
           checkedUrl(keyUrl, { allowPrivate: this.http.allowPrivate });
           const key = await this.http.request(keyUrl, {
             headers: headersForSession(session, keyUrl),
@@ -652,6 +671,7 @@ export class BrowserResolver {
           const next = lines.slice(variant + 1).find((line) => !line.startsWith('#'));
           if (!next) throw new HttpError('动态解析返回了空的 HLS 播放列表', 422);
           url = new URL(next, finalUrl).href;
+          log('视频验证', `跟随 HLS 子播放列表 · ${url}`);
           kind = 'hls';
           continue;
         }
@@ -662,6 +682,7 @@ export class BrowserResolver {
         if (!part) throw new HttpError('动态解析返回了空的 HLS 播放列表', 422);
         // Confirm a real segment can be fetched, but stop after a small prefix.
         const target = new URL(initialization || part, finalUrl).href;
+        log('视频验证', `验证 HLS ${initialization ? '初始化资源' : '首个分片'} · ${target}`);
         checkedUrl(target, { allowPrivate: this.http.allowPrivate });
         const probe = await this.http.request(target, {
           headers: { ...headersForSession(session, target), range: 'bytes=0-4095' },
@@ -689,16 +710,19 @@ export class BrowserResolver {
           /^\s*(?:<!doctype|<html|<\?xml)/i.test(bytes.toString('utf8', 0, 128))
         )
           throw new HttpError('HLS 分片返回了无效内容', 422);
+        log('视频验证', 'HLS 播放列表和分片验证通过');
         return 'hls';
       }
       const bytes = await prefix(response);
       if (bytes.toString('utf8').trimStart().startsWith('#EXTM3U')) {
+        log('视频验证', '检测到无扩展名 HLS，按播放列表继续验证');
         // A source may serve extensionless HLS with text/plain or octet-stream.
         kind = 'hls';
         continue;
       }
       if (!playableBytes(bytes, contentType))
         throw new HttpError('动态解析的视频地址没有返回可识别的媒体内容', 422);
+      log('视频验证', '媒体文件头验证通过');
       return 'video';
     }
     throw new HttpError('HLS 播放列表嵌套过深', 422);
@@ -707,13 +731,14 @@ export class BrowserResolver {
   async resolve(
     rule,
     originalUrl,
-    { signal: callerSignal, onVerification, playbackUrl, sessionOwner } = {},
+    { signal: callerSignal, onVerification, playbackUrl, sessionOwner, onDiagnostic } = {},
   ) {
     checkedUrl(originalUrl, { allowPrivate: this.http.allowPrivate });
     if (playbackUrl) checkedUrl(playbackUrl, { allowPrivate: this.http.allowPrivate });
     if (this.closed) throw new HttpError('动态解析服务已关闭', 503);
     const controller = new AbortController();
     const { signal } = controller;
+    const log = createResolutionLogger({ onDiagnostic, signal: callerSignal });
     const cancel = () =>
       controller.abort(
         callerSignal.reason instanceof HttpError
@@ -723,6 +748,7 @@ export class BrowserResolver {
     callerSignal?.addEventListener('abort', cancel, { once: true });
     if (callerSignal?.aborted) cancel();
     try {
+      log('动态解析', '等待 Chromium 解析名额');
       await this.acquire(controller);
     } catch (error) {
       callerSignal?.removeEventListener('abort', cancel);
@@ -760,6 +786,7 @@ export class BrowserResolver {
     signal.addEventListener('abort', closeContext, { once: true });
     try {
       signal.throwIfAborted();
+      log('动态解析', '准备 Chromium 浏览器与来源会话');
       const browser = await abortable(this.getBrowser(), signal);
       context = await this.createContext(
         browser,
@@ -801,6 +828,10 @@ export class BrowserResolver {
         if (mediaRequests.size > 512) mediaRequests.delete(mediaRequests.values().next().value);
         const old = candidates.get(url);
         if (!old || score > old.score) {
+          log(
+            '视频嗅探',
+            `发现候选视频 · ${extra.source || '页面观察'} · ${type || old?.type || mediaKind(url) || 'video'} · ${url}`,
+          );
           candidates.set(url, {
             url,
             type: type || old?.type || mediaKind(url) || 'video',
@@ -826,11 +857,37 @@ export class BrowserResolver {
         }
       };
       context.on('request', (request) => {
+        if (!signal.aborted && !closingContext && request.resourceType() === 'document')
+          log('页面加载', `开始加载 · ${request.url()}`);
         void record(request);
+      });
+      context.on('requestfailed', (request) => {
+        if (!signal.aborted && !closingContext && request.resourceType() === 'document')
+          log(
+            '页面加载',
+            `加载失败 · ${request.url()} · ${request.failure()?.errorText || '请求失败'}`,
+            'warn',
+          );
       });
       context.on('response', (response) => {
         void (async () => {
-          if (signal.aborted || response.status() < 200 || response.status() >= 300) return;
+          if (
+            !signal.aborted &&
+            !closingContext &&
+            response.request().resourceType() === 'document'
+          )
+            log(
+              '页面加载',
+              `页面响应 · HTTP ${response.status()} · ${response.url()}`,
+              response.status() >= 400 ? 'warn' : 'info',
+            );
+          if (
+            signal.aborted ||
+            closingContext ||
+            response.status() < 200 ||
+            response.status() >= 300
+          )
+            return;
           const url = response.url();
           const contentType = response.headers()['content-type'] || '';
           const type = mediaKind(url, contentType);
@@ -839,7 +896,9 @@ export class BrowserResolver {
             // A player may refresh its session and retry the same URL after a
             // failed probe. A newly successful response permits another validation.
             rejected.delete(url);
-            offer(url, type, /mpegurl|^(?:video|audio)\//i.test(contentType) ? 80 : 65);
+            offer(url, type, /mpegurl|^(?:video|audio)\//i.test(contentType) ? 80 : 65, {
+              source: '网络响应',
+            });
           } else if (['fetch', 'xhr'].includes(response.request().resourceType())) {
             // Bounded completed text responses cover players that consume arrayBuffer.
             const length = Number(response.headers()['content-length']);
@@ -854,18 +913,29 @@ export class BrowserResolver {
                 body.toString('utf8').trimStart().startsWith('#EXTM3U')
               ) {
                 await record(response.request());
-                offer(url, 'hls', 85);
+                offer(url, 'hls', 85, { source: '网络响应内容' });
               }
             }
           }
         })().catch(() => {});
       });
       await context.exposeBinding('__kazumiMedia', ({ frame }, data) => {
-        if (!data || typeof data !== 'object') return;
+        if (signal.aborted || closingContext || !data || typeof data !== 'object') return;
+        if (data.diagnostic) {
+          const messages = {
+            installed: '已加载 Fetch/XHR 播放列表观察与 VideoTagParser 媒体标签扫描脚本',
+            scan: '开始扫描视频元素（Scanning for video elements）',
+            blob: '检测到 Blob 视频地址，继续从网络请求中查找原始媒体',
+          };
+          if (Object.hasOwn(messages, data.diagnostic))
+            log('解析脚本', `${messages[data.diagnostic]} · ${frame.url()}`);
+          return;
+        }
         if (data.iframe) {
           if (rule.useLegacyParser === true) {
             const media = legacyIframeMedia(data.url, frame.url());
-            if (media) offer(media.url, media.type, 120, { legacy: true });
+            if (media)
+              offer(media.url, media.type, 120, { legacy: true, source: '旧版 iframe 规则' });
           }
           return;
         }
@@ -879,14 +949,26 @@ export class BrowserResolver {
           data.url,
           data.type,
           (data.dom ? 100 + Math.min(20, Number(data.area) / 20000 || 0) : 85) + frameScore,
-          { ad: data.ad === true },
+          { ad: data.ad === true, source: data.dom ? 'video / audio 标签' : 'Fetch/XHR 播放列表' },
         );
       });
+      log('动态解析', '已注册视频观察桥接，安装所有 frame 的解析脚本');
       await context.addInitScript(installObservers, { legacy: rule.useLegacyParser === true });
       const page = await context.newPage();
-      const closePopups = (owner) =>
+      const observePage = (owner) => {
         owner.on('popup', (popup) => void popup.close().catch(() => {}));
-      closePopups(page);
+        owner.on('framenavigated', (frame) => {
+          if (!signal.aborted && !closingContext)
+            log(
+              '页面加载',
+              `${frame === owner.mainFrame() ? '主页面' : 'iframe'}导航完成 · ${frame.url()}`,
+            );
+        });
+        owner.on('load', () => {
+          if (!signal.aborted && !closingContext) log('页面加载', `加载完成 · ${owner.url()}`);
+        });
+      };
+      observePage(page);
       const navigationStarted = Date.now();
       let playbackPage;
       let playbackNavigationError;
@@ -899,6 +981,8 @@ export class BrowserResolver {
         })
         .catch((error) => {
           navigationError = error;
+          if (!signal.aborted && !closingContext)
+            log('页面加载', `来源页面导航失败 · ${originalUrl}`, 'warn');
         });
       let lastTrigger = 0;
       let lastChallengeCheck = 0;
@@ -915,7 +999,8 @@ export class BrowserResolver {
           [...candidates.keys()].every((url) => rejected.has(url))
         ) {
           playbackPage = await context.newPage();
-          closePopups(playbackPage);
+          observePage(playbackPage);
+          log('动态解析', `尝试已解码的播放器页面 · ${playbackUrl}`);
           void playbackPage
             .goto(playbackUrl, {
               waitUntil: 'domcontentloaded',
@@ -924,6 +1009,8 @@ export class BrowserResolver {
             })
             .catch((error) => {
               playbackNavigationError = error;
+              if (!signal.aborted && !closingContext)
+                log('页面加载', `播放器页面导航失败 · ${playbackUrl}`, 'warn');
             });
         }
         const pages = playbackPage ? [page, playbackPage] : [page];
@@ -944,6 +1031,7 @@ export class BrowserResolver {
             if (verificationAttempts >= 5) throw verificationRequired();
             verificationAttempts++;
             automaticVerification = true;
+            log('规则验证', `检测到验证页面，执行规则自动验证 · 第 ${verificationAttempts} 次`);
             manualPending = false;
             try {
               clearTimeout(deadline);
@@ -973,6 +1061,7 @@ export class BrowserResolver {
             rejected.clear();
             validationError = undefined;
             navigationError = undefined;
+            log('规则验证', '自动验证步骤完成，继续查找视频');
             continue;
           }
           if (challenge.detected || manualPending) {
@@ -982,6 +1071,12 @@ export class BrowserResolver {
             manualOffered = true;
             manualPending = false;
             clearTimeout(deadline);
+            log(
+              '规则验证',
+              challenge.detected
+                ? '检测到验证码，等待人工验证'
+                : '尚未找到视频，等待手动操作来源页面',
+            );
             await waitForVerification(
               active.page,
               onVerification,
@@ -998,10 +1093,12 @@ export class BrowserResolver {
             validationError = undefined;
             navigationError = undefined;
             armDeadline();
+            log('规则验证', '人工验证已继续，恢复视频嗅探');
             continue;
           }
         }
         if (Date.now() - lastTrigger > 1200) {
+          if (!lastTrigger) log('视频嗅探', '扫描各 frame 的视频元素，尝试触发播放控件');
           lastTrigger = Date.now();
           for (const frame of pages.flatMap((target) => target.frames())) {
             void frame
@@ -1046,14 +1143,24 @@ export class BrowserResolver {
                 .map((url) => ({ url, headers: observed.get(url) })),
             };
             try {
-              const type = await abortable(this.validate(candidate, session, signal), signal);
+              log('视频验证', `验证候选视频 · ${candidate.type} · ${candidate.url}`);
+              const type = await abortable(
+                this.validate(candidate, session, signal, { onDiagnostic, signal }),
+                signal,
+              );
               await this.rememberContext(rule, sessionOwner, context, page);
               signal.throwIfAborted();
+              log('动态解析', `已选定可播放视频 · ${type} · ${candidate.url}`);
               // Return actual CookieJar state; sensitive headers stay server-side.
               return { type, ...session };
             } catch (error) {
               if (signal.aborted) throw signal.reason;
               validationError = error;
+              log(
+                '视频验证',
+                `候选视频验证失败，继续嗅探 · ${candidate.url} · ${error.message}`,
+                'warn',
+              );
               rejected.set(candidate.url, Date.now());
             }
           }
@@ -1068,6 +1175,7 @@ export class BrowserResolver {
       }
       throw signal.reason;
     } catch (error) {
+      log('动态解析', `解析失败 · ${(signal.aborted ? signal.reason : error).message}`, 'error');
       if (signal.aborted) throw signal.reason;
       if (error instanceof HttpError) throw error;
       throw new HttpError('动态解析失败，请重试或切换播放线路', 502);

@@ -122,7 +122,10 @@ browserTest(
       }
       response.writeHead(404).end();
     });
-    const result = await resolver.resolve(rule, `${baseURL}/watch`);
+    const diagnostics = [];
+    const result = await resolver.resolve(rule, `${baseURL}/watch`, {
+      onDiagnostic: (event) => diagnostics.push(event),
+    });
     assert.equal(result.type, 'hls');
     assert.equal(result.url, `${baseURL}/media/master`);
     assert.equal(result.headers.authorization, 'Bearer test-secret');
@@ -153,6 +156,16 @@ browserTest(
       ),
     );
     assert.equal(resolver.browser.contexts().length, 0, 'all source pages close after resolution');
+    const log = JSON.stringify(diagnostics);
+    assert.match(log, /已注册视频观察桥接/);
+    assert.match(log, /VideoTagParser/);
+    assert.match(log, /开始扫描视频元素/);
+    assert.match(log, /iframe导航完成/);
+    assert.match(log, /发现候选视频/);
+    assert.match(log, /验证 HLS AES-128 密钥/);
+    assert.match(log, /跟随 HLS 子播放列表/);
+    assert.match(log, /已选定可播放视频/);
+    assert.doesNotMatch(log, /key-secret|test-secret|media_session=secret/);
   },
 );
 

@@ -35,7 +35,13 @@ export function Player({ context, settings, onClose, onProgress, notify, navigat
     (event) => {
       if (event.metrics) diagnostics.update(event.metrics);
       if (event.message)
-        diagnostics.log(event.level || 'info', event.scope || '播放器', event.message);
+        diagnostics.log(
+          event.level || 'info',
+          event.scope || '播放器',
+          event.message,
+          event.time,
+          event.phase,
+        );
     },
     [diagnostics],
   );
@@ -108,6 +114,8 @@ export function Player({ context, settings, onClose, onProgress, notify, navigat
       'info',
       '解析',
       `开始解析 · ${context.ruleName} · ${episode.name || '当前剧集'}`,
+      undefined,
+      'resolve',
     );
     setLoading(true);
     setError('');
@@ -116,6 +124,9 @@ export function Player({ context, settings, onClose, onProgress, notify, navigat
     api('/resolve', {
       method: 'POST',
       signal: controller.signal,
+      onDiagnostic: (event) => {
+        if (!controller.signal.aborted) reportDiagnostic(event);
+      },
       body: JSON.stringify({ ruleName: context.ruleName, url: episode.url }),
     })
       .then((data) => {
@@ -130,6 +141,8 @@ export function Player({ context, settings, onClose, onProgress, notify, navigat
           'info',
           '解析',
           `解析完成 · ${data.type} · ${(resolveMs / 1000).toFixed(2)} 秒${data.cached ? ' · 命中本地缓存' : ''}${data.nativePlayback ? ' · 原生过滤流' : ''}`,
+          undefined,
+          'resolve',
         );
         setResolved({ ...data, episodeUrl: episode.url });
         setLoading(false);
@@ -137,7 +150,7 @@ export function Player({ context, settings, onClose, onProgress, notify, navigat
       .catch((e) => {
         if (!controller.signal.aborted && e.name !== 'AbortError') {
           diagnostics.update({ resolveMs: performance.now() - started, status: '解析失败' });
-          diagnostics.log('error', '解析', e.message);
+          diagnostics.log('error', '解析', e.message, undefined, 'resolve');
           setError(e.message);
           setLoading(false);
         }

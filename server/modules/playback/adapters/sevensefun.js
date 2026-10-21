@@ -1,6 +1,7 @@
 import { JSDOM } from 'jsdom';
 import { HttpError } from '../../../lib/http.js';
 import { jsonObjectAt } from '../player-json.js';
+import { createResolutionLogger } from '../diagnostics.js';
 
 const ORIGIN = 'https://www.7sefun.top';
 const INDEX_PATH = '/addons/dp/player/index.php';
@@ -40,7 +41,9 @@ function redirectLiteral(html) {
   }
 }
 
-export async function resolveSevenSefun(http, html, pageUrl, headers, { signal } = {}) {
+export async function resolveSevenSefun(http, html, pageUrl, headers, options = {}) {
+  const { signal } = options;
+  const log = createResolutionLogger(options);
   let page;
   try {
     page = new URL(pageUrl);
@@ -51,6 +54,7 @@ export async function resolveSevenSefun(http, html, pageUrl, headers, { signal }
   if (page.origin !== ORIGIN || page.username || page.password || !episode) return null;
   const data = playerMetadata(html);
   if (!data) return null;
+  log('站点解析', '匹配 7sefun ndx 播放器配置，解码播放标识');
 
   let token = data.url;
   try {
@@ -68,6 +72,7 @@ export async function resolveSevenSefun(http, html, pageUrl, headers, { signal }
   const entry = new URL(INDEX_PATH, page);
   const parameters = { key: '0', id: String(data.id), uid: '0', from: 'ndx', url: token };
   entry.search = new URLSearchParams(parameters).toString();
+  log('站点解析', `加载 7sefun 播放器入口 · ${entry.href}`);
   const result = await http.text(entry.href, {
     headers,
     ...(signal && { signal }),
@@ -101,5 +106,6 @@ export async function resolveSevenSefun(http, html, pageUrl, headers, { signal }
     )
   )
     throw new HttpError('7sefun 播放器跳转无效', 422);
+  log('站点解析', `解析 7sefun 播放器跳转 · ${target.href}`);
   return { url: target.href, headers };
 }

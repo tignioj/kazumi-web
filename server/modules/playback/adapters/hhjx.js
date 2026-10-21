@@ -1,12 +1,16 @@
 import { JSDOM } from 'jsdom';
 import { HttpError, checkedUrl } from '../../../lib/http.js';
 import { jsonObjectAt } from '../player-json.js';
+import { createResolutionLogger } from '../diagnostics.js';
 
 // This player obtains the media URL through its public JSON endpoint. Calling
 // that endpoint here keeps mobile devices on our media proxy instead of an iframe.
-export async function resolveHhjx(http, html, pageUrl, headers, { signal } = {}) {
+export async function resolveHhjx(http, html, pageUrl, headers, options = {}) {
+  const { signal } = options;
+  const log = createResolutionLogger(options);
   const page = new URL(pageUrl);
   if (page.hostname !== 'hhjx.hhplayer.com') return null;
+  log('站点解析', `匹配 HHJX 播放器，读取解析配置 · ${pageUrl}`);
   const dom = new JSDOM(html);
   let bootstrap;
   try {
@@ -35,6 +39,10 @@ export async function resolveHhjx(http, html, pageUrl, headers, { signal } = {})
     throw new HttpError('来源播放器参数无效，请重新解析或切换线路', 422);
 
   const parse = async (clientFallback) => {
+    log(
+      '站点解析',
+      `请求 HHJX 解析接口${clientFallback ? ' · 使用服务端回退' : ''} · ${new URL('/api/parse', page).href}`,
+    );
     const result = await http.json(new URL('/api/parse', page).href, {
       ...(signal && { signal }),
       method: 'POST',
@@ -92,5 +100,6 @@ export async function resolveHhjx(http, html, pageUrl, headers, { signal } = {})
   // returns 404 if we accidentally inherit the source site's Referer.
   const mediaHeaders = { ...headers };
   delete mediaHeaders.referer;
+  log('站点解析', `HHJX 返回视频地址 · ${hls ? 'hls' : 'video'} · ${target.href}`);
   return { type: hls ? 'hls' : 'video', url: target.href, headers: mediaHeaders };
 }
