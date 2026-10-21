@@ -1,25 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { assessRelevance, markdown, webAreas } from './kazumi-relevance.mjs';
 
 export const upstreamRepository = 'Predidit/Kazumi';
-export const watchedPaths = [
-  'lib/plugins/',
-  'lib/services/plugin/',
-  'lib/modules/plugin/',
-  'lib/services/network/',
-  'lib/services/video_source/',
-  'lib/webview/',
-  'lib/request/',
-  'lib/utils/',
-  'test/rule_engine_test.dart',
-  'test/api_rule_engine_test.dart',
-  'test/plugin',
-  'test/video_source',
-  'test/captcha',
-  'pubspec.yaml',
-  'pubspec.lock',
-];
 const shaPattern = /^[a-f0-9]{40}$/;
 const files = {
   pubspec: 'test/reference/kazumi-core/pubspec.yaml',
@@ -115,11 +99,22 @@ export async function discoverUpdate(pins, api = github) {
     'ahead',
     'Release is not a descendant of the current pin; review manually',
   );
+  const relevance = await assessRelevance(pins.ref, sha, api, upstreamRepository, comparison);
+  if (!relevance.changedPaths.length)
+    return {
+      available: false,
+      source: 'release',
+      commit: sha,
+      latestVersion: release.tag_name,
+      reason: 'No Web-relevant source or dependency changes',
+      ...relevance,
+    };
   return describeReferenceUpdate(pins, sha, api, {
     source: 'release',
     tag: release.tag_name,
     releaseUrl: `https://github.com/${upstreamRepository}/releases/tag/${encodeURIComponent(release.tag_name)}`,
     branch: `codex/kazumi-${sha.slice(0, 12)}`,
+    ...relevance,
   });
 }
 
@@ -170,23 +165,18 @@ export async function discoverMainUpdate(pins, api = github) {
   if (sha === pins.ref) return { available: false, source: 'main', commit: sha };
   const comparison = await api(`repos/${upstreamRepository}/compare/${pins.ref}...${sha}`);
   assert.equal(comparison.status, 'ahead', 'Main history changed; review manually');
-  // Compare full trees: the compare API only returns up to 300 changed files.
-  const trees = await Promise.all(
-    [pins.ref, sha].map((ref) => api(`repos/${upstreamRepository}/git/trees/${ref}?recursive=1`)),
-  );
-  for (const tree of trees) assert.equal(tree.truncated, false, 'Incomplete upstream tree');
-  const entries = trees.map(
-    ({ tree }) =>
-      new Map(tree.filter((item) => item.type === 'blob').map((item) => [item.path, item.sha])),
-  );
-  const changedPaths = [...new Set([...entries[0].keys(), ...entries[1].keys()])]
-    .filter((path) => entries[0].get(path) !== entries[1].get(path))
-    .filter((path) => watchedPaths.some((watched) => path.startsWith(watched)))
-    .sort();
-  if (!changedPaths.length) return { available: false, source: 'main', commit: sha };
+  const relevance = await assessRelevance(pins.ref, sha, api, upstreamRepository, comparison);
+  if (!relevance.changedPaths.length)
+    return {
+      available: false,
+      source: 'main',
+      commit: sha,
+      reason: 'No Web-relevant source or dependency changes',
+      ...relevance,
+    };
   return describeReferenceUpdate(pins, sha, api, {
     source: 'main',
-    changedPaths,
+    ...relevance,
     branch: `codex/kazumi-main-${sha.slice(0, 12)}`,
   });
 }
@@ -212,21 +202,90 @@ export async function applyUpdate(root, pins, update) {
 }
 
 export function upgradeBody(update) {
-  return (
-    `Upgrade the development Kazumi reference from ${update.currentVersion} to ${update.version}` +
-    (update.source === 'main' ? ' to review changes on upstream main.\n\n' : '.\n\n') +
-    (update.releaseUrl ? `- Official release: ${update.releaseUrl}\n` : '') +
-    `- Changes: ${update.compareUrl}\n` +
-    `- Pinned commit: \`${update.commit}\`\n` +
-    `- Flutter: ${update.sdk.version} (\`${update.sdk.revision}\`)\n` +
-    `- Rule API: ${update.apiLevel}\n\n` +
-    `The lockfile is resolved with the pinned Flutter toolchain. Official rule compatibility is dispatched explicitly ` +
-    `on this branch to compare rule requests, dynamic playback and captcha flows with the real core.\n\n` +
-    (update.changedPaths
-      ? `Changed watched files:\n${update.changedPaths.map((path) => `- \`${path}\``).join('\n')}\n\n`
-      : '') +
-    `Review upstream changes, add fixtures for new behavior, and port relevant fixes to the local engine. ` +
-    `Run compare:engines -- --record against this reference after resolving differences, and commit the reviewed golden corpus. ` +
-    `The local API level is not raised automatically. Merge only after Verify and Official rule compatibility pass and a maintainer reviews this PR. No automatic merging.\n`
+  const labels = (keys) => keys.map((key) => webAreas[key].label).join('、');
+  const lines = [
+    `同步官方${update.source === 'main' ? ' main' : '稳定版'}的 Web 相关变更：${labels(update.areas)}。`,
+    '',
+    `本 PR 只更新开发测试使用的官方参考核心、真实锁文件及必要的 Flutter/API 对照配置。线上 Node 引擎、Web 播放器和用户规则不会因此直接改变；需要移植的修复由维护者核查后实现，不能把参考升级当成已修复线上问题。`,
+    '',
+    '### 具体变化',
+    '',
+    `- 官方提交：${update.previous.slice(0, 12)} → ${update.commit.slice(0, 12)}（[完整差异](${update.compareUrl})）`,
+    `- 官方包版本：${markdown(update.currentVersion)} → ${markdown(update.version)}${update.currentVersion === update.version ? '（版本号未变，按提交跟进）' : ''}`,
+    `- Flutter：${update.sdk.version}（${update.sdk.revision}）；参考规则 API：${update.apiLevel}。本地 API 等级不会自动提高。`,
+  ];
+  if (update.releaseUrl) lines.push(`- [官方发布说明](${update.releaseUrl})`);
+  if (update.upstreamCommits.length) {
+    lines.push(
+      '',
+      `上游提交摘要（展示 ${update.upstreamCommits.length}/${update.totalCommits}，具体范围以文件差异为准）：`,
+      '',
+    );
+    for (const item of update.upstreamCommits)
+      lines.push(
+        `- [${item.sha.slice(0, 12)}](https://github.com/${upstreamRepository}/commit/${item.sha}) ${markdown(item.title)}`,
+      );
+  }
+  if (update.sourceChanges.length) {
+    lines.push('', '相关源码：', '', '| 文件 | 变化 | 关联能力 |', '| --- | --- | --- |');
+    const status = { added: '新增', modified: '修改', removed: '删除' };
+    for (const item of update.sourceChanges) {
+      const ref = item.status === 'removed' ? update.previous : update.commit;
+      lines.push(
+        `| [${markdown(item.path)}](https://github.com/${upstreamRepository}/blob/${ref}/${item.path.split('/').map(encodeURIComponent).join('/')}) | ${status[item.status]} | ${labels(item.areas)} |`,
+      );
+    }
+    const excerpts = update.sourceChanges.filter(({ excerpt }) => excerpt).slice(0, 6);
+    if (excerpts.length) {
+      lines.push(
+        '',
+        '上游差异摘录（最多 6 个文件、每文件 12 行；以完整 diff 为准，尚未验证行为影响）：',
+      );
+      for (const { path, excerpt } of excerpts) {
+        const fence = '~'.repeat(
+          Math.max(3, ...[...excerpt.matchAll(/~+/g)].map(([run]) => run.length + 1)),
+        );
+        lines.push('', markdown(path), '', `${fence}diff`, excerpt, fence);
+      }
+    }
+    if (update.sourceChanges.some(({ excerpt }) => !excerpt))
+      lines.push(
+        '',
+        '部分文件没有可用的 compare 差异片段（例如超出 GitHub 文件上限），仍按完整 Git 树纳入审查，请打开源码和完整差异确认。',
+      );
+  }
+  lines.push('', '相关依赖（约束、覆盖配置和锁定来源/版本/SHA 的实际差异）：', '');
+  if (!update.dependencyChanges.length) lines.push('无 Web 相关依赖变化。');
+  for (const item of update.dependencyChanges) {
+    lines.push(`- **${markdown(item.name)}**（${labels(item.areas)}）`);
+    for (const field of item.fields)
+      lines.push(
+        `  - ${markdown(field.field)}：${field.before === null ? '未设置' : markdown(field.before)} → ${field.after === null ? '移除' : markdown(field.after)}`,
+      );
+  }
+  lines.push(
+    '',
+    '### 实际影响与审查重点',
+    '',
+    '以下是由变更路径/依赖用途判定的待核查行为，尚不代表已验证的功能改善：',
+    '',
   );
+  for (const key of update.areas)
+    lines.push(`- **${webAreas[key].label}**：${webAreas[key].impact}`);
+  lines.push(
+    '',
+    `已过滤 ${update.ignoredPaths.length} 个非相关文件；未纳入 Web 依赖策略的变化：${update.ignoredDependencies.map(markdown).join('、') || '无'}。完整清单见检查工作流摘要。`,
+    '',
+    '### 验证和合并',
+    '',
+    '- 用固定 Flutter 工具链生成真实锁文件，显式派发 Verify 和 Official rule compatibility；覆盖规则请求、动态播放与验证码。',
+    '- 对照上游代码补充固定响应或浏览器样本，必要时移植修复；确认两边行为一致后再显式运行 compare:engines -- --record 并审查 golden。',
+    '- 两项 CI 通过且维护者审查后才能合并。No automatic merging.',
+  );
+  return `${lines.join('\n')}\n`;
+}
+
+export function upgradeTitle(update) {
+  const areas = update.areas.map((key) => webAreas[key].label).join('、');
+  return `chore(core): 跟进${update.source === 'main' ? '上游 main' : ` Kazumi ${update.version}`}的${areas}变更`;
 }

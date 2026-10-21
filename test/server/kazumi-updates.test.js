@@ -12,7 +12,9 @@ import {
   readPinnedKazumi,
   verifyPins,
   upgradeBody,
+  upgradeTitle,
 } from '../../scripts/lib/kazumi-upstream.mjs';
+import { dependencyChanges } from '../../scripts/lib/kazumi-relevance.mjs';
 import { checkCore } from '../../scripts/check-kazumi-core.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
@@ -43,7 +45,23 @@ function releaseApi({ version = '2.4.0', flutter = '3.47.7', status = 'ahead', .
         ...flags,
       };
     if (path.endsWith(`/commits/${version}`)) return { sha: commit };
-    if (path.includes('/compare/')) return { status };
+    if (path.includes('/compare/'))
+      return {
+        status,
+        commits: [{ sha: commit, commit: { message: 'Fix rule request parsing\n\nDetails' } }],
+        total_commits: 1,
+      };
+    if (path.includes('/git/trees/'))
+      return {
+        truncated: false,
+        tree: [
+          {
+            path: 'lib/services/plugin/rule_engine.dart',
+            type: 'blob',
+            sha: path.includes(previous) ? previous : commit,
+          },
+        ],
+      };
     if (path.includes('/contents/pubspec.yaml'))
       return `version: ${version}+20400\nenvironment:\n  flutter: ${flutter}\n`;
     if (path.includes('/contents/lib/request/config/api_endpoints.dart'))
@@ -76,7 +94,7 @@ function mainApi({
     if (path.endsWith('/commits/main')) return { sha: head };
     if (path.includes('/contents/pubspec.yaml'))
       return 'version: 2.3.9+20309\nenvironment:\n  flutter: 3.47.7\n';
-    if (path.includes('/compare/')) return { status };
+    if (path.includes('/compare/')) return { ...(await release.api(path, options)), status };
     if (path.includes('/git/trees/'))
       return {
         truncated,
@@ -106,6 +124,228 @@ test('main monitoring detects unreleased behavior changes even when the version 
   assert.equal(update.branch, `codex/kazumi-main-${commit.slice(0, 12)}`);
   assert.match(upgradeBody(update), /No automatic merging/);
   assert.match(upgradeBody(update), /captcha/);
+  assert.match(upgradeBody(update), /Fix rule request parsing/);
+  assert.match(upgradeBody(update), /版本号未变/);
+  assert.match(upgradeBody(update), /线上 Node 引擎/);
+  assert.match(upgradeTitle(update), /视频解析、验证码/);
+});
+
+function dependencyApi({ names, before, after, changed = [] }) {
+  const base = mainApi({ changed: ['pubspec.yaml', 'pubspec.lock', ...changed] });
+  const lock = (versions) =>
+    'packages:\n' +
+    Object.entries(versions)
+      .map(
+        ([name, version]) =>
+          `  ${name}:\n    dependency: transitive\n    description:\n      name: ${name}\n      url: "https://pub.dev"\n    source: hosted\n    version: "${version}"\n`,
+      )
+      .join('');
+  const manifest = (versions) =>
+    `version: 2.4.0+20400\nenvironment:\n  flutter: 3.47.7\ndependencies:\n${names.map((name) => (versions[name] ? `  ${name}: ^${versions[name]}\n` : '')).join('')}`;
+  return async (path, options) => {
+    const versions = path.endsWith(`?ref=${previous}`) ? before : after;
+    if (path.includes('/contents/pubspec.yaml')) return manifest(versions);
+    if (path.includes('/contents/pubspec.lock')) return lock(versions);
+    return base.api(path, options);
+  };
+}
+
+test('PR #5 native progress bar removal does not create a main or stable upgrade', async () => {
+  const config = {
+    names: ['audio_video_progress_bar'],
+    before: { audio_video_progress_bar: '2.0.3' },
+    after: {},
+    changed: [
+      'lib/pages/player/player_seek_controller.dart',
+      'lib/pages/player/player_progress_bar.dart',
+      'lib/utils/theme.dart',
+    ],
+  };
+  for (const discover of [discoverMainUpdate, discoverUpdate]) {
+    const update = await discover(pinned(), dependencyApi(config));
+    assert.equal(update.available, false);
+    assert.match(update.reason, /No Web-relevant/);
+    assert.deepEqual(update.ignoredDependencies, ['audio_video_progress_bar']);
+    assert.ok(update.ignoredPaths.includes('pubspec.lock'));
+    assert.deepEqual(update.changedPaths, []);
+  }
+});
+
+test('dependency-only HTTP, parser and browser changes qualify, including transitive lock changes', async () => {
+  for (const [name, areas] of [
+    ['dio', ['network']],
+    ['http_parser', ['network']],
+    ['html', ['rules']],
+    ['json_path', ['rules']],
+    ['flutter_inappwebview_platform_interface', ['video', 'captcha']],
+  ]) {
+    const api = dependencyApi({
+      names: name === 'http_parser' ? [] : [name],
+      before: { [name]: '1.0.0' },
+      after: { [name]: '1.1.0' },
+    });
+    const update = await discoverMainUpdate(pinned(), api);
+    assert.equal(update.available, true, name);
+    assert.deepEqual(update.areas, areas);
+    assert.deepEqual(update.sourceChanges, []);
+    assert.deepEqual(
+      update.dependencyChanges[0].fields.find(({ field }) => field === 'lock.version'),
+      {
+        field: 'lock.version',
+        before: '1.0.0',
+        after: '1.1.0',
+      },
+    );
+    assert.match(upgradeBody(update), /1\.0\.0 → 1\.1\.0/);
+    assert.ok(
+      upgradeTitle(update).includes(
+        areas[0] === 'network' ? '网络' : areas[0] === 'rules' ? '规则引擎' : '视频解析',
+      ),
+    );
+    assert.equal(
+      (await discoverUpdate(pinned(), api)).available,
+      true,
+      'Stable uses the same policy',
+    );
+  }
+});
+
+test('mixed UI and relevant changes keep only relevant dependency evidence and source statuses', async () => {
+  const update = await discoverMainUpdate(
+    pinned(),
+    dependencyApi({
+      names: ['audio_video_progress_bar', 'dio'],
+      before: { audio_video_progress_bar: '2.0.3', dio: '5.11.0' },
+      after: { dio: '5.12.0' },
+      changed: [
+        'lib/services/plugin/rule_engine.dart',
+        'lib/utils/async_single_flight.dart',
+        'lib/utils/theme.dart',
+      ],
+    }),
+  );
+  assert.deepEqual(
+    update.dependencyChanges.map(({ name }) => name),
+    ['dio'],
+  );
+  assert.deepEqual(update.ignoredDependencies, ['audio_video_progress_bar']);
+  assert.ok(update.sourceChanges.some(({ path }) => path === 'lib/utils/async_single_flight.dart'));
+  assert.ok(!update.changedPaths.includes('lib/utils/theme.dart'));
+  assert.match(upgradeBody(update), /audio\\_video\\_progress\\_bar/);
+  assert.match(upgradeBody(update), /5\.11\.0 → 5\.12\.0/);
+});
+
+test('dependency comparison includes Git/source/hash/override changes at the same version and ignores formatting', () => {
+  const snapshot = {
+    pubspec:
+      'dependencies:\n  webview_windows:\n    git:\n      url: https://github.com/example/webview.git\n      ref: old\ndev_dependencies:\n  flutter_lints: ^1.0.0\n',
+    lock: 'packages:\n  webview_windows:\n    dependency: "direct main"\n    description:\n      resolved-ref: old\n      url: https://github.com/example/webview.git\n    source: git\n    version: "1.0.0"\n',
+  };
+  const next = {
+    pubspec:
+      snapshot.pubspec.replace('ref: old', 'ref: new') + 'dependency_overrides:\n  http: ^2.0.0\n',
+    lock: snapshot.lock.replace('resolved-ref: old', 'resolved-ref: new'),
+  };
+  const changes = dependencyChanges(snapshot, next);
+  assert.deepEqual(
+    changes.map(({ name }) => name),
+    ['http', 'webview_windows'],
+  );
+  assert.deepEqual(
+    changes[1].fields.map(({ field }) => field),
+    ['constraint.git.ref', 'lock.description.resolved-ref'],
+  );
+  const formatted = {
+    pubspec: snapshot.pubspec.replace('^1.0.0', '^2.0.0'),
+    lock: snapshot.lock
+      .replace('"1.0.0"', "'1.0.0' # comment")
+      .replace('"direct main"', 'transitive'),
+  };
+  assert.deepEqual(dependencyChanges(snapshot, formatted), []);
+  const hashed = {
+    ...snapshot,
+    lock: snapshot.lock.replace('      resolved-ref:', '      sha256: abc\n      resolved-ref:'),
+  };
+  assert.deepEqual(
+    dependencyChanges(hashed, {
+      ...hashed,
+      lock: hashed.lock.replace('sha256: abc', 'sha256: def'),
+    })[0].fields,
+    [{ field: 'lock.description.sha256', before: 'abc', after: 'def' }],
+  );
+  assert.deepEqual(
+    dependencyChanges(snapshot, {
+      ...snapshot,
+      lock: snapshot.lock.replace('source: git', 'source: hosted'),
+    })[0].fields,
+    [{ field: 'lock.source', before: 'git', after: 'hosted' }],
+  );
+  assert.throws(
+    () =>
+      dependencyChanges(snapshot, {
+        ...snapshot,
+        pubspec: 'dependencies:\n  http: &unsupported 1.0\n',
+      }),
+    /Unsupported pubspec YAML/,
+  );
+  assert.throws(
+    () => dependencyChanges(snapshot, { ...snapshot, pubspec: 'dependencies: {http: ^1.0.0}\n' }),
+    /Unsupported pubspec YAML section/,
+  );
+});
+
+test('version, SDK and development dependency changes alone do not request an upgrade', async () => {
+  const base = mainApi({ changed: ['pubspec.yaml', 'pubspec.lock'] });
+  const api = (path, options) => {
+    if (path.includes('/contents/pubspec.yaml'))
+      return path.includes(previous)
+        ? 'version: 2.3.9\nenvironment:\n  flutter: 3.47.7\ndev_dependencies:\n  flutter_lints: ^1.0.0\n'
+        : 'version: 2.4.0\nenvironment:\n  flutter: 3.48.0\ndev_dependencies:\n  flutter_lints: ^2.0.0\n';
+    if (path.includes('/contents/pubspec.lock')) return 'packages:\n';
+    return base.api(path, options);
+  };
+  for (const discover of [discoverMainUpdate, discoverUpdate])
+    assert.equal((await discover(pinned(), api)).available, false);
+});
+
+test('complete trees retain new/removed critical files beyond compare limits and bodies show available evidence', async () => {
+  const base = mainApi();
+  const removed = 'lib/services/plugin/old.dart';
+  const added = 'lib/services/plugin/new.dart';
+  const api = async (path, options) => {
+    if (path.includes('/git/trees/'))
+      return {
+        truncated: false,
+        tree: [
+          { path: path.includes(previous) ? removed : added, type: 'blob', sha: commit },
+          ...Array.from({ length: 301 }, (_, index) => ({
+            path: `lib/pages/ui${index}.dart`,
+            type: 'blob',
+            sha: path.includes(previous) ? previous : commit,
+          })),
+        ],
+      };
+    if (path.includes('/compare/'))
+      return {
+        status: 'ahead',
+        total_commits: 1,
+        commits: [{ sha: commit, commit: { message: 'Handle @reviewer <script> in rules' } }],
+        files: [{ filename: added, patch: '@@ -1 +1 @@\n-oldRequest();\n+newRequest();' }],
+      };
+    return base.api(path, options);
+  };
+  const update = await discoverMainUpdate(pinned(), api);
+  assert.deepEqual(update.changedPaths, [added, removed]);
+  assert.deepEqual(
+    update.sourceChanges.map(({ status }) => status),
+    ['added', 'removed'],
+  );
+  const body = upgradeBody(update);
+  assert.match(body, /newRequest\(\)/);
+  assert.match(body, /没有可用的 compare 差异片段/);
+  assert.match(body, /&#64;reviewer/);
+  assert.ok(!body.includes('<script>'));
+  assert.match(body, /已过滤 301 个非相关文件/);
 });
 
 test('main ignores unchanged pins and unrelated files without proposing upgrade PRs', async () => {
@@ -113,6 +353,25 @@ test('main ignores unchanged pins and unrelated files without proposing upgrade 
     const { api, calls } = mainApi(config);
     assert.equal((await discoverMainUpdate(pinned(), api)).available, false);
     assert.ok(!calls.some((path) => path.includes('/contents/')));
+  }
+});
+
+test('mixed header/UI constants ignore native styles but retain UA changes even after a semicolon', async () => {
+  const base = mainApi({ changed: ['lib/utils/constants.dart'] });
+  const before =
+    "const List<String> userAgentsList = ['Mozilla/5.0 (Windows; Chrome/1)'];\nconst sliderStyle = 1;";
+  for (const [after, available] of [
+    [before.replace('sliderStyle = 1', 'sliderStyle = 2'), false],
+    [before.replace('Chrome/1', 'Chrome/2'), true],
+  ]) {
+    const update = await discoverMainUpdate(pinned(), (path, options) =>
+      path.includes('/contents/lib/utils/constants.dart')
+        ? path.includes(previous)
+          ? before
+          : after
+        : base.api(path, options),
+    );
+    assert.equal(update.available, available);
   }
 });
 
