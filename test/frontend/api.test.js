@@ -90,7 +90,7 @@ test('cancelled source requests stop before sending a search, chapter or resolve
   });
   const controller = new AbortController();
   controller.abort();
-  for (const path of ['/rules/search', '/rules/chapters', '/resolve'])
+  for (const path of ['/rules/search', '/rules/chapters', '/resolve', '/rules/test'])
     await assert.rejects(api(path, { method: 'POST', signal: controller.signal }), {
       name: 'AbortError',
     });

@@ -1,9 +1,17 @@
-import React, { useEffect, useState } from 'react';
-import { Check, Code2, Download, LoaderCircle, SlidersHorizontal } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  Check,
+  Code2,
+  Download,
+  FlaskConical,
+  LoaderCircle,
+  SlidersHorizontal,
+} from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { downloadJSON } from '../../lib/download-json.js';
 import { Modal } from '../../components/Modal.jsx';
 import { Notice } from '../../components/feedback.jsx';
+import { RuleTester } from './RuleTester.jsx';
 import {
   applyJsonFields,
   createRuleDraft,
@@ -35,6 +43,8 @@ export function RuleEditor({ rule, onClose, onSaved }) {
   const [error, setError] = useState('');
   const [checked, setChecked] = useState(false);
   const [discarding, setDiscarding] = useState(false);
+  const [testRevision, setTestRevision] = useState(0);
+  const bodyRef = useRef(null);
   const dirty = content !== initial || Object.keys(jsonFields).length > 0;
   let draft;
   try {
@@ -43,6 +53,10 @@ export function RuleEditor({ rule, onClose, onSaved }) {
     // Invalid source remains editable in JSON mode, and cannot replace the form.
     draft = {};
   }
+
+  useEffect(() => {
+    bodyRef.current?.scrollTo({ top: 0 });
+  }, [mode, section]);
 
   useEffect(() => {
     if (!dirty) return;
@@ -55,6 +69,7 @@ export function RuleEditor({ rule, onClose, onSaved }) {
   }, [dirty]);
 
   const changed = () => {
+    setTestRevision((current) => current + 1);
     setError('');
     setChecked(false);
     setDiscarding(false);
@@ -313,6 +328,15 @@ export function RuleEditor({ rule, onClose, onSaved }) {
             <Code2 size={15} />
             JSON 编辑
           </button>
+          <button
+            className={mode === 'test' ? 'selected' : ''}
+            aria-pressed={mode === 'test'}
+            disabled={!!pending}
+            onClick={() => switchMode('test')}
+          >
+            <FlaskConical size={15} />
+            规则测试
+          </button>
         </div>
         <button className="text-button" onClick={exportDraft} disabled={!!pending}>
           <Download size={15} />
@@ -334,7 +358,7 @@ export function RuleEditor({ rule, onClose, onSaved }) {
           ))}
         </div>
       )}
-      <div className="rule-editor-body">
+      <div ref={bodyRef} className="rule-editor-body">
         {mode === 'json' ? (
           <>
             <div className="rule-editor-source-heading">
@@ -366,7 +390,7 @@ export function RuleEditor({ rule, onClose, onSaved }) {
               }}
             />
           </>
-        ) : (
+        ) : mode === 'form' ? (
           <fieldset className="rule-editor-fields" disabled={!!pending}>
             <legend>{sections.find(([id]) => id === section)[1]}</legend>
             {section === 'basic' && (
@@ -508,7 +532,8 @@ export function RuleEditor({ rule, onClose, onSaved }) {
               </>
             )}
           </fieldset>
-        )}
+        ) : null}
+        <RuleTester key={testRevision} rule={draft} active={mode === 'test'} />
       </div>
       {error && <Notice>{error}</Notice>}
       {checked && (

@@ -2,7 +2,7 @@ import { awaitVerification, ensureVerificationSession } from './verification.js'
 import { readSearchStream } from './search-stream.js';
 
 export async function api(path, { onResult, onDiagnostic, ...options } = {}) {
-  if (['/rules/search', '/rules/chapters', '/resolve'].includes(path)) {
+  if (['/rules/search', '/rules/chapters', '/resolve', '/rules/test'].includes(path)) {
     await ensureVerificationSession();
     options.signal?.throwIfAborted();
   }
@@ -19,9 +19,11 @@ export async function api(path, { onResult, onDiagnostic, ...options } = {}) {
       signal: options.signal,
       onResult,
       onDiagnostic,
-      ...(path === '/resolve'
-        ? { interruptedMessage: '解析连接已中断，请重新解析或切换线路。' }
-        : {}),
+      ...(path === '/rules/test'
+        ? { interruptedMessage: '规则测试连接已中断，请重新测试。' }
+        : path === '/resolve'
+          ? { interruptedMessage: '解析连接已中断，请重新解析或切换线路。' }
+          : {}),
     });
   let data;
   try {

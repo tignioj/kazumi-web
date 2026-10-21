@@ -124,6 +124,43 @@ test('rules can be imported, edited, exported and removed using the interface', 
   await expect(editor.getByLabel('规则名称', { exact: true })).toHaveValue(rule.name);
   await editor.getByLabel('API 版本', { exact: true }).fill(rule.api);
   await editor.getByLabel('规则版本', { exact: true }).fill('2.0');
+  const historyBeforeTest = (await (await request.get('/api/watch-data')).json()).history;
+  await editor.getByRole('button', { name: '规则测试', exact: true }).click();
+  await editor.getByLabel('测试搜索关键词', { exact: true }).fill('测试番剧');
+  await editor.getByRole('button', { name: '测试搜索', exact: true }).click();
+  await expect(editor.getByText(/找到 2 个搜索结果/)).toBeVisible();
+  await editor.getByRole('button', { name: '解析章节 测试番剧', exact: true }).click();
+  await expect(editor.getByLabel('测试播放线路', { exact: true }).locator('option')).toHaveCount(2);
+  await editor.getByLabel('测试播放线路', { exact: true }).selectOption('1');
+  await expect(editor.getByLabel('测试播放地址', { exact: true })).toHaveValue(
+    `${fixtureUrl}/source/watch/3`,
+  );
+  await editor.getByRole('button', { name: '测试播放', exact: true }).click();
+  const preview = editor.locator('video');
+  await expect.poll(() => preview.evaluate((video) => video.readyState)).toBeGreaterThanOrEqual(2);
+  await preview.evaluate((video) => video.play());
+  await expect.poll(() => preview.evaluate((video) => video.currentTime)).toBeGreaterThan(0.2);
+  await editor.getByLabel('测试播放线路', { exact: true }).selectOption('0');
+  await expect(preview).toHaveCount(0);
+  await editor.getByLabel('测试剧集', { exact: true }).selectOption('1');
+  await editor.getByRole('button', { name: '测试播放', exact: true }).click();
+  await expect(editor.getByText(/已解析为 HLS/)).toBeVisible();
+  await expect.poll(() => preview.evaluate((video) => video.readyState)).toBeGreaterThanOrEqual(2);
+  await preview.evaluate((video) => video.play());
+  await expect.poll(() => preview.evaluate((video) => video.currentTime)).toBeGreaterThan(0.2);
+  expect((await (await request.get('/api/watch-data')).json()).history).toEqual(historyBeforeTest);
+  expect(
+    (await (await request.get('/api/rules')).json()).rules.find((item) => item.name === rule.name)
+      .version,
+  ).toBe('1.0');
+  await editor.getByRole('button', { name: '表单编辑', exact: true }).click();
+  await expect(preview).toHaveCount(0);
+  await editor.getByLabel('规则版本', { exact: true }).fill('2.1');
+  await editor.getByRole('button', { name: '规则测试', exact: true }).click();
+  await expect(editor.getByLabel('测试搜索关键词', { exact: true })).toHaveValue('');
+  await expect(editor.getByLabel('测试播放线路', { exact: true })).toHaveCount(0);
+  await editor.getByRole('button', { name: '表单编辑', exact: true }).click();
+  await editor.getByLabel('规则版本', { exact: true }).fill('2.0');
   await editor.getByRole('button', { name: '保存规则', exact: true }).click();
   await expect(editor).toBeHidden();
   await page.route('**/api/rules/updates', (route) =>
