@@ -6,7 +6,7 @@ import { github } from './kazumi-upstream.mjs';
 import { markdown } from './kazumi-relevance.mjs';
 
 export const rulesRepository = 'Predidit/KazumiRules';
-const catalogPath = 'test/compatibility/official-rules.json';
+const catalogPath = 'server/defaults/official-rules.json';
 
 function fieldChanges(before, after, prefix = '') {
   if (isDeepStrictEqual(before, after)) return [];
@@ -121,7 +121,7 @@ export async function applyRulesUpdate(root, update) {
 
 export function rulesUpgradeBody(update) {
   return (
-    `Refresh the complete official rule catalog at \`${update.commit}\`.\n\n` +
+    `Refresh the bundled offline and compatibility rule catalog at \`${update.commit}\`.\n\n` +
     `Changes: ${update.compareUrl}\n\n` +
     Object.entries(update.changes)
       .map(([kind, names]) => `- ${kind}: ${names.map(markdown).join(', ') || '(none)'}`)
@@ -139,7 +139,7 @@ export function rulesUpgradeBody(update) {
             .join('\n'),
       )
       .join('\n') +
-    '\n\n实际影响：只更新开发测试的官方规则样本，不修改用户已安装规则。URL、请求模板、选择器和验证码配置的变化需要固定响应/浏览器回归；名称、作者等元数据变化只影响样本信息。样本导入通过不代表真实站点可用。\n' +
+    '\n\n实际影响：更新发行版内置的离线规则目录及兼容性样本，不修改用户已安装规则。URL、请求模板、选择器和验证码配置的变化需要固定响应/浏览器回归；名称、作者等元数据变化影响目录与样本信息。样本导入通过不代表真实站点可用。\n' +
     '\n\nAll JSON rules are fetched at the same immutable commit. Both engines must validate every rule and its share link. ' +
     'Review changed selectors, templates and verification settings; add or update executable fixtures for new behavior. ' +
     'Resolve incompatibilities before recording and committing the updated golden corpus with compare:engines -- --record. ' +

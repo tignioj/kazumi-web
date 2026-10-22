@@ -8,7 +8,9 @@ import { buildCases, canonicalRequest, normalizeOrigin, searchCase } from './cor
 const origin = 'http://fixture.example';
 const golden = JSON.parse(await readFile(new URL('./golden.json', import.meta.url)));
 test('the complete pinned official catalog imports locally as JSON and share links', async () => {
-  const catalog = JSON.parse(await readFile(new URL('./official-rules.json', import.meta.url)));
+  const catalog = JSON.parse(
+    await readFile(new URL('../../server/defaults/official-rules.json', import.meta.url)),
+  );
   assert.equal(catalog.commit, golden.rulesCommit);
   assert.deepEqual(
     parseImport(catalog.rules).map((rule) => rule.name),

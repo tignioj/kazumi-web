@@ -5,5 +5,7 @@ package-lock.json
 test-results
 playwright-report
 LICENSE
+# Vendored upstream patch: preserve its exact SHA-256 and whitespace.
+native/hls/*.patch
 # MPEG-TS video fixtures (not TypeScript source)
 test/fixtures/media/segment*.ts

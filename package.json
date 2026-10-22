@@ -26,6 +26,7 @@
     "smoke": "node scripts/smoke.mjs",
     "format": "prettier --write .",
     "build:hls": "node scripts/build-hls.mjs",
+    "check:hls": "node scripts/build-hls.mjs --verify",
     "test:compat": "node --test test/compatibility/*.test.js",
     "compare:engines": "node scripts/compare-rule-engines.mjs",
     "compare:browser-engines": "node scripts/compare-browser-engines.mjs",

@@ -1,0 +1,2 @@
+# Preserve the vendored upstream patch byte-for-byte, including context-line whitespace.
+native/hls/*.patch -text -whitespace

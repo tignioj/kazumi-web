@@ -138,7 +138,7 @@ export async function updateInstalledRules(store, http, repository, catalog, nam
             return {
               ...result,
               status: 'unlisted',
-              message: '官方目录未收录此规则，请重新导入或编辑更新',
+              message: '当前仓库未收录此规则，请重新导入或编辑更新',
             };
           try {
             const rule = await downloadOfficialRule(http, repository, remote.name, options);

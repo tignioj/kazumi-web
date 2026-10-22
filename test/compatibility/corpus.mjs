@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 
 const { rules: officialRules } = JSON.parse(
-  await readFile(new URL('./official-rules.json', import.meta.url)),
+  await readFile(new URL('../../server/defaults/official-rules.json', import.meta.url)),
 );
 const api9 = officialRules.filter(
   (rule) => rule.searchMode === 'api' || rule.chapterMode === 'api',

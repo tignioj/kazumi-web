@@ -30,13 +30,18 @@ export function Rules({
   blockedUpdates = [],
 }) {
   const [tab, setTab] = useState('installed');
+  const [catalogRefresh, setCatalogRefresh] = useState(0);
   const [modal, setModal] = useState(null);
   const [content, setContent] = useState('');
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState('');
   const [deleteRule, setDeleteRule] = useState(null);
   const fileRef = useRef();
-  const catalog = useRequest(tab === 'catalog' ? '/rules/catalog' : null);
+  const catalog = useRequest(
+    tab === 'catalog'
+      ? `/rules/catalog?refresh=${catalogRefresh ? 'true' : 'false'}&request=${catalogRefresh}`
+      : null,
+  );
   const [installing, setInstalling] = useState('');
   const [updateResults, setUpdateResults] = useState([]);
   const [catalogFilter, setCatalogFilter] = useState('');
@@ -77,9 +82,14 @@ export function Rules({
   const install = async (name) => {
     setInstalling(name);
     try {
-      await api('/rules/install', { method: 'POST', body: JSON.stringify({ name }) });
+      const { catalog: source } = await api('/rules/install', {
+        method: 'POST',
+        body: JSON.stringify({ name }),
+      });
       await reload();
-      notify(`已安装「${name}」`);
+      notify(
+        `已安装「${name}」${source?.stale ? (source.source === 'builtin' ? '（来自内置快照）' : '（来自本地缓存）') : ''}`,
+      );
     } catch (e) {
       notify(e.message);
     } finally {
@@ -151,7 +161,7 @@ export function Rules({
             已安装<span>{rules.length}</span>
           </button>
           <button className={tab === 'catalog' ? 'selected' : ''} onClick={() => setTab('catalog')}>
-            在线目录
+            规则目录
             <ArrowDownToLine size={14} />
           </button>
         </div>
@@ -232,7 +242,7 @@ export function Rules({
                       <button
                         className="icon-button"
                         aria-label={`更新 ${rule.name}`}
-                        title="从官方目录更新规则"
+                        title="从当前仓库更新规则"
                         disabled={!!installing}
                         onClick={() => update(rule.name)}
                       >
@@ -287,14 +297,22 @@ export function Rules({
           {catalog.error ? (
             <Notice onRetry={catalog.retry}>{catalog.error}</Notice>
           ) : catalog.loading ? (
-            <Spinner text="正在获取在线规则目录…" />
+            <Spinner text="正在读取规则目录…" />
           ) : (
             <>
+              {catalog.data?.catalog?.stale && (
+                <Notice onRetry={() => setCatalogRefresh((value) => value + 1)}>
+                  {catalog.data.catalog.source === 'builtin'
+                    ? '规则仓库暂不可用，正在使用内置快照。可以安装快照中的规则；检查更新需恢复仓库连接。'
+                    : '规则仓库暂不可用，正在使用本地缓存。可以安装已缓存的规则；检查更新需恢复仓库连接。'}
+                </Notice>
+              )}
+              <p className="rule-repository">当前仓库：{catalog.data?.catalog?.repository}</p>
               <label className="inline-search catalog-search">
                 <Search size={16} />
                 <input
                   placeholder="筛选规则名称"
-                  aria-label="筛选在线规则"
+                  aria-label="筛选规则目录"
                   value={catalogFilter}
                   onChange={(e) => setCatalogFilter(e.target.value)}
                 />

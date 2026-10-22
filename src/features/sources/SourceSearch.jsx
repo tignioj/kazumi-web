@@ -144,7 +144,7 @@ export function SourceSearch({ defaultQuery = '', subject, rules, onPlay, naviga
           </button>
         }
       >
-        规则负责搜索片源和解析剧集。可从在线目录安装，也可导入 Kazumi 规则。
+        规则负责搜索片源和解析剧集。可从规则目录安装，也可导入 Kazumi 规则。
       </Empty>
     );
   return (
