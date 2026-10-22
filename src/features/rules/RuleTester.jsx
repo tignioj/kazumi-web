@@ -3,6 +3,7 @@ import { LoaderCircle, Play, Search, Square } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { Notice } from '../../components/feedback.jsx';
 import { WebPlayer } from '../player/WebPlayer.jsx';
+import { RuleParseTrace } from './RuleParseTrace.jsx';
 import { sanitizeDiagnosticText } from '../../../shared/diagnostic-text.js';
 
 const stages = { search: '搜索', chapters: '章节解析', resolve: '播放解析' };
@@ -14,6 +15,8 @@ export function RuleTester({ rule, active }) {
   const [playUrl, setPlayUrl] = useState('');
   const [search, setSearch] = useState(null);
   const [chapters, setChapters] = useState(null);
+  const [searchTrace, setSearchTrace] = useState(null);
+  const [chapterTrace, setChapterTrace] = useState(null);
   const [roadIndex, setRoadIndex] = useState(0);
   const [episodeIndex, setEpisodeIndex] = useState(0);
   const [resolved, setResolved] = useState(null);
@@ -30,6 +33,7 @@ export function RuleTester({ rule, active }) {
   const playbackRef = useRef(null);
   const roads = chapters?.roads || [];
   const episodes = roads[roadIndex]?.episodes || [];
+  const ruleRevision = JSON.stringify(rule);
 
   useEffect(() => {
     if (!active) {
@@ -42,6 +46,25 @@ export function RuleTester({ rule, active }) {
       request.current = null;
     };
   }, [active]);
+
+  useEffect(() => {
+    request.current?.abort();
+    request.current = null;
+    setBusy('');
+    setError('');
+    setSearch(null);
+    setSearchTrace(null);
+    setChapters(null);
+    setChapterTrace(null);
+    setDetail('');
+    setPlayUrl('');
+    setRoadIndex(0);
+    setEpisodeIndex(0);
+    setResolved(null);
+    setLogs([]);
+    setPlayStatus('');
+    setPlayError('');
+  }, [ruleRevision]);
 
   useEffect(() => {
     if (!active) return;
@@ -66,6 +89,7 @@ export function RuleTester({ rule, active }) {
   };
   const clearChapters = () => {
     setChapters(null);
+    setChapterTrace(null);
     setRoadIndex(0);
     setEpisodeIndex(0);
     setPlayUrl('');
@@ -80,6 +104,7 @@ export function RuleTester({ rule, active }) {
     clearPlayback();
     if (stage === 'search') {
       setSearch(null);
+      setSearchTrace(null);
       setDetail('');
       clearChapters();
     } else if (stage === 'chapters') clearChapters();
@@ -93,9 +118,12 @@ export function RuleTester({ rule, active }) {
         },
       });
       if (request.current !== controller || controller.signal.aborted) return;
-      if (stage === 'search') setSearch(data);
-      else if (stage === 'chapters') {
+      if (stage === 'search') {
+        setSearch(data);
+        setSearchTrace(data.trace || null);
+      } else if (stage === 'chapters') {
         setChapters(data);
+        setChapterTrace(data.trace || null);
         const index = Math.max(
           0,
           data.roads.findIndex((road) => road.episodes?.length),
@@ -107,7 +135,11 @@ export function RuleTester({ rule, active }) {
         setPlayStatus('解析成功，点击播放器开始试播');
       }
     } catch (error) {
-      if (request.current === controller && !controller.signal.aborted) setError(error.message);
+      if (request.current === controller && !controller.signal.aborted) {
+        setError(error.message);
+        if (stage === 'search') setSearchTrace(error.trace || null);
+        else if (stage === 'chapters') setChapterTrace(error.trace || null);
+      }
     } finally {
       if (request.current === controller) {
         request.current = null;
@@ -202,6 +234,7 @@ export function RuleTester({ rule, active }) {
             )}
           </>
         )}
+        {searchTrace && <RuleParseTrace trace={searchTrace} />}
       </section>
       <section className="rule-test-step">
         <h3>2. 章节与播放线路</h3>
@@ -285,6 +318,7 @@ export function RuleTester({ rule, active }) {
             </ol>
           </>
         )}
+        {chapterTrace && <RuleParseTrace trace={chapterTrace} />}
       </section>
       <section className="rule-test-step">
         <h3>3. 播放解析与试播</h3>

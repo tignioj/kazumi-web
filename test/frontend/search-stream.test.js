@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readSearchStream } from '../../src/lib/search-stream.js';
 import { api } from '../../src/lib/api.js';
-import { getVerificationRequest } from '../../src/lib/verification.js';
+import { getVerificationRequest, verificationFailure } from '../../src/lib/verification.js';
 
 const group = { ruleName: '测试源', items: [{ name: '动画 🎬', url: 'opaque/1' }] };
 const encode = (event) => new TextEncoder().encode(`${JSON.stringify(event)}\n`);
@@ -74,6 +74,29 @@ test('a dropped or failed search leaves published results available to the calle
     else s.close();
     await assert.rejects(result, failure === 'error' ? /服务已关闭/ : /已保留收到的结果/);
     assert.deepEqual(seen, [group]);
+  }
+});
+
+test('NDJSON terminal errors preserve optional trace without copying other event properties', async () => {
+  const trace = { stage: 'search', steps: [{ selector: '//article', count: 0 }] };
+  for (const traced of [false, true]) {
+    const s = stream();
+    const result = readSearchStream(s.response, {});
+    s.send({
+      type: 'error',
+      error: '规则解析失败',
+      ...(traced ? { trace } : {}),
+      privateData: 'must not reach the caller',
+    });
+    await assert.rejects(result, (error) => {
+      assert.equal(error.message, '规则解析失败');
+      assert.deepEqual(error.trace, traced ? trace : undefined);
+      assert.equal(Object.hasOwn(error, 'trace'), traced);
+      assert.equal(Object.hasOwn(error, 'type'), false);
+      assert.equal(Object.hasOwn(error, 'privateData'), false);
+      return true;
+    });
+    assert.equal(s.cancelled(), true);
   }
 });
 
@@ -182,3 +205,21 @@ test(
     assert.equal(s.cancelled(), true);
   },
 );
+
+test('a failed verification state preserves its trace when it terminates a pending stream', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ ok: true }));
+  const trace = { stage: 'chapters', steps: [{ selector: '//ul', count: 0 }] };
+  const s = stream();
+  const published = Promise.withResolvers();
+  const result = readSearchStream(s.response, { onResult: () => published.resolve() });
+  s.send({ type: 'verification', verificationId: 'failed-trace-captcha' });
+  s.send({ type: 'result', result: group });
+  await published.promise;
+  const rejected = assert.rejects(result, { message: '验证后解析失败', trace });
+  getVerificationRequest().finish(
+    verificationFailure({ status: 'failed', error: '验证后解析失败', trace }),
+  );
+  await rejected;
+  assert.equal(getVerificationRequest(), null);
+  assert.equal(s.cancelled(), true);
+});

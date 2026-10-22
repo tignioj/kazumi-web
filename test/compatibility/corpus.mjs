@@ -2,14 +2,13 @@ import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 
 const { rules: officialRules } = JSON.parse(
-  await readFile(new URL('./official-rules.json', import.meta.url)),
+  await readFile(new URL('../../server/defaults/official-rules.json', import.meta.url)),
 );
 const api9 = officialRules.filter(
   (rule) => rule.searchMode === 'api' || rule.chapterMode === 'api',
 );
 const chapterHtml = {
   LMM: '<div class="module-player-list"><a href="/play/1">第 1 集</a></div>',
-  giriGiriLove: '<ul class="anthology-list-play size"><li><a href="/play/1">第 1 集</a></li></ul>',
   mutefun:
     '<div class="module-play-list-content"><a class="module-play-list-link" href="/play/1">第 1 集</a></div>',
   mgnacg: '<ul class="anthology-list-play size"><li><a href="/play/1">第 1 集</a></li></ul>',
@@ -45,6 +44,7 @@ export function buildCases(origin) {
     xpath('xpath'),
     xpath('xpath-post', { usePost: true }),
     xpath('xpath-bare', { chapterRoads: '//' }),
+    xpath('xpath-base-trailing-slash', { baseURL: `${origin}/` }),
   ];
   cases.push({ ...xpath('xpath-empty-results'), search: '<p>没有结果</p>' });
   cases.push({
@@ -68,6 +68,50 @@ export function buildCases(origin) {
       '<article><a href="/empty"></a></article>',
     chapters: '<ul><a href="/play/1">第 <span>1</span> 集</a></ul>',
   });
+  cases.push({
+    ...xpath('xpath-union-search', {
+      searchName: '//a/text() | //span/text()',
+      searchResult: '//a | //b',
+    }),
+    // Each branch must stay inside its selected fragment. In particular, the
+    // second result cannot pick the first fragment's fallback title or link.
+    search:
+      '<article><span>备用标题一</span><b href="/detail/1">备用链接</b></article>' +
+      '<article><a href="/detail/2">标题二</a></article>' +
+      '<article><span>备用标题三</span><b href="/detail/3">备用链接</b></article>',
+  });
+  cases.push({
+    ...xpath('xpath-union-roads', { chapterResult: '//a | //b' }),
+    chapters:
+      '<ul><b href="/play/road1/1">一</b><b href="/play/road1/2">二</b></ul>' +
+      '<ul><a href="/play/road2/1">三</a></ul>' +
+      '<ul><b href="/play/road3/1">四</b></ul>',
+  });
+  cases.push({
+    ...xpath('xpath-union-order', {
+      searchList: '//article | //section',
+      searchName: '//a | //b',
+      searchResult: '//a | //b',
+      chapterRoads: '//ul | //ol',
+      chapterResult: '//a | //b',
+    }),
+    // Kazumi preserves branch priority, including when a fallback node occurs
+    // earlier in the document than a primary match in the same fragment.
+    search:
+      '<article><b href="/fallback/1">备用一</b><a href="/detail/1">一</a></article>' +
+      '<section><b href="/fallback/2">备用二</b><a href="/detail/2">二</a></section>' +
+      '<article><b href="/fallback/3">备用三</b><a href="/detail/3">三</a></article>',
+    chapters:
+      '<ul><b href="/play/fallback">备用</b><a href="/play/1">一</a><a href="/play/2">二</a></ul>' +
+      '<ol><a href="/play/3">三</a></ol>' +
+      '<ul><b href="/play/4">四</b></ul>',
+  });
+  cases.push(
+    xpath('xpath-playback-headers', {
+      referer: `${origin}/playback-only`,
+      userAgent: 'KazumiCompatibility/PlaybackOnly',
+    }),
+  );
   cases.push({
     ...xpath('xpath-encoded-urls'),
     search: '<article><a href="/detail/%61/%7e?q=%61%2f#%61">编码地址</a></article>',
@@ -101,7 +145,7 @@ export function buildCases(origin) {
   for (const original of api9) {
     assert.equal(original.searchMode, 'api', `Add an executable fixture for ${original.name}`);
     assert.ok(
-      chapterHtml[original.name] || ['sorani', 'xfdmnext'].includes(original.name),
+      chapterHtml[original.name] || ['sorani', 'xfdmnext', 'giriGiriLove'].includes(original.name),
       `Add an executable fixture for ${original.name}`,
     );
     const id = `official-${original.name}`;
@@ -116,60 +160,82 @@ export function buildCases(origin) {
     if (rule.chapterMode === 'api') {
       rule.chapterApiConfig.request.url =
         `${origin}/case/${id}/chapters` + (original.name === 'sorani' ? '/@source' : '');
-      rule.chapterApiConfig.episodePage.url = rule.chapterApiConfig.episodePage.url.replace(
-        new URL(original.baseURL).origin,
-        origin,
-      );
+      if (rule.chapterApiConfig.episodePage?.url)
+        rule.chapterApiConfig.episodePage.url = rule.chapterApiConfig.episodePage.url.replace(
+          new URL(original.baseURL).origin,
+          origin,
+        );
     }
     if (rule.referer) rule.referer = origin;
     cases.push({
       id,
       rule,
       search:
-        original.name === 'sorani'
+        original.name === 'giriGiriLove'
           ? {
-              data: {
-                records: [
+              info: {
+                rows: [
+                  { vod_id: 'a/b +中', vod_name: '番剧' },
+                  { vod_id: 7, vod_name: '数字 ID' },
+                  { vod_name: '缺少 ID' },
+                ],
+              },
+            }
+          : original.name === 'sorani'
+            ? {
+                data: {
+                  records: [
+                    { id: 'a/b +中', title: '番剧' },
+                    { id: 7, title: '数字 ID' },
+                  ],
+                },
+              }
+            : original.name === 'xfdmnext'
+              ? [
                   { id: 'a/b +中', title: '番剧' },
                   { id: 7, title: '数字 ID' },
-                ],
-              },
-            }
-          : original.name === 'xfdmnext'
-            ? [
-                { id: 'a/b +中', title: '番剧' },
-                { id: 7, title: '数字 ID' },
-              ]
-            : {
-                list: [
-                  { id: 'a/b +中', name: '番剧' },
-                  { id: 7, name: '数字 ID' },
-                  { name: '缺少 ID' },
-                ],
-              },
+                ]
+              : {
+                  list: [
+                    { id: 'a/b +中', name: '番剧' },
+                    { id: 7, name: '数字 ID' },
+                    { name: '缺少 ID' },
+                  ],
+                },
       chapters:
-        original.name === 'sorani'
+        original.name === 'giriGiriLove'
           ? {
-              data: {
-                episodes: [
-                  { episodeLabel: '一', episodeOrder: 1 },
-                  { episodeLabel: '二', episodeOrder: 2 },
-                ],
+              info: {
+                vod_play_from: '线路一$$$空线路$$$线路三',
+                vod_play_url: [
+                  '第 1 集$https://cdn.example/1.m3u8#缺少分隔符#无地址$#第 2 集$//cdn.example/2.m3u8',
+                  '',
+                  '第 3 集$https://cdn.example/3.m3u8',
+                ].join('$$$'),
               },
             }
-          : original.name === 'xfdmnext'
+          : original.name === 'sorani'
             ? {
-                sources: [
-                  {
-                    name: '线路',
-                    episodes: [
-                      { title: '一', id: 'episode/a' },
-                      { title: '二', id: 2 },
-                    ],
-                  },
-                ],
+                data: {
+                  episodes: [
+                    { episodeLabel: '一', episodeOrder: 1 },
+                    { episodeLabel: '二', episodeOrder: 2 },
+                  ],
+                },
               }
-            : chapterHtml[original.name],
+            : original.name === 'xfdmnext'
+              ? {
+                  sources: [
+                    {
+                      name: '线路',
+                      episodes: [
+                        { title: '一', id: 'episode/a' },
+                        { title: '二', id: 2 },
+                      ],
+                    },
+                  ],
+                }
+              : chapterHtml[original.name],
       source: rule.chapterMode === 'api' ? 'opaque/a%2Fb' : `${origin}/case/${id}/detail`,
     });
   }
@@ -206,6 +272,44 @@ export function buildCases(origin) {
     },
     source: 'opaque/a%2Fb',
   });
+  const playbackHeaders = api(
+    'api-playback-headers',
+    {},
+    {
+      referer: `${origin}/playback-only`,
+      userAgent: 'KazumiCompatibility/PlaybackOnly',
+    },
+  );
+  playbackHeaders.chapters = {
+    data: { roads: [{ episodes: [{ name: '一', url: '/play/1' }] }] },
+  };
+  cases.push(playbackHeaders);
+  const apiHeaders = api(
+    'api-request-headers',
+    {},
+    {
+      referer: `${origin}/playback-only`,
+      userAgent: 'KazumiCompatibility/PlaybackOnly',
+    },
+  );
+  apiHeaders.rule.searchApiConfig.request.headers = {
+    Referer: `${origin}/api/search-referer`,
+    'User-Agent': 'KazumiCompatibility/Search',
+    Accept: 'application/vnd.kazumi.search+json',
+    'Content-Type': 'application/vnd.kazumi.request+json',
+    'X-Kazumi-Phase': 'search',
+  };
+  apiHeaders.rule.chapterApiConfig.request.headers = {
+    rEfErEr: `${origin}/api/chapter-referer`,
+    'uSeR-aGeNt': 'KazumiCompatibility/Chapters',
+    aCcEpT: 'application/vnd.kazumi.chapters+json',
+    'x-kazumi-phase': 'chapters',
+    'X-Kazumi-Source': 'source:@source',
+  };
+  apiHeaders.chapters = {
+    data: { roads: [{ episodes: [{ name: '一', url: '/play/1' }] }] },
+  };
+  cases.push(apiHeaders);
   cases.push({
     ...api('api-nested', {
       variables: { token: '$.token' },
@@ -311,9 +415,44 @@ export async function searchCase(engine, c, verificationCode = 'VERIFICATION_REQ
   return { verificationRequired: true };
 }
 
-export function canonicalRequest(url, options = {}) {
+// Offline tests observe RuleEngine options, while the live reference harness
+// observes HTTP requests after Dart/Node have added transport defaults. Keep
+// request semantics without comparing those runtimes' incidental wire headers.
+const transportHeaders = new Set([
+  'accept',
+  'accept-encoding',
+  'accept-language',
+  'connection',
+  'content-length',
+  'host',
+  'sec-fetch-mode',
+  'user-agent',
+]);
+
+export function canonicalRequest(url, options = {}, { rule, phase } = {}) {
   const parsed = new URL(url);
-  const contentType = new Headers(options.headers).get('content-type') || '';
+  const inputHeaders = new Headers(options.headers);
+  const configured =
+    rule?.[`${phase}Mode`] === 'api' ? rule?.[`${phase}ApiConfig`]?.request?.headers : undefined;
+  const explicitHeaders = new Set(Object.keys(configured || {}).map((name) => name.toLowerCase()));
+  const headers = Object.fromEntries(
+    [...inputHeaders]
+      .filter(
+        ([name, value]) =>
+          !transportHeaders.has(name) ||
+          explicitHeaders.has(name) ||
+          // The top-level UA belongs to playback. Expose an accidental leak
+          // instead of hiding it alongside the legitimate default request UA.
+          (name === 'user-agent' && rule?.userAgent && value === rule.userAgent),
+      )
+      .map(([name, value]) => [
+        name,
+        name === 'content-type' && !explicitHeaders.has(name)
+          ? value.split(';', 1)[0].trim().toLowerCase()
+          : value,
+      ]),
+  );
+  const contentType = inputHeaders.get('content-type')?.toLowerCase() || '';
   const body =
     options.body == null
       ? null
@@ -324,6 +463,7 @@ export function canonicalRequest(url, options = {}) {
     path: parsed.pathname,
     query: [...parsed.searchParams],
     method: options.method || 'GET',
+    headers,
     body,
   };
 }

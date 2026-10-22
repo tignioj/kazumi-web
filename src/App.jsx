@@ -23,6 +23,7 @@ import { useStored } from './hooks/use-stored.js';
 import { useRequest } from './hooks/use-request.js';
 import { useNetworkSettings } from './hooks/use-network-settings.js';
 import { ProxyToggle } from './components/ProxyToggle.jsx';
+import { GlobalSearch } from './components/GlobalSearch.jsx';
 import { Notice, Empty, Spinner } from './components/feedback.jsx';
 import { Discover } from './features/catalog/Discover.jsx';
 import { Categories } from './features/catalog/Categories.jsx';
@@ -74,7 +75,6 @@ export default function App() {
   );
   const [toast, setToast] = useState('');
   const [player, setPlayer] = useState(null);
-  const [search, setSearch] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const notify = useCallback((text) => setToast(text), []);
   const navigate = useCallback((path) => {
@@ -328,22 +328,7 @@ export default function App() {
             {NAV.find((i) => i.id === section)?.sub ||
               (section === 'proxy' ? 'PROXY SETTINGS' : 'YOUR ANIME SPACE')}
           </div>
-          <form
-            className="global-search"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (search.trim()) navigate(`/discover?q=${encodeURIComponent(search.trim())}`);
-            }}
-          >
-            <Search size={17} />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="搜索动画，发现下一个故事"
-              aria-label="搜索动画"
-            />
-            <kbd>↵</kbd>
-          </form>
+          <GlobalSearch navigate={navigate} />
           <ProxyToggle network={network} notify={notify} onConfigure={() => navigate('/proxy')} />
           <button
             className="theme-toggle icon-button"

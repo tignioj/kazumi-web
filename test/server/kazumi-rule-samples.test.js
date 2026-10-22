@@ -57,7 +57,7 @@ test('catalog updates capture additions, deletions and same-version content chan
   assert.match(body, /不修改用户已安装规则/);
   const root = await mkdtemp(join(tmpdir(), 'kazumi-catalog-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  await mkdir(join(root, 'test/compatibility'), { recursive: true });
+  await mkdir(join(root, 'server/defaults'), { recursive: true });
   await applyRulesUpdate(root, update);
   assert.deepEqual(await readCatalog(root), update.snapshot);
 });
@@ -73,8 +73,8 @@ test('catalog monitoring ignores unrelated commits and index reordering', async 
 test('invalid or partial downloads cannot replace the saved catalog', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'kazumi-catalog-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  await mkdir(join(root, 'test/compatibility'), { recursive: true });
-  const path = join(root, 'test/compatibility/official-rules.json');
+  await mkdir(join(root, 'server/defaults'), { recursive: true });
+  const path = join(root, 'server/defaults/official-rules.json');
   const original = JSON.stringify(catalog);
   await writeFile(path, original);
   for (const fixture of [

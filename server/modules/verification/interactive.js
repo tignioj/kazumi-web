@@ -74,7 +74,11 @@ export function createInteractive(verification) {
           if (controller.signal.aborted) verification.remove(task, controller.signal.reason);
           write(result);
           await task.done;
-          if (task.status === 'failed') throw new HttpError(task.error, 422);
+          if (task.status === 'failed') {
+            const error = new HttpError(task.error, 422);
+            if (task.trace !== undefined) error.trace = task.trace;
+            throw error;
+          }
           result = task.result;
         }
         write({ type: 'complete', result });
@@ -88,6 +92,7 @@ export function createInteractive(verification) {
         write({
           type: 'error',
           error: error.status ? error.message : errorMessage,
+          ...(error.trace !== undefined ? { trace: error.trace } : {}),
         });
         res.end();
       }

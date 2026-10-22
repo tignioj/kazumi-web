@@ -36,16 +36,20 @@ const observed = [];
 const server = createServer(async (request, response) => {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
-  observed.push(
-    canonicalRequest(new URL(request.url, origin), {
-      method: request.method,
-      headers: request.headers,
-      body: Buffer.concat(chunks).toString() || null,
-    }),
-  );
   const [, , id, phase] = new URL(request.url, origin).pathname.split('/');
   const corpus = request.headers.host === new URL(referenceOrigin).host ? referenceCases : cases;
   const c = corpus.find((item) => item.id === id);
+  observed.push(
+    canonicalRequest(
+      new URL(request.url, origin),
+      {
+        method: request.method,
+        headers: request.headers,
+        body: Buffer.concat(chunks).toString() || null,
+      },
+      { rule: c?.rule, phase: phase === 'search' ? 'search' : 'chapter' },
+    ),
+  );
   const body = phase === 'search' ? c?.search : c?.chapters;
   response.setHeader(
     'content-type',
@@ -82,7 +86,7 @@ try {
   assert.equal(health.upstream, pins.ref);
   assert.equal(health.apiLevel, pins.apiLevel);
   const catalog = JSON.parse(
-    await readFile(new URL('../test/compatibility/official-rules.json', import.meta.url)),
+    await readFile(new URL('../server/defaults/official-rules.json', import.meta.url)),
   );
   const accepted = (await reference.validate(catalog.rules)).map((rule) => rule.name);
   assert.deepEqual(

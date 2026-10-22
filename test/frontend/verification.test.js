@@ -6,6 +6,7 @@ import {
   getVerificationRequest,
   readResponse,
   subscribeVerification,
+  verificationFailure,
 } from '../../src/lib/verification.js';
 
 test('verification session initialization shares pending requests and retries after a failure', async (t) => {
@@ -98,4 +99,31 @@ test('verification response errors preserve expired-session status and readable 
     message: '验证任务已取消',
     status: 409,
   });
+});
+
+test('verification transport and failed-state errors retain only their explicit trace', async () => {
+  const trace = { stage: 'search', steps: [{ selector: '//article', count: 0 }] };
+  for (const traced of [false, true]) {
+    const data = {
+      status: 'failed',
+      error: '验证后解析失败',
+      ...(traced ? { trace } : {}),
+      privateData: 'must not reach the caller',
+    };
+    await assert.rejects(readResponse(Response.json(data, { status: 422 })), (error) => {
+      assert.equal(error.message, data.error);
+      assert.equal(error.status, 422);
+      assert.deepEqual(error.trace, traced ? trace : undefined);
+      assert.equal(Object.hasOwn(error, 'trace'), traced);
+      assert.equal(Object.hasOwn(error, 'privateData'), false);
+      return true;
+    });
+    const error = verificationFailure(data);
+    assert.equal(error.message, data.error);
+    assert.deepEqual(error.trace, traced ? trace : undefined);
+    assert.equal(Object.hasOwn(error, 'trace'), traced);
+    assert.equal(Object.hasOwn(error, 'privateData'), false);
+    assert.equal(Object.hasOwn(error, 'status'), false);
+  }
+  assert.equal(verificationFailure({}).message, '验证未完成，请重新搜索或解析。');
 });

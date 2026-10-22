@@ -8,6 +8,7 @@ on:
       - 'server/modules/verification/**'
       - 'server/lib/**'
       - 'test/compatibility/**'
+      - 'server/defaults/official-rules.json'
       - 'test/reference/**'
       - 'scripts/compare-*-engines.mjs'
       - 'scripts/lib/kazumi-*.mjs'

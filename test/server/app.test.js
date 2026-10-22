@@ -154,7 +154,10 @@ test('official rule catalog caching stays local to each application', async (t) 
   ]) {
     const response = await application.request('/api/rules/catalog');
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { rules: [{ name, version: '1' }] });
+    const data = await response.json();
+    assert.deepEqual(data.rules, [{ name, version: '1' }]);
+    assert.equal(data.catalog.source, 'network');
+    assert.equal(data.catalog.stale, false);
   }
   assert.deepEqual(
     calls.map((call) => call.name),

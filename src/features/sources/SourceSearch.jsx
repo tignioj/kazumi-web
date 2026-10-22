@@ -3,9 +3,12 @@ import { LoaderCircle, Play, Plus, Search, SlidersHorizontal } from 'lucide-reac
 import { api } from '../../lib/api.js';
 import { titleOf } from '../../lib/format.js';
 import { Notice, Empty } from '../../components/feedback.jsx';
+import { SearchHistory } from '../../components/SearchHistory.jsx';
+import { useSearchHistory } from '../../hooks/use-search-history.js';
 
 export function SourceSearch({ defaultQuery = '', subject, rules, onPlay, navigate }) {
   const [keyword, setKeyword] = useState(defaultQuery);
+  const searchHistory = useSearchHistory('sources');
   const [selected, setSelected] = useState('');
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -26,10 +29,12 @@ export function SourceSearch({ defaultQuery = '', subject, rules, onPlay, naviga
       requestsRef.current.clear();
     };
   }, []);
-  const submit = async (e) => {
-    e?.preventDefault();
-    if (!keyword.trim() || loading || retryRef.current) return;
-    searchedKeyword.current = keyword.trim();
+  const submit = async (nextKeyword) => {
+    const query = nextKeyword.trim();
+    if (!query || loading || searchRef.current || retryRef.current) return;
+    searchedKeyword.current = query;
+    setKeyword(query);
+    searchHistory.add(query);
     setLoading(true);
     setError('');
     setResults([]);
@@ -49,7 +54,7 @@ export function SourceSearch({ defaultQuery = '', subject, rules, onPlay, naviga
             ]);
         },
         body: JSON.stringify({
-          keyword: searchedKeyword.current,
+          keyword: query,
           ...(selected ? { ruleNames: [selected] } : {}),
         }),
       });
@@ -144,12 +149,18 @@ export function SourceSearch({ defaultQuery = '', subject, rules, onPlay, naviga
           </button>
         }
       >
-        规则负责搜索片源和解析剧集。可从在线目录安装，也可导入 Kazumi 规则。
+        规则负责搜索片源和解析剧集。可从规则目录安装，也可导入 Kazumi 规则。
       </Empty>
     );
   return (
     <div className="source-search">
-      <form className="source-form" onSubmit={submit}>
+      <form
+        className="source-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          submit(keyword);
+        }}
+      >
         <label>
           <Search size={19} />
           <input
@@ -179,6 +190,9 @@ export function SourceSearch({ defaultQuery = '', subject, rules, onPlay, naviga
           {loading ? <LoaderCircle className="spin" size={16} /> : <Search size={16} />}搜索片源
         </button>
       </form>
+      {searchHistory.entries.length > 0 && (
+        <SearchHistory history={searchHistory} onSelect={submit} disabled={loading || !!retrying} />
+      )}
       {error && <Notice>{error}</Notice>}
       {(loading || retrying) && (
         <div className="search-progress" role="status">

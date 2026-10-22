@@ -10,9 +10,15 @@ import { RULE_API_VERSION, ruleCompatibility } from './validation.js';
 import { parseImport } from './store.js';
 import { createRuleSearch } from './search.js';
 
-export function registerRuleRoutes(app, { http, store, engine, interactive }) {
-  const { repository, officialRules, officialRule } = createOfficialRulesCatalog(http);
-  const options = { ...store.validationOptions, loadRule: officialRule };
+export function registerRuleRoutes(app, { http, store, engine, interactive, rulesRepository }) {
+  const { repository, officialRules, officialRule, status } = createOfficialRulesCatalog(http, {
+    directory: store.directory,
+    repository: rulesRepository,
+  });
+  const options = {
+    ...store.validationOptions,
+    loadRule: (name) => officialRule(name, false, { allowFallback: false }),
+  };
   app.get('/api/rules', (req, res) =>
     res.json({
       rules: store.list(),
@@ -26,13 +32,15 @@ export function registerRuleRoutes(app, { http, store, engine, interactive }) {
     }),
   );
   app.get('/api/rules/updates', async (req, res) => {
-    const catalog = await officialRules();
+    const catalog = await officialRules(false, { allowFallback: false });
     res.json(await checkInstalledRuleUpdates(store, http, repository, catalog, options));
   });
   app.post('/api/rules', async (req, res) =>
     res.status(201).json({ rules: await store.create(req.body) }),
   );
-  app.get('/api/rules/catalog', async (req, res) => res.json({ rules: await officialRules() }));
+  app.get('/api/rules/catalog', async (req, res) =>
+    res.json({ rules: await officialRules(req.query.refresh === 'true'), catalog: status() }),
+  );
   app.post('/api/rules/validate', async (req, res) => {
     const rules = parseImport(req.body?.content, options);
     res.json({
@@ -50,22 +58,29 @@ export function registerRuleRoutes(app, { http, store, engine, interactive }) {
     const listed = (await officialRules()).find(
       (rule) => rule.name.toLowerCase() === name.toLowerCase(),
     );
-    if (!listed) throw new HttpError('官方规则仓库中找不到此规则', 404);
+    if (!listed) throw new HttpError('当前规则仓库中找不到此规则', 404);
     const rule = await downloadOfficialRule(http, repository, listed.name, {
       ...options,
-      loadRule: (name) => officialRule(name, true),
+      loadRule: (name) => officialRule(name),
     });
-    res.json({ rules: await store.import(rule) });
+    res.json({ rules: await store.import(rule), catalog: status(listed.name) });
   });
   app.post('/api/rules/update', async (req, res) => {
     const name =
       req.body?.name === undefined ? undefined : inputText(req.body.name, '规则名称', 100);
     if (name) store.get(name);
     res.json(
-      await updateInstalledRules(store, http, repository, await officialRules(true), name, {
-        ...options,
-        loadRule: (name) => officialRule(name, true),
-      }),
+      await updateInstalledRules(
+        store,
+        http,
+        repository,
+        await officialRules(true, { allowFallback: false }),
+        name,
+        {
+          ...options,
+          loadRule: (name) => officialRule(name, true, { allowFallback: false }),
+        },
+      ),
     );
   });
   app.put('/api/rules/:name', async (req, res) =>

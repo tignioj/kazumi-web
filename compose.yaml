@@ -20,6 +20,7 @@ services:
       COMMENTS_CACHE_MAX_BYTES: '${COMMENTS_CACHE_MAX_BYTES:-52428800}'
       ALLOW_PRIVATE_NETWORK: 'false'
       DNS_OVER_HTTPS_URL: '${DNS_OVER_HTTPS_URL:-}'
+      RULES_REPOSITORY: '${RULES_REPOSITORY:-}'
     volumes:
       - kazumi-data:/app/data
     read_only: true

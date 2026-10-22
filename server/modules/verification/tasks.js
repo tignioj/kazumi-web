@@ -18,8 +18,9 @@ const KEYS = new Set([
 ]);
 const locator = (page, selector) => page.locator(`xpath=${selector}`).first();
 
-// Only pixels and bounded human input cross this boundary. Source HTML, cookies,
-// browser debugging endpoints and arbitrary evaluation are never exposed.
+// Challenge controls expose pixels and bounded human input, never cookies,
+// debugging endpoints or arbitrary evaluation. A completed draft test may
+// separately return its bounded parsing trace to the same owner.
 export class VerificationTasks {
   constructor({ ttlMs = 5 * 60 * 1000, timeoutMs = 45000, maxTasks = 16 } = {}) {
     this.ttlMs = Math.max(50, Number(ttlMs) || 300000);
@@ -123,6 +124,7 @@ export class VerificationTasks {
         }
         task.status = 'failed';
         task.error = error.status ? error.message : '验证后的请求未能完成，请重试或更换来源';
+        if (error.trace !== undefined) task.trace = error.trace;
         if (!task.published) {
           readyReject(error);
           this.remove(task);
@@ -171,7 +173,9 @@ export class VerificationTasks {
       status: task.status,
       expiresAt: task.expiresAt,
       ...(task.status === 'completed' ? { result: task.result } : {}),
-      ...(task.status === 'failed' ? { error: task.error } : {}),
+      ...(task.status === 'failed'
+        ? { error: task.error, ...(task.trace !== undefined ? { trace: task.trace } : {}) }
+        : {}),
     };
   }
 

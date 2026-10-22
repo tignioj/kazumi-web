@@ -110,6 +110,7 @@ export async function createApp(options = {}) {
   app.use('/api', createApiRateLimit());
   registerNativeHlsRoutes(app, { nativeHls });
   registerRoutes(app, {
+    rulesRepository: options.rulesRepository,
     http: rulesHttp,
     images,
     watchStore,

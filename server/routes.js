@@ -23,6 +23,7 @@ export function registerRoutes(
     engine,
     media,
     downloads,
+    rulesRepository,
   },
 ) {
   const interactive = createInteractive(verification);
@@ -32,7 +33,7 @@ export function registerRoutes(
   registerNetworkRoutes(app, { network, http });
   registerVerificationRoutes(app, { verification });
   registerMetadataRoutes(app, { metadata, archive, comments });
-  registerRuleRoutes(app, { http, store, engine, interactive });
+  registerRuleRoutes(app, { http, store, engine, interactive, rulesRepository });
   registerRuleTestRoute(app, {
     validationOptions: store.validationOptions,
     engine,

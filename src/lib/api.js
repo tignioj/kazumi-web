@@ -31,7 +31,11 @@ export async function api(path, { onResult, onDiagnostic, ...options } = {}) {
   } catch {
     throw new Error('服务返回了无法识别的内容，请稍后重试。');
   }
-  if (!response.ok) throw new Error(data.error || `请求失败（${response.status}）`);
+  if (!response.ok) {
+    const error = new Error(data.error || `请求失败（${response.status}）`);
+    if (data.trace !== undefined) error.trace = data.trace;
+    throw error;
+  }
   if (response.status === 202 && data.type === 'verification')
     return awaitVerification(data, options.signal);
   return data;

@@ -337,11 +337,12 @@ export class BrowserResolver {
 
   async createContext(browser, rule, interactive = false, sessionOwner, requestUserAgent) {
     const saved = this.ruleSessions.get(rule, sessionOwner);
+    // Callers choose the header scope: playback uses rule.userAgent, while
+    // rule requests use only API headers. Verified session identity wins both.
     const context = await browser.newContext({
       serviceWorkers: 'block',
       acceptDownloads: false,
       viewport: { width: 1000, height: 700 },
-      ...(rule.userAgent ? { userAgent: rule.userAgent } : {}),
       ...(requestUserAgent ? { userAgent: requestUserAgent } : {}),
       ...(saved ? { storageState: saved.storageState, userAgent: saved.userAgent } : {}),
     });
@@ -392,9 +393,12 @@ export class BrowserResolver {
     }
   }
 
-  async navigateRequest(page, request, rule) {
+  async navigateRequest(page, request) {
     let pending = true;
     const userAgent = await page.evaluate(() => navigator.userAgent);
+    const headers = Object.fromEntries(
+      Object.entries(request.headers || {}).map(([name, value]) => [name.toLowerCase(), value]),
+    );
     const requestUrl = new URL(request.url);
     requestUrl.hash = '';
     const override = async (route) => {
@@ -408,7 +412,7 @@ export class BrowserResolver {
         pending = false;
         return route.fallback({
           method: request.method || 'GET',
-          headers: { ...current.headers(), ...request.headers, 'user-agent': userAgent },
+          headers: { ...current.headers(), ...headers, 'user-agent': userAgent },
           ...(request.body !== undefined ? { postData: request.body } : {}),
         });
       }
@@ -419,7 +423,7 @@ export class BrowserResolver {
       return await page.goto(request.url, {
         waitUntil: 'domcontentloaded',
         timeout: this.options.timeout,
-        ...(rule.referer ? { referer: rule.referer } : {}),
+        ...(headers.referer ? { referer: headers.referer } : {}),
       });
     } finally {
       await page.unroute('**/*', override).catch(() => {});
@@ -506,7 +510,7 @@ export class BrowserResolver {
             hasChallengeHeaders(response.headers(), rule);
         }
       });
-      await this.navigateRequest(page, request, rule);
+      await this.navigateRequest(page, request);
       let attempts = 0;
       let replayed = false;
       while (!signal.aborted) {
@@ -528,7 +532,7 @@ export class BrowserResolver {
             const result = parse ? await parse(raw) : raw;
             if (attempts && !replayed && Array.isArray(result) && !result.length) {
               replayed = true;
-              await this.navigateRequest(page, request, rule);
+              await this.navigateRequest(page, request);
               continue;
             }
             await this.rememberContext(rule, sessionOwner, context, page);
@@ -545,7 +549,7 @@ export class BrowserResolver {
                 error instanceof SyntaxError
               ) {
                 replayed = true;
-                await this.navigateRequest(page, request, rule);
+                await this.navigateRequest(page, request);
                 continue;
               }
               throw error;
@@ -573,7 +577,7 @@ export class BrowserResolver {
           }
           if ((await inspectBrowserChallenge(page, rule)).detected) {
             replayed = true;
-            await this.navigateRequest(page, request, rule);
+            await this.navigateRequest(page, request);
           }
           continue;
         }
@@ -793,6 +797,7 @@ export class BrowserResolver {
         rule,
         !!onVerification || hasAutomaticCaptcha(rule),
         sessionOwner,
+        rule.userAgent,
       );
       signal.throwIfAborted();
       const candidates = new Map();

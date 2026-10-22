@@ -1,6 +1,7 @@
 import { HttpError } from '../../lib/http.js';
 import { inputText } from '../../lib/validation.js';
 import { assertRuleCompatible, normalizeRule } from './validation.js';
+import { RuleParseTrace } from './trace.js';
 
 function testRule(input, stage, options) {
   const rule = normalizeRule(input, { ...options, validate: false });
@@ -45,15 +46,34 @@ export function registerRuleTestRoute(app, { validationOptions, engine, media, i
       req,
       res,
       async (options) => {
-        let result;
-        if (stage === 'search') result = { items: await engine.search(rule, value, options) };
-        else if (stage === 'chapters') {
-          const roads = await engine.chapters(rule, value, options);
-          if (!roads.some((road) => road.episodes?.length))
-            throw new HttpError('未解析到可播放剧集，请检查章节配置或详情地址', 422);
-          result = { roads };
-        } else result = { source: await media.resolve(rule, value, options) };
-        return { stage, elapsedMs: Math.round(performance.now() - started), ...result };
+        const trace =
+          stage === 'resolve'
+            ? undefined
+            : new RuleParseTrace(stage, rule[stage === 'search' ? 'searchMode' : 'chapterMode']);
+        try {
+          let result;
+          const parseOptions = { ...options, trace };
+          if (stage === 'search')
+            result = { items: await engine.search(rule, value, parseOptions) };
+          else if (stage === 'chapters') {
+            const roads = await engine.chapters(rule, value, parseOptions);
+            if (!roads.some((road) => road.episodes?.length))
+              throw new HttpError('未解析到可播放剧集，请检查章节配置或详情地址', 422);
+            result = { roads };
+          } else result = { source: await media.resolve(rule, value, options) };
+          return {
+            stage,
+            elapsedMs: Math.round(performance.now() - started),
+            ...result,
+            ...(trace ? { trace: trace.snapshot() } : {}),
+          };
+        } catch (error) {
+          if (trace) {
+            trace.diagnostic(error.status ? error.message : '解析未完成，请检查响应与规则配置');
+            error.trace = trace.snapshot();
+          }
+          throw error;
+        }
       },
       {
         stream: req.get('accept')?.includes('application/x-ndjson'),

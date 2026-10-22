@@ -3,6 +3,7 @@
   "sourceUrl": "https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/24e860f6d3c4f2ebae65ed7649e2a8860d512879",
   "sourceSha256": "3ba08809e134bc960048b8ae292791b35476f6560bb5c9cc55dad351eb41e0f9",
   "kazumiRevision": "0443048272a511d7a990a2a3d5ca6bbaf55a869a",
+  "patchFile": "ffmpeg-hls-kazumi-combined.patch",
   "patchUrl": "https://raw.githubusercontent.com/Predidit/libmpv-android-video-build/0443048272a511d7a990a2a3d5ca6bbaf55a869a/buildscripts/patches/ffmpeg/ffmpeg-hls-kazumi-combined.patch",
   "patchSha256": "f1ffa4cb2df4324ab7eac15650aac835d9351ec93bde18204e8cbd8590e40637"
 }

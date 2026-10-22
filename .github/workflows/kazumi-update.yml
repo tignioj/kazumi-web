@@ -122,7 +122,7 @@ jobs:
             git add test/reference/kazumi-core/pubspec.yaml test/reference/kazumi-core/pubspec.lock \
               test/reference/kazumi-core/lib/core.dart test/reference/kazumi-core/flutter-sdk.json \
               test/reference/kazumi-core/linux/flutter/generated* test/reference/capabilities.js \
-              test/compatibility/official-rules.json
+              server/defaults/official-rules.json
             git commit --message "$UPDATE_TITLE"
             git push origin "HEAD:refs/heads/$UPDATE_BRANCH"
           fi

@@ -107,6 +107,7 @@ for (const mode of ['xpath', 'api']) {
       version: 'unsaved',
       baseURL: origin,
       userAgent: 'Draft UA',
+      referer: `${origin}/player-context`,
       searchURL: `${origin}/search?wd=@keyword`,
       enabled: false,
       ...(mode === 'api' && {
@@ -132,17 +133,26 @@ for (const mode of ['xpath', 'api']) {
     assert.equal(search.items[0].name, '草稿结果');
     assert.equal(requests[0].url.searchParams.get(mode === 'api' ? 'q' : 'wd'), '草稿');
     if (mode === 'api') assert.equal(requests[0].headers['x-draft'], 'yes');
-    else assert.equal(requests[0].headers['user-agent'], 'Draft UA');
+    assert.notEqual(requests[0].headers['user-agent'], draft.userAgent);
+    assert.equal(requests[0].headers.referer, `${origin}/`);
     const chapters = await run('chapters', { url: search.items[0].url });
     assert.deepEqual(
       chapters.roads.map((road) => road.episodes.length),
       [2, 1],
     );
     if (mode === 'api') assert.equal(requests[1].url.searchParams.get('id'), 'opaque-id');
+    assert.notEqual(requests[1].headers['user-agent'], draft.userAgent);
+    assert.equal(requests[1].headers.referer, `${origin}/`);
     const playback = await run('resolve', { url: chapters.roads[1].episodes[0].url });
     assert.equal(playback.source.type, 'video');
     assert.match(playback.source.url, /^\/api\/media\?/);
     assert.equal(await (await fetch(`${base}${playback.source.url}`)).text(), 'draft-media');
+    const playbackRequests = requests.slice(2);
+    assert.ok(playbackRequests.length >= 2);
+    for (const { headers } of playbackRequests) {
+      assert.equal(headers['user-agent'], draft.userAgent);
+      assert.equal(headers.referer, draft.referer);
+    }
     await run('search', { keyword: 'new rule' }, { ...draft, name: 'Not installed' });
     assert.equal(await readFile(join(directory, 'rules.json'), 'utf8'), before);
     assert.equal(application.store.get('Draft').version, 'installed');

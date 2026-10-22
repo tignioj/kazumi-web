@@ -31,7 +31,7 @@ const proxyRows = [
     scope: 'rules',
     key: 'rulesProxy',
     label: '规则仓库请求代理',
-    help: '用于官方规则列表、规则安装和规则更新。',
+    help: '用于当前远程规则仓库的目录、规则安装和更新；本地目录不经过代理。',
     testUrl: 'https://raw.githubusercontent.com/Predidit/KazumiRules/main/index.json',
   },
   {
