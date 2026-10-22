@@ -26,8 +26,10 @@ for (const c of buildCases(origin)) {
     const requests = [];
     const http = {
       async request(url, options) {
-        requests.push(canonicalRequest(url, options));
-        const search = requests.length === 1;
+        const search = requests.length === 0;
+        requests.push(
+          canonicalRequest(url, options, { rule: c.rule, phase: search ? 'search' : 'chapter' }),
+        );
         const raw = search ? c.search : c.chapters;
         return {
           url,

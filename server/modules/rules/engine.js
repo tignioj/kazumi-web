@@ -151,6 +151,48 @@ export function prepareApiRequest(config, variables) {
   return { url: url.href, method, headers, body };
 }
 
+function scopeXPath(selector) {
+  let expectsOperand = true;
+  // Locate absolute paths without interpreting strings or splitting unions.
+  // An absolute path can also start inside a group, predicate or function.
+  return selector.replace(
+    /'[^']*'|"[^"]*"|[A-Za-z_\u0080-\uFFFF][A-Za-z0-9_.:\-\u0080-\uFFFF]*|(?:\d*\.)?\d+|\/\/|\.\.|\s+|./g,
+    (token) => {
+      if (/^\s+$/.test(token)) return token;
+      if (token === '/' || token === '//') {
+        const scoped = expectsOperand ? `.${token}` : token;
+        expectsOperand = true;
+        return scoped;
+      }
+      if (token === '*') expectsOperand = !expectsOperand;
+      else if (['and', 'or', 'div', 'mod'].includes(token)) expectsOperand = !expectsOperand;
+      else expectsOperand = /^[([|,=<>!+\-@$]$/.test(token) || token.endsWith(':');
+      return token;
+    },
+  );
+}
+
+function xpathBranches(selector) {
+  const branches = [];
+  let quote = '',
+    depth = 0,
+    start = 0;
+  for (let index = 0; index < selector.length; index++) {
+    const character = selector[index];
+    if (quote) {
+      if (character === quote) quote = '';
+    } else if (character === "'" || character === '"') quote = character;
+    else if (character === '(' || character === '[') depth++;
+    else if (character === ')' || character === ']') depth--;
+    else if (character === '|' && depth === 0) {
+      branches.push(selector.slice(start, index));
+      start = index + 1;
+    }
+  }
+  branches.push(selector.slice(start));
+  return branches;
+}
+
 function xpath(document, context, expression) {
   if (typeof expression !== 'string' || !expression.trim()) throw new HttpError('XPath 不能为空');
   // xpath_selector 3.0.2 tokenizes bare // into no selectors, so execution
@@ -163,13 +205,28 @@ function xpath(document, context, expression) {
     /('[^']*'|"[^"]*")|(\/{1,2})text\(\s*\)(?=\s*(?:\/|\||$))/g,
     (match, literal, axis) => literal ?? `${axis}self::*`,
   );
-  const query = context !== document && selector.startsWith('//') ? `.${selector}` : selector;
+  const query = context !== document ? scopeXPath(selector) : selector;
   try {
-    const result = document.evaluate(query, context, null, 0, null);
-    if (result.resultType === 2) return [result.stringValue];
+    const branches = xpathBranches(query);
     const items = [];
-    let node;
-    while ((node = result.iterateNext())) items.push(node);
+    const seen = new Set();
+    // Kazumi appends each top-level union branch in order and removes nodes
+    // already returned by an earlier branch, rather than sorting the union.
+    for (const branch of branches) {
+      const result = document.evaluate(branch, context, null, 0, null);
+      if (result.resultType === 2) {
+        if (branches.length !== 1) throw new Error('XPath union requires nodes');
+        return [result.stringValue];
+      }
+      let node;
+      while ((node = result.iterateNext())) {
+        // Upstream attribute selections expose their owning element as .node.
+        const identity = branches.length > 1 && node.nodeType === 2 ? node.ownerElement : node;
+        if (seen.has(identity)) continue;
+        seen.add(identity);
+        items.push(node);
+      }
+    }
     return items;
   } catch {
     throw new HttpError(`XPath 无效: ${expression}`);
@@ -339,6 +396,18 @@ export function ruleHeaders(rule) {
   };
 }
 
+function requestHeaders(rule, request) {
+  // Kazumi's RuleExecutionConfig excludes the playback-only UA and Referer.
+  // Keep its literal baseURL + '/' default; API headers override it, and the
+  // session store subsequently applies the UA bound to verification cookies.
+  return {
+    referer: `${rule.baseURL}/`,
+    ...Object.fromEntries(
+      Object.entries(request.headers || {}).map(([name, value]) => [name.toLowerCase(), value]),
+    ),
+  };
+}
+
 export class RuleEngine {
   constructor(http, { browserResolver } = {}) {
     this.http = http;
@@ -350,7 +419,7 @@ export class RuleEngine {
     { signal, onVerification, sessionOwner, detectChallengeHeaders = false } = {},
   ) {
     signal?.throwIfAborted();
-    const headers = { ...ruleHeaders(rule), ...request.headers };
+    const headers = requestHeaders(rule, request);
     const options = {
       ...request,
       ...(this.browserResolver?.requestOptions?.(rule, request.url, headers, sessionOwner) || {
@@ -398,7 +467,7 @@ export class RuleEngine {
         rule,
         {
           ...request,
-          headers: { ...ruleHeaders(rule), ...request.headers },
+          headers: requestHeaders(rule, request),
         },
         { ...options, responseType, parse },
       );

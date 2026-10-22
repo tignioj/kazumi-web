@@ -54,12 +54,18 @@
           "path": "/case/xpath/search",
           "query": [["wd", "番剧 & a/b+中"]],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         },
         {
           "path": "/case/xpath/detail",
           "query": [],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
@@ -96,12 +102,19 @@
           "path": "/case/xpath-post/search",
           "query": [["wd", "番剧 & a/b+中"]],
           "method": "POST",
+          "headers": {
+            "content-type": "application/x-www-form-urlencoded",
+            "referer": "https://fixture.example/"
+          },
           "body": [["wd", "番剧 & a/b+中"]]
         },
         {
           "path": "/case/xpath-post/detail",
           "query": [],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
@@ -138,12 +151,66 @@
           "path": "/case/xpath-bare/search",
           "query": [["wd", "番剧 & a/b+中"]],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         },
         {
           "path": "/case/xpath-bare/detail",
           "query": [],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "xpath-base-trailing-slash",
+      "search": [
+        {
+          "name": "番剧 & 测试",
+          "url": "https://fixture.example/detail/1"
+        },
+        {
+          "name": "夜空",
+          "url": "https://fixture.example/detail/2"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "第1集",
+              "url": "https://fixture.example/play/1"
+            },
+            {
+              "name": "第2集",
+              "url": "http://cdn.example/2"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/xpath-base-trailing-slash/search",
+          "query": [["wd", "番剧 & a/b+中"]],
+          "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example//"
+          },
+          "body": null
+        },
+        {
+          "path": "/case/xpath-base-trailing-slash/detail",
+          "query": [],
+          "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example//"
+          },
           "body": null
         }
       ]
@@ -171,12 +238,18 @@
           "path": "/case/xpath-empty-results/search",
           "query": [["wd", "番剧 & a/b+中"]],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         },
         {
           "path": "/case/xpath-empty-results/detail",
           "query": [],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
@@ -205,12 +278,18 @@
           "path": "/case/xpath-normalize/search",
           "query": [["wd", "番剧 & a/b+中"]],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         },
         {
           "path": "/case/xpath-normalize/detail",
           "query": [],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
@@ -243,12 +322,18 @@
           "path": "/case/xpath-empty-road/search",
           "query": [["wd", "番剧 & a/b+中"]],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         },
         {
           "path": "/case/xpath-empty-road/detail",
           "query": [],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
@@ -281,12 +366,18 @@
           "path": "/case/xpath-attributes/search",
           "query": [["wd", "番剧 & a/b+中"]],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         },
         {
           "path": "/case/xpath-attributes/detail",
           "query": [],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
@@ -319,12 +410,258 @@
           "path": "/case/xpath-mixed-text/search",
           "query": [["wd", "番剧 & a/b+中"]],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         },
         {
           "path": "/case/xpath-mixed-text/detail",
           "query": [],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "xpath-union-search",
+      "search": [
+        {
+          "name": "备用标题一",
+          "url": "https://fixture.example/detail/1"
+        },
+        {
+          "name": "标题二",
+          "url": "https://fixture.example/detail/2"
+        },
+        {
+          "name": "备用标题三",
+          "url": "https://fixture.example/detail/3"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "第1集",
+              "url": "https://fixture.example/play/1"
+            },
+            {
+              "name": "第2集",
+              "url": "http://cdn.example/2"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/xpath-union-search/search",
+          "query": [["wd", "番剧 & a/b+中"]],
+          "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
+          "body": null
+        },
+        {
+          "path": "/case/xpath-union-search/detail",
+          "query": [],
+          "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "xpath-union-roads",
+      "search": [
+        {
+          "name": "番剧 & 测试",
+          "url": "https://fixture.example/detail/1"
+        },
+        {
+          "name": "夜空",
+          "url": "https://fixture.example/detail/2"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "一",
+              "url": "https://fixture.example/play/road1/1"
+            },
+            {
+              "name": "二",
+              "url": "https://fixture.example/play/road1/2"
+            }
+          ]
+        },
+        {
+          "name": "播放线路2",
+          "episodes": [
+            {
+              "name": "三",
+              "url": "https://fixture.example/play/road2/1"
+            }
+          ]
+        },
+        {
+          "name": "播放线路3",
+          "episodes": [
+            {
+              "name": "四",
+              "url": "https://fixture.example/play/road3/1"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/xpath-union-roads/search",
+          "query": [["wd", "番剧 & a/b+中"]],
+          "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
+          "body": null
+        },
+        {
+          "path": "/case/xpath-union-roads/detail",
+          "query": [],
+          "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "xpath-union-order",
+      "search": [
+        {
+          "name": "一",
+          "url": "https://fixture.example/detail/1"
+        },
+        {
+          "name": "三",
+          "url": "https://fixture.example/detail/3"
+        },
+        {
+          "name": "二",
+          "url": "https://fixture.example/detail/2"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "一",
+              "url": "https://fixture.example/play/1"
+            },
+            {
+              "name": "二",
+              "url": "https://fixture.example/play/2"
+            },
+            {
+              "name": "备用",
+              "url": "https://fixture.example/play/fallback"
+            }
+          ]
+        },
+        {
+          "name": "播放线路2",
+          "episodes": [
+            {
+              "name": "四",
+              "url": "https://fixture.example/play/4"
+            }
+          ]
+        },
+        {
+          "name": "播放线路3",
+          "episodes": [
+            {
+              "name": "三",
+              "url": "https://fixture.example/play/3"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/xpath-union-order/search",
+          "query": [["wd", "番剧 & a/b+中"]],
+          "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
+          "body": null
+        },
+        {
+          "path": "/case/xpath-union-order/detail",
+          "query": [],
+          "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "xpath-playback-headers",
+      "search": [
+        {
+          "name": "番剧 & 测试",
+          "url": "https://fixture.example/detail/1"
+        },
+        {
+          "name": "夜空",
+          "url": "https://fixture.example/detail/2"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "第1集",
+              "url": "https://fixture.example/play/1"
+            },
+            {
+              "name": "第2集",
+              "url": "http://cdn.example/2"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/xpath-playback-headers/search",
+          "query": [["wd", "番剧 & a/b+中"]],
+          "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
+          "body": null
+        },
+        {
+          "path": "/case/xpath-playback-headers/detail",
+          "query": [],
+          "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
@@ -357,12 +694,18 @@
           "path": "/case/xpath-encoded-urls/search",
           "query": [["wd", "番剧 & a/b+中"]],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         },
         {
           "path": "/case/xpath-encoded-urls/detail",
           "query": [],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
@@ -404,6 +747,10 @@
             ["empty", ""]
           ],
           "method": "POST",
+          "headers": {
+            "content-type": "application/x-www-form-urlencoded",
+            "referer": "https://fixture.example/"
+          },
           "body": [
             ["tag", "last"],
             ["wd", "番剧 & a/b+中"],
@@ -414,6 +761,9 @@
           "path": "/case/xpath-post-duplicates/detail",
           "query": [],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
@@ -443,12 +793,18 @@
           "path": "/case/xpath-cf-header/search",
           "query": [["wd", "番剧 & a/b+中"]],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         },
         {
           "path": "/case/xpath-cf-header/detail",
           "query": [],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
@@ -484,12 +840,18 @@
             ["wd", "番剧 & a/b+中"]
           ],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         },
         {
           "path": "/case/official-dalvdm/detail",
           "query": [],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
@@ -525,12 +887,18 @@
             ["wd", "番剧 & a/b+中"]
           ],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         },
         {
           "path": "/case/official-giriGiriLove/detail",
           "query": [],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
@@ -566,12 +934,18 @@
             ["wd", "番剧 & a/b+中"]
           ],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         },
         {
           "path": "/case/official-LMM/detail",
           "query": [],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
@@ -607,12 +981,18 @@
             ["wd", "番剧 & a/b+中"]
           ],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         },
         {
           "path": "/case/official-mgnacg/detail",
           "query": [],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
@@ -648,12 +1028,18 @@
             ["wd", "番剧 & a/b+中"]
           ],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         },
         {
           "path": "/case/official-moonci/detail",
           "query": [],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
@@ -689,12 +1075,18 @@
             ["wd", "番剧 & a/b+中"]
           ],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         },
         {
           "path": "/case/official-mutefun/detail",
           "query": [],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
@@ -738,12 +1130,18 @@
             ["sortDesc", "false"]
           ],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         },
         {
           "path": "/case/official-sorani/chapters/opaque%2Fa%252Fb",
           "query": [],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
@@ -780,6 +1178,12 @@
           "path": "/case/official-xfdmnext/search",
           "query": [],
           "method": "POST",
+          "headers": {
+            "apikey": "sb_publishable_OBIVAWACIX6lPXrO98_z24_HcsmalkA",
+            "authorization": "Bearer sb_publishable_OBIVAWACIX6lPXrO98_z24_HcsmalkA",
+            "content-type": "application/json",
+            "referer": "https://fixture.example/"
+          },
           "body": {
             "search_term": "番剧 & a/b+中",
             "page_number": 1,
@@ -790,9 +1194,120 @@
           "path": "/case/official-xfdmnext/chapters",
           "query": [],
           "method": "POST",
+          "headers": {
+            "apikey": "sb_publishable_OBIVAWACIX6lPXrO98_z24_HcsmalkA",
+            "authorization": "Bearer sb_publishable_OBIVAWACIX6lPXrO98_z24_HcsmalkA",
+            "content-type": "application/json",
+            "referer": "https://fixture.example/"
+          },
           "body": {
             "p_id": "opaque/a%2Fb"
           }
+        }
+      ]
+    },
+    {
+      "id": "api-playback-headers",
+      "search": [
+        {
+          "name": "番剧",
+          "url": "opaque/a%2Fb"
+        },
+        {
+          "name": "数字",
+          "url": "7"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "一",
+              "url": "https://fixture.example/play/1"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/api-playback-headers/search",
+          "query": [],
+          "method": "POST",
+          "headers": {
+            "content-type": "application/json",
+            "referer": "https://fixture.example/"
+          },
+          "body": {
+            "keyword": "番剧 & a/b+中",
+            "page": 1,
+            "enabled": true
+          }
+        },
+        {
+          "path": "/case/api-playback-headers/chapters",
+          "query": [["source", "opaque/a%2Fb"]],
+          "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
+          "body": null
+        }
+      ]
+    },
+    {
+      "id": "api-request-headers",
+      "search": [
+        {
+          "name": "番剧",
+          "url": "opaque/a%2Fb"
+        },
+        {
+          "name": "数字",
+          "url": "7"
+        }
+      ],
+      "chapters": [
+        {
+          "name": "播放线路1",
+          "episodes": [
+            {
+              "name": "一",
+              "url": "https://fixture.example/play/1"
+            }
+          ]
+        }
+      ],
+      "requests": [
+        {
+          "path": "/case/api-request-headers/search",
+          "query": [],
+          "method": "POST",
+          "headers": {
+            "accept": "application/vnd.kazumi.search+json",
+            "content-type": "application/vnd.kazumi.request+json",
+            "referer": "https://fixture.example/api/search-referer",
+            "user-agent": "KazumiCompatibility/Search",
+            "x-kazumi-phase": "search"
+          },
+          "body": {
+            "keyword": "番剧 & a/b+中",
+            "page": 1,
+            "enabled": true
+          }
+        },
+        {
+          "path": "/case/api-request-headers/chapters",
+          "query": [["source", "opaque/a%2Fb"]],
+          "method": "GET",
+          "headers": {
+            "accept": "application/vnd.kazumi.chapters+json",
+            "referer": "https://fixture.example/api/chapter-referer",
+            "user-agent": "KazumiCompatibility/Chapters",
+            "x-kazumi-phase": "chapters",
+            "x-kazumi-source": "source:opaque/a%2Fb"
+          },
+          "body": null
         }
       ]
     },
@@ -828,6 +1343,10 @@
           "path": "/case/api-nested/search",
           "query": [],
           "method": "POST",
+          "headers": {
+            "content-type": "application/json",
+            "referer": "https://fixture.example/"
+          },
           "body": {
             "keyword": "番剧 & a/b+中",
             "page": 1,
@@ -838,6 +1357,9 @@
           "path": "/case/api-nested/chapters",
           "query": [["source", "opaque/a%2Fb"]],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
@@ -870,6 +1392,10 @@
           "path": "/case/api-root/search",
           "query": [],
           "method": "POST",
+          "headers": {
+            "content-type": "application/json",
+            "referer": "https://fixture.example/"
+          },
           "body": {
             "keyword": "番剧 & a/b+中",
             "page": 1,
@@ -880,6 +1406,9 @@
           "path": "/case/api-root/chapters",
           "query": [["source", "opaque/a%2Fb"]],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
@@ -912,6 +1441,10 @@
           "path": "/case/api-empty-road/search",
           "query": [],
           "method": "POST",
+          "headers": {
+            "content-type": "application/json",
+            "referer": "https://fixture.example/"
+          },
           "body": {
             "keyword": "番剧 & a/b+中",
             "page": 1,
@@ -922,6 +1455,9 @@
           "path": "/case/api-empty-road/chapters",
           "query": [["source", "opaque/a%2Fb"]],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
@@ -967,6 +1503,10 @@
           "path": "/case/api-delimited/search",
           "query": [],
           "method": "POST",
+          "headers": {
+            "content-type": "application/json",
+            "referer": "https://fixture.example/"
+          },
           "body": {
             "keyword": "番剧 & a/b+中",
             "page": 1,
@@ -977,6 +1517,9 @@
           "path": "/case/api-delimited/chapters",
           "query": [["source", "opaque/a%2Fb"]],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
@@ -1009,6 +1552,10 @@
           "path": "/case/api-form/search",
           "query": [],
           "method": "POST",
+          "headers": {
+            "content-type": "application/x-www-form-urlencoded",
+            "referer": "https://fixture.example/"
+          },
           "body": [
             ["wd", "番剧 & a/b+中"],
             ["page", "1"]
@@ -1018,6 +1565,9 @@
           "path": "/case/api-form/chapters",
           "query": [["source", "opaque/a%2Fb"]],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
@@ -1068,12 +1618,18 @@
             ["false", "false"]
           ],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         },
         {
           "path": "/case/api-query-collections/chapters",
           "query": [["source", "opaque/a%2Fb"]],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
@@ -1109,6 +1665,10 @@
             ["tag", "older"]
           ],
           "method": "POST",
+          "headers": {
+            "content-type": "application/x-www-form-urlencoded",
+            "referer": "https://fixture.example/"
+          },
           "body": [
             ["tag", "A"],
             ["tag", "B"],
@@ -1131,6 +1691,9 @@
           "path": "/case/api-form-collections/chapters",
           "query": [["source", "opaque/a%2Fb"]],
           "method": "GET",
+          "headers": {
+            "referer": "https://fixture.example/"
+          },
           "body": null
         }
       ]
