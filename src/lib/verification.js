@@ -10,6 +10,12 @@ export const abortError = () => new DOMException('请求已取消。', 'AbortErr
 
 export const endpoint = (id) => `/api/verification/${encodeURIComponent(id)}`;
 
+export function verificationFailure(state) {
+  const error = new Error(state.error || '验证未完成，请重新搜索或解析。');
+  if (state.trace !== undefined) error.trace = state.trace;
+  return error;
+}
+
 export async function readResponse(response) {
   let data;
   try {
@@ -25,6 +31,7 @@ export async function readResponse(response) {
           : `验证请求失败（${response.status}）`),
     );
     error.status = response.status;
+    if (data.trace !== undefined) error.trace = data.trace;
     throw error;
   }
   return data;

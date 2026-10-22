@@ -24,7 +24,11 @@ export async function readSearchStream(
     const event = JSON.parse(line);
     if (event.type === 'result') onResult?.(event.result);
     if (event.type === 'diagnostic') onDiagnostic?.(event.diagnostic);
-    if (event.type === 'error') throw new Error(event.error);
+    if (event.type === 'error') {
+      const error = new Error(event.error);
+      if (event.trace !== undefined) error.trace = event.trace;
+      throw error;
+    }
     if (event.type === 'verification') {
       void awaitVerification(
         event,

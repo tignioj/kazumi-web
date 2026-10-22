@@ -12,6 +12,7 @@ import {
   abortError,
   endpoint,
   readResponse,
+  verificationFailure,
   getVerificationRequest,
   subscribeVerification,
 } from '../../lib/verification.js';
@@ -97,7 +98,7 @@ function VerificationDialog({ request }) {
         life.terminal = true;
         request.finish(null, next.result);
       } else if (next.status === 'failed') {
-        fail(new Error(next.error || '验证未完成，请重新搜索或解析。'));
+        fail(verificationFailure(next));
       }
     };
     const enqueue = (operation) => {
