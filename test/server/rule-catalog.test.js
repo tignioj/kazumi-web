@@ -33,23 +33,12 @@ async function directory(t) {
   return path;
 }
 
-test('first offline start exposes the bundled official catalog and complete installable rules', async () => {
-  const snapshot = JSON.parse(
-    await readFile(new URL('../../server/defaults/official-rules.json', import.meta.url)),
-  );
+test('the official repository reports an outage without a cached index or rule', async () => {
   const catalog = createOfficialRulesCatalog(offline, { repository: DEFAULT_RULES_REPOSITORY });
-  const rules = await catalog.officialRules();
-  assert.deepEqual(
-    rules.map(({ name }) => name),
-    snapshot.rules.map(({ name }) => name),
-  );
-  assert.equal(catalog.status().source, 'builtin');
-  assert.equal(catalog.status().stale, true);
+  await assert.rejects(catalog.officialRules(), /规则仓库暂不可用/);
+  await assert.rejects(catalog.officialRule('7sefun'), /规则仓库暂不可用/);
+  assert.equal(catalog.status().source, null);
   assert.equal(catalog.status().updatedAt, null);
-  assert.deepEqual(await catalog.officialRule(rules[0].name), snapshot.rules[0]);
-  assert.equal(catalog.status(rules[0].name).stale, true);
-  rules[0].name = 'changed by caller';
-  assert.notEqual((await catalog.officialRules())[0].name, rules[0].name);
   await assert.rejects(catalog.officialRules(true, { allowFallback: false }), /无法确认更新/);
 });
 
@@ -138,7 +127,8 @@ test('a valid empty official directory stays empty through an outage and restart
   assert.deepEqual(await catalog.officialRules(), []);
   unavailable = true;
   assert.deepEqual(await catalog.officialRules(true), []);
-  assert.notEqual(catalog.status().source, 'builtin');
+  assert.equal(catalog.status().source, 'network');
+  assert.equal(catalog.status().stale, true);
   assert.deepEqual(await createOfficialRulesCatalog(offline, options).officialRules(), []);
 });
 
@@ -275,8 +265,17 @@ test('repeated incompatible previews do not postpone recovery when their error c
   assert.equal(requests, 2);
 });
 
-test('REST installs work on first offline start but update failures never report latest or change installed rules', async (t) => {
+test('REST installs use the official repository cache after restart but failed updates preserve installed rules', async (t) => {
   const dataDir = await mkdtemp(join(tmpdir(), 'kazumi-offline-install-'));
+  const cached = createOfficialRulesCatalog(
+    {
+      json: async (url) =>
+        url.endsWith('index.json') ? [{ name: rule.name, version: rule.version }] : rule,
+    },
+    { directory: dataDir, repository: DEFAULT_RULES_REPOSITORY },
+  );
+  await cached.officialRules();
+  await cached.officialRule(rule.name);
   const application = await createApp({
     dataDir,
     seedRules: [],
@@ -294,16 +293,18 @@ test('REST installs work on first offline start but update failures never report
     await rm(dataDir, { recursive: true, force: true });
   });
   const base = `http://127.0.0.1:${server.address().port}/api/rules`;
-  const catalog = await (await fetch(`${base}/catalog`)).json();
-  assert.equal(catalog.catalog.source, 'builtin');
+  const catalog = await (await fetch(`${base}/catalog?refresh=true`)).json();
+  assert.equal(catalog.catalog.source, 'disk');
+  assert.equal(catalog.catalog.stale, true);
   const response = await fetch(`${base}/install`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ name: '7sefun' }),
+    body: JSON.stringify({ name: rule.name }),
   });
   assert.equal(response.status, 200);
   const installed = await response.json();
-  assert.equal(installed.rules[0].name, '7sefun');
+  assert.equal(installed.rules[0].name, rule.name);
+  assert.equal(installed.catalog.source, 'disk');
   assert.equal(installed.catalog.stale, true);
   const update = await fetch(`${base}/update`, {
     method: 'POST',

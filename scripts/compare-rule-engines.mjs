@@ -86,7 +86,7 @@ try {
   assert.equal(health.upstream, pins.ref);
   assert.equal(health.apiLevel, pins.apiLevel);
   const catalog = JSON.parse(
-    await readFile(new URL('../server/defaults/official-rules.json', import.meta.url)),
+    await readFile(new URL('../test/compatibility/official-rules.json', import.meta.url)),
   );
   const accepted = (await reference.validate(catalog.rules)).map((rule) => rule.name);
   assert.deepEqual(

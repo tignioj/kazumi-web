@@ -87,9 +87,7 @@ export function Rules({
         body: JSON.stringify({ name }),
       });
       await reload();
-      notify(
-        `已安装「${name}」${source?.stale ? (source.source === 'builtin' ? '（来自内置快照）' : '（来自本地缓存）') : ''}`,
-      );
+      notify(`已安装「${name}」${source?.stale ? '（来自本地缓存）' : ''}`);
     } catch (e) {
       notify(e.message);
     } finally {
@@ -302,9 +300,7 @@ export function Rules({
             <>
               {catalog.data?.catalog?.stale && (
                 <Notice onRetry={() => setCatalogRefresh((value) => value + 1)}>
-                  {catalog.data.catalog.source === 'builtin'
-                    ? '规则仓库暂不可用，正在使用内置快照。可以安装快照中的规则；检查更新需恢复仓库连接。'
-                    : '规则仓库暂不可用，正在使用本地缓存。可以安装已缓存的规则；检查更新需恢复仓库连接。'}
+                  规则仓库暂不可用，正在使用本地缓存。可以安装已缓存的规则；检查更新需恢复仓库连接。
                 </Notice>
               )}
               <p className="rule-repository">当前仓库：{catalog.data?.catalog?.repository}</p>

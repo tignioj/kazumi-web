@@ -11,12 +11,7 @@ import {
   upgradeTitle,
   verifyPins,
 } from './lib/kazumi-upstream.mjs';
-import {
-  applyRulesUpdate,
-  discoverRulesUpdate,
-  readCatalog,
-  rulesUpgradeBody,
-} from './lib/kazumi-rules.mjs';
+import { applyRulesUpdate, discoverRulesUpdate, readCatalog } from './lib/kazumi-rules.mjs';
 
 const { values } = parseArgs({
   options: {
@@ -36,7 +31,7 @@ if (values.verify) {
     throw new Error('Existing upgrade branch pins a different Kazumi commit');
   console.log(
     values.source === 'rules'
-      ? `Verified official rules at ${commit}`
+      ? `Verified official compatibility samples at ${commit}`
       : `Verified Kazumi ${pins.version} at ${pins.ref}, Flutter ${pins.sdk.version}`,
   );
 } else {
@@ -48,18 +43,16 @@ if (values.verify) {
     if (values.source === 'rules') await applyRulesUpdate(root, update);
     else await applyUpdate(root, pins, update);
   }
-  if (process.env.GITHUB_OUTPUT) {
+  // Rule samples are refreshed manually for tests and never prepare an upgrade PR.
+  if (process.env.GITHUB_OUTPUT && values.source !== 'rules') {
     await appendFile(process.env.GITHUB_OUTPUT, `available=${update.available}\n`);
     if (update.available) {
       await appendFile(
         process.env.GITHUB_OUTPUT,
         `branch=${update.branch}\nversion=${update.version || 'catalog'}\ncommit=${update.commit}\n` +
-          `title=${values.source === 'rules' ? 'chore(rules): refresh official compatibility catalog' : upgradeTitle(update)}\n`,
+          `title=${upgradeTitle(update)}\n`,
       );
-      await writeFile(
-        `${process.env.RUNNER_TEMP}/kazumi-upgrade-body.md`,
-        values.source === 'rules' ? rulesUpgradeBody(update) : upgradeBody(update),
-      );
+      await writeFile(`${process.env.RUNNER_TEMP}/kazumi-upgrade-body.md`, upgradeBody(update));
     }
   }
   const { snapshot, ...summary } = update;

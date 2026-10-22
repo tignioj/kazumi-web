@@ -22,8 +22,6 @@ jobs:
             pattern: '^codex/kazumi-[0-9a-f]{12}$'
           - source: main
             pattern: '^codex/kazumi-main-'
-          - source: rules
-            pattern: '^codex/kazumi-rules-'
     permissions:
       contents: write
       pull-requests: write
@@ -92,7 +90,7 @@ jobs:
             fi
           done
       - name: Resolve the lockfile with the pinned Flutter SDK
-        if: steps.pending.outputs.exists != 'true' && matrix.source != 'rules' && steps.release.outputs.available == 'true' && steps.existing.outputs.exists != 'true'
+        if: steps.pending.outputs.exists != 'true' && steps.release.outputs.available == 'true' && steps.existing.outputs.exists != 'true'
         run: |
           docker build --target toolchain --tag kazumi-core-toolchain:update test/reference/kazumi-core
           docker run --rm --volume "$PWD/test/reference/kazumi-core:/service" --workdir /service \
@@ -121,8 +119,7 @@ jobs:
             git switch --create "$UPDATE_BRANCH"
             git add test/reference/kazumi-core/pubspec.yaml test/reference/kazumi-core/pubspec.lock \
               test/reference/kazumi-core/lib/core.dart test/reference/kazumi-core/flutter-sdk.json \
-              test/reference/kazumi-core/linux/flutter/generated* test/reference/capabilities.js \
-              server/defaults/official-rules.json
+              test/reference/kazumi-core/linux/flutter/generated* test/reference/capabilities.js
             git commit --message "$UPDATE_TITLE"
             git push origin "HEAD:refs/heads/$UPDATE_BRANCH"
           fi

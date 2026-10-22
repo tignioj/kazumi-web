@@ -8,7 +8,6 @@ import {
   discoverRulesUpdate,
   readCatalog,
   verifyCatalog,
-  rulesUpgradeBody,
 } from '../../scripts/lib/kazumi-rules.mjs';
 
 const previous = 'a'.repeat(40),
@@ -37,7 +36,7 @@ function rulesApi(rules, { head = commit, index = rules, fail } = {}) {
   };
 }
 
-test('catalog updates capture additions, deletions and same-version content changes at one commit', async (t) => {
+test('manual sample refresh captures additions, deletions and same-version content changes at one commit', async (t) => {
   const rules = [
     { name: '新增 空格', version: '1' },
     { ...old, searchList: '//section' },
@@ -50,19 +49,17 @@ test('catalog updates capture additions, deletions and same-version content chan
     removed: ['Removed'],
   });
   assert.ok(calls.some((path) => path.includes(encodeURIComponent('新增 空格'))));
-  const body = rulesUpgradeBody(update);
-  assert.match(body, /searchList/);
-  assert.match(body, /\/\/article/);
-  assert.match(body, /\/\/section/);
-  assert.match(body, /不修改用户已安装规则/);
+  assert.deepEqual(update.details.find(({ name }) => name === 'Changed').fields, [
+    { field: 'searchList', before: '"//article"', after: '"//section"' },
+  ]);
   const root = await mkdtemp(join(tmpdir(), 'kazumi-catalog-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  await mkdir(join(root, 'server/defaults'), { recursive: true });
+  await mkdir(join(root, 'test/compatibility'), { recursive: true });
   await applyRulesUpdate(root, update);
   assert.deepEqual(await readCatalog(root), update.snapshot);
 });
 
-test('catalog monitoring ignores unrelated commits and index reordering', async () => {
+test('manual sample checks ignore unrelated commits and index reordering', async () => {
   const rules = [...catalog.rules].reverse();
   assert.equal((await discoverRulesUpdate(catalog, rulesApi(rules).api)).available, false);
   const { api, calls } = rulesApi([], { head: previous });
@@ -73,8 +70,8 @@ test('catalog monitoring ignores unrelated commits and index reordering', async 
 test('invalid or partial downloads cannot replace the saved catalog', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'kazumi-catalog-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  await mkdir(join(root, 'server/defaults'), { recursive: true });
-  const path = join(root, 'server/defaults/official-rules.json');
+  await mkdir(join(root, 'test/compatibility'), { recursive: true });
+  const path = join(root, 'test/compatibility/official-rules.json');
   const original = JSON.stringify(catalog);
   await writeFile(path, original);
   for (const fixture of [

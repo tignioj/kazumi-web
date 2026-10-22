@@ -73,7 +73,6 @@ export function createOfficialRulesCatalog(http, options = {}) {
   let pendingIndex;
   let writing = Promise.resolve();
   let warned = false;
-  let builtin;
   const details = new Map();
   const pending = new Map();
   const rejected = new Map();
@@ -159,11 +158,6 @@ export function createOfficialRulesCatalog(http, options = {}) {
     await writing;
   }
 
-  async function bundled() {
-    if (repository !== DEFAULT_RULES_REPOSITORY) return null;
-    builtin ||= readJson(new URL('../../defaults/official-rules.json', import.meta.url));
-    return builtin;
-  }
   const unavailable = (error) =>
     error.code === 'RULE_INCOMPATIBLE'
       ? error
@@ -196,27 +190,8 @@ export function createOfficialRulesCatalog(http, options = {}) {
       if (index && request.generation === generation)
         index = { ...index, stale: true, expires: now() + retryDelay };
       if (!allowFallback) throw unavailable(error);
-      let fallback = index;
-      if (!fallback) {
-        const snapshot = await bundled();
-        if (snapshot)
-          fallback = entry(
-            validateIndex(
-              snapshot.rules.map(({ name, version, author, baseURL }) => ({
-                name,
-                version,
-                author,
-                baseURL,
-              })),
-            ),
-            null,
-            'builtin',
-          );
-      }
-      if (!fallback) throw unavailable(error);
-      if (request.generation === generation)
-        index = { ...fallback, stale: true, expires: now() + retryDelay };
-      return structuredClone(fallback.value);
+      if (!index) throw unavailable(error);
+      return structuredClone(index.value);
     } finally {
       if (pendingIndex === request) pendingIndex = null;
     }
@@ -267,18 +242,8 @@ export function createOfficialRulesCatalog(http, options = {}) {
       if (current && pending.get(key) === operation)
         details.set(key, { ...current, stale: true, expires: now() + retryDelay });
       if (!allowFallback) throw unavailable(error);
-      const fallback =
-        details.get(key)?.value ||
-        (await bundled())?.rules.find((rule) => rule.name.toLowerCase() === key);
+      const fallback = details.get(key)?.value;
       if (!fallback) throw unavailable(error);
-      if (pending.get(key) === operation && !details.has(key)) {
-        if (details.size >= 500) details.delete(details.keys().next().value);
-        details.set(key, {
-          ...entry(fallback, null, 'builtin'),
-          stale: true,
-          expires: now() + retryDelay,
-        });
-      }
       return structuredClone(fallback);
     } finally {
       if (pending.get(key) === operation) pending.delete(key);
