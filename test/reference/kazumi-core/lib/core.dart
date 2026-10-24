@@ -16,7 +16,7 @@ import 'package:kazumi/services/video_source/video_source_format.dart';
 import 'package:kazumi/services/video_source/video_source_resolver_pool.dart';
 import 'package:kazumi/webview/captcha/captcha_webview_controller.dart';
 
-const upstreamRevision = '4effe14ee78b790a92c23ed86f969093d2ed376d';
+const upstreamRevision = '7cb58d7d800c8de46b9a36ec4ae97cd6a3f9602b';
 
 /// This service translates HTTP messages, never rule or website semantics.
 /// Every rule, template, selector and sniffing implementation belongs to Kazumi.
