@@ -9,6 +9,38 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.13.2"
+  app_links:
+    dependency: transitive
+    description:
+      name: app_links
+      sha256: "08ba88bf19d9edea33130cb71c8ced2cb982b4e00b82efef4a434d1357bc69c3"
+      url: "https://pub.dev"
+    source: hosted
+    version: "7.2.2"
+  app_links_linux:
+    dependency: transitive
+    description:
+      name: app_links_linux
+      sha256: "9ccb5802085a1e57bb07b6256fd1d61a78c7ec104944d4965e62938b4fefd9cb"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.0.4"
+  app_links_platform_interface:
+    dependency: transitive
+    description:
+      name: app_links_platform_interface
+      sha256: "7546f09a6e93f4a2df2fe2bd40a5c6c64310ac461b036d82b43033be7a59f809"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.0.4"
+  app_links_web:
+    dependency: transitive
+    description:
+      name: app_links_web
+      sha256: "382d32c6f486f15b1d7f5d6a37a70a481a4fc08382eef419d373169921a3e765"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.0.5"
   archive:
     dependency: transitive
     description:
@@ -83,14 +115,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.2.4"
-  audio_video_progress_bar:
-    dependency: transitive
-    description:
-      name: audio_video_progress_bar
-      sha256: "552b1f73c56c4c88407999e0a8507176f60c56de3e6d63bc20a0eab48467d4c9"
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.0.3"
   auto_injector:
     dependency: transitive
     description:
@@ -296,10 +320,10 @@ packages:
     dependency: transitive
     description:
       name: ech_http
-      sha256: e879a1461f4acdc6b07bc2ff3ff3b163a794a0f4b48c4fbea3b85dfa0c9ffe1a
+      sha256: "7b179bbb0cba2f517d5f8fc526e6bb98d96530e6d7a75f7057fce74652967643"
       url: "https://pub.dev"
     source: hosted
-    version: "0.2.2"
+    version: "0.2.3"
   equatable:
     dependency: transitive
     description:
@@ -740,11 +764,11 @@ packages:
     dependency: "direct main"
     description:
       path: "."
-      ref: "4effe14ee78b790a92c23ed86f969093d2ed376d"
-      resolved-ref: "4effe14ee78b790a92c23ed86f969093d2ed376d"
+      ref: "1e3e111553b74c07f4412fa8a0e7959821caa789"
+      resolved-ref: "1e3e111553b74c07f4412fa8a0e7959821caa789"
       url: "https://github.com/Predidit/Kazumi.git"
     source: git
-    version: "2.3.9+20309"
+    version: "2.4.2+20402"
   leak_tracker:
     dependency: transitive
     description:
